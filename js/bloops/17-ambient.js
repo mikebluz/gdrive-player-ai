@@ -9130,7 +9130,7 @@
         // A transition is not a chord and must not read as one — it takes the
         // walk accent and opts out of the in/out-of-key colouring, which has no
         // meaning for a line that is passing through by design.
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + // WHAT IT SOUNDS, ON THE CARD (2026-09-20). This pane edits the SCORE, so
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(fn(c))) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · written ' + esc(_ambPeChLabel(c)) : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + // WHAT IT SOUNDS, ON THE CARD (2026-09-20). This pane edits the SCORE, so
         // the note names are the written ones — but under Key/transpose the engine
         // re-roots the whole progression, so a written C E G SOUNDS as D. The
         // sounding name was in the `title` only, which a phone never shows (the
@@ -9141,7 +9141,13 @@
         // what every other surface names — and the written notes keep their own
         // line, which is what the buttons below edit.
         (_vsEd ? '<u class="pe-sounds">' + esc(_ambChordShort(fn(c)) || '?') + '</u>' : '') +
-        '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        // …AND ITS NOTES, ALSO THE ONES YOU HEAR (2026-09-20). Naming the chord
+        // Em over a spelling of D F A was still two readings on one card — "it's
+        // still showing wrong notes in the chord chip". Both are the SOUNDING
+        // chord now. The stored value stays WRITTEN (that is what saves, and
+        // what the note buttons below move); this pane simply stops spelling it
+        // in a key nothing else on screen uses.
+        '<small>' + esc(_ambPeChLabel(fn(c))) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         (_peOne >= 0 ? '' :
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
         '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>');
@@ -9151,7 +9157,11 @@
       const chordSum = (_peRange.to - _peRange.from) + ' chord' + ((_peRange.to - _peRange.from) === 1 ? '' : 's');
       const notes = _ambPeNotes(tgt).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>
-        '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[p] + '</b>' +
+        // THE SAME READING as the card above and as the in/out-of-key colour
+        // beside it, which has always tested the SHIFTED pitch. The buttons move
+        // the WRITTEN value underneath — a semitone is a semitone in either
+        // key — so only the name shown changes.
+        '<span class="pe-note' + (showScale ? (_ambPeInScale((((p + _vsEd) % 12) + 12) % 12, kRoot, kScale) ? ' n-in' : ' n-out') : '') + '"><b>' + _AMB_CHROM[(((p + _vsEd) % 12) + 12) % 12] + '</b>' +
         '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone (chromatic)">♭</button>' +
         '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone (chromatic)">♯</button>' +
         (diatonic ? '<button type="button" class="pe-dt" data-pe="ndtdn:' + ni + '" title="Down a scale degree (diatonic)">▾</button>' +

@@ -1512,6 +1512,23 @@
     }
     return (best == null) ? mid : best;
   }
+  // ── A NOTE THAT BEGINS ON A CHANGE BELONGS TO THAT CHANGE ───────────────
+  // `at` is ABSOLUTE (`cycleStart + offset`), and the resolver answers by
+  // differencing it against an absolute anchor — so for a note sitting EXACTLY
+  // on a change the answer is a subtraction of two large, nearly equal doubles.
+  // At a cycle start of 0 that is exact; at a preview's wall clock of 9.38 s
+  // the 4 s boundary comes back as 3.9999999999999982 and the resolver hands
+  // back the PREVIOUS chord. Measured on a frozen 3-bar take over D·F#m·G: the
+  // first onset of the third change drew F#5·A4·F#4·C#4 (F#m) instead of
+  // G5·B4·G4·D4 (G) on 2 of 6 Preview presses, flipping back and forth —
+  // reported as "first note of third change … changes back and forth, looks
+  // like 1 half step". Every symptom of this class in this file has been the
+  // same shape (`cs` "one ULP below its own boundary", twice already).
+  // 0.1 ms: a thousand times below anything audible, and a thousand billion
+  // times above the error. It was already the idiom at `chgOf`; this is now
+  // the ONE definition, and every "which change is sounding" asks through it.
+  const CHG_EPS = 1e-4;
+  const chgTime = (at) => (Number.isFinite(at) ? at + CHG_EPS : at);
   function toneSetAt(E, cfg, at, L) {
     // THE LAYER'S OWN SOURCE, through v1's resolver rather than a second one.
     // `_ambNotesOf` applies v1's precedence in full — the AREA PROGRESSION LOCK
@@ -1526,7 +1543,7 @@
       try {
         // v1's emitters set this before every pitch pick — a prog source
         // resolves the chord at THIS note's onset, not at tick time.
-        try { _ambProgStepOverride = _ambProgStepAt(E, at); } catch (e) {}
+        try { _ambProgStepOverride = _ambProgStepAt(E, chgTime(at)); } catch (e) {}
         const src = _ambNotesOf(L);
         const root = _ambSrcRootPc(src);
         const ivs = _ambScaleIntervals(src);
@@ -1548,7 +1565,7 @@
     try {
       const prog = cfg && cfg.prog;
       if (prog && prog.on && Array.isArray(prog.chords) && prog.chords.length) {
-        const step = _ambProgStepAt(E, at);
+        const step = _ambProgStepAt(E, chgTime(at));
         const ch = _ambProgSoundAt(E, prog, step);
         if (ch && Number.isFinite(ch.root) && Array.isArray(ch.intervals) && ch.intervals.length) {
           return { root: ((ch.root % 12) + 12) % 12, ivs: ch.intervals.slice(), pool: true };
@@ -1854,7 +1871,7 @@
     try {
       const chords = ((ctx.cfg || {}).prog || {}).chords || [];
       if (!chords.length) return -1;
-      const step = _ambProgStepAt(ctx.E, at);
+      const step = _ambProgStepAt(ctx.E, chgTime(at));
       return ((step % chords.length) + chords.length) % chords.length;
     } catch (e) { return -1; }
   }
@@ -2450,9 +2467,9 @@
           // the same function v1's bed uses, reading `progSubdiv` off the shim.
           let step = 0, slot = Math.max(0, idx | 0);
           let psi = null;
-          try { psi = _ambProgSpanAt(E, shim, cfg, at); } catch (e) {}
+          try { psi = _ambProgSpanAt(E, shim, cfg, chgTime(at)); } catch (e) {}
           if (psi) { step = psi.chordStep | 0; slot = psi.slot | 0; }
-          else { try { step = _ambProgStepAt(E, at) | 0; } catch (e) {} }
+          else { try { step = _ambProgStepAt(E, chgTime(at)) | 0; } catch (e) {} }
           // `iter` is the CYCLE index — that is what walks the phrase, so a
           // structured voicing repeats for `chordRepeats` cycles and then moves
           // on. `key` only seeds it, per layer.
@@ -3322,7 +3339,7 @@
       const t0 = cs + ons[i] * cyc;
       try {
         if (ctx.cfg && ctx.cfg.prog && ctx.cfg.prog.on && (ctx.cfg.prog.chords || []).length) {
-          return 's' + (_ambProgStepAt(ctx.E, t0 + 1e-4) | 0);
+          return 's' + (_ambProgStepAt(ctx.E, chgTime(t0)) | 0);
         }
       } catch (e) {}
       return 'b' + Math.floor(ons[i] * Math.max(1, +p.bars || 1) + 1e-6);

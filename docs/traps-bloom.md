@@ -365,6 +365,26 @@
   not a wall clock", which is exactly what it is NOT during a preview — **a precondition stated in a
   comment is not a precondition enforced**. The notes and the chord band were already wrapped; the
   choke is a third reader of the same clock and must be wrapped with them.
+- **A NOTE THAT BEGINS ON A CHANGE BELONGS TO THAT CHANGE — ASK THROUGH `chgTime()` (2026-09-20).**
+  The harmony resolver answers by differencing an ABSOLUTE onset (`cycleStart + offset`) against an
+  absolute anchor, so an onset sitting EXACTLY on a change is a subtraction of two large, nearly
+  equal doubles — and it is not always exact: `(0.4392 + 4) - 0.4392 === 3.9999999999999996`, below
+  the boundary, so the PREVIOUS chord wins. **516 of 4000 plausible cycle starts lose it.** At
+  `cycleStart` 0 (the stopped drawing) it is exact, which is why a frozen 3-bar take over D·F#m·G
+  drew its fifth onset as F#m on some Preview presses and G on others — reported as "first note of
+  third change changes back and forth, looks like 1 half step". **It is NOT a `(2/3)*6` rounding
+  error** (that product is exactly 4.0); the loss is in the big-number subtraction, so it cannot
+  show until a wall clock is involved — which is why it looked like a preview bug. `CHG_EPS` is
+  0.1 ms, and `toneSetAt` · `groundIdxAt` · the span/step sites · `chgOf` all ask through it: ONE
+  definition, because the five of them disagreeing at a boundary is the same bug five ways. This
+  file had already recorded this class twice ("`cs` … one ULP below its own boundary") — when a
+  picture changes by a step or two at a bar line, suspect the boundary before the rules.
+- **A GATE DRIVEN BY REAL PRESSES CAN BE A LOTTERY.** The first version of `probe-chordedge.js`
+  drove ▶ Preview eight times and asserted the pitches agreed — and it PASSED with the fix reverted,
+  because a press lands on a bad cycle start only about one time in eight. A poison that passes is
+  worse than no gate. It sweeps a FIXED ladder of 240 cycle starts through `notesFor` with the
+  anchors pinned instead: same invariant, deterministic, and the poison then names the exact
+  cycle start that breaks it. Poison-verify a timing-dependent check, or it is decoration.
 - **A "FIXED" PART STILL RE-PITCHES IF ITS CYCLE DOES NOT DIVIDE THE CHANGES (2026-09-20).**
   Separate from the two above and still true: a 2-bar cycle under a 3-bar part sits over different
   chords every pass, so a GENERATED part's pitch rules re-resolve and every note changes for ever

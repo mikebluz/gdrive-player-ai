@@ -36,7 +36,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const UPDATE = process.argv.includes('--update');
 const BASE_PATH = path.join(__dirname, 'bloom-mod-parity-baseline.json');
-const URL = 'http://localhost:3001/bloops.html';
+// BLOOPS_URL overrides the default so a worktree can be gated against its OWN
+// server without stopping the one the main checkout uses — the same convention
+// every other gate here already follows.
+const URL = process.env.BLOOPS_URL || 'http://localhost:3001/bloops.html';
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 // ---- battery ---------------------------------------------------------------

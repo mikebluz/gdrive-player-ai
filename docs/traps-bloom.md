@@ -379,6 +379,41 @@
   definition, because the five of them disagreeing at a boundary is the same bug five ways. This
   file had already recorded this class twice ("`cs` … one ULP below its own boundary") — when a
   picture changes by a step or two at a bar line, suspect the boundary before the rules.
+- **⏻ FIXED IS A MODE, NOT A VERDICT (2026-09-20).** It used to be COMPUTED — inspect ~15 settings,
+  and if none of them draws, call it FIXED — and both failure modes were reported. It is the **ZERO
+  CASE**, so a freshly generated layer read FIXED with nothing set ("I never chose it to be FIXED" —
+  nobody did); and it could be **FALSE** (a "FIXED" part re-pitching every note every pass because
+  its cycle did not divide the changes). A verdict assembled from fifteen inputs is unreasonable to
+  reason about AND can be wrong; a mode cannot be wrong, because the engine enforces it. `L.fixed` is
+  now the whole answer, absent = fluid, and **VARIES is the floor** — a permission ("this may
+  change"), not an observation ("we proved it does"), which is what makes it always true.
+  **A MODE THAT ONLY RELABELS IS THE OLD LIE WITH A SWITCH ON IT.** Enforcement is `fixedOf` (the
+  take clock, inside `chgAt` — the ONE computation — and the `vary` term of `cycIdx`) and `perfOf`
+  (every per-pass draw, in ONE reader so a new die cannot join this axis without being outranked).
+  **OUTRANK, NEVER ERASE:** nothing is deleted, so turning it off hands the layer back exactly —
+  the same rule the retire-a-control trap states from the other side.
+  **IT DOES NOT PIN THE CHANGES, deliberately.** A generated part resolves its pitches against the
+  sounding chord, and that is the song rather than variance — so a FIXED layer still follows the
+  progression. Measured over D·F♯m·G: pitch classes 0,4,7 / 4,7,11 / 0,5,9 with Fixed ON.
+  `stateWord` reads `state` and nothing else now; its old `.live` fallback is exactly how "no
+  reasons found" got printed as FIXED.
+- **A DIALOG OVER NOTHING TRAINS PEOPLE TO DISMISS DIALOGS.** `keepGate` promised in its own comment
+  to be "silent when there is nothing to lose", then tested `takeShownNotes().length` — which for a
+  LIVE part is `takeNotesNow()`, the notes the rules are producing *right now*. Nothing is stored,
+  nothing is at risk, and re-rolling is the pressed button's whole job. Measured: all five Material
+  doors leave the part LIVE and every one of them armed the gate. `takeIsWork` is the real test, and
+  it is deliberately **conservative — it only ever answers "no" for a part with NO STORED NOTES**:
+  failing open costs a tap, failing closed costs somebody's work, and a plain note DRAG leaves no
+  marker to tell an edited take from a rolled one (`made` gives provenance, `p.tf` a transform, and
+  neither catches a drag). Do not "improve" this into a cleverer predicate without a marker to
+  stand on.
+- **A STATE THAT OUTLIVES ITS TOAST HAS TO BE READABLE OFF THE CARD.** A part freezes when you tap a
+  note, draw one, drag one, or re-roll a single bar — `captureShown`, which the readout itself
+  invites ("tap a note to edit · a bar or chord to re-roll") without saying it writes the part down.
+  The toast said so and faded; the FROZEN that remained did not. `part.froze` records WHICH gesture,
+  coerced against one table (`FROZE`, engine half, published as `V2.frozeWhy` — the UI half prints
+  it, and a second copy there would be two tables plus the two-IIFE throw) and **dropped the moment
+  the part goes live again**: a reason for a state you are not in is a lie waiting for the next freeze.
 - **⏱ TIMING IS A STAGE IN `notesFor`, NOT A KNOB IN THE EMIT (2026-09-20).** `part.timing` —
   `swingDiv` · `lean` · `odds` · `ratchet` — is applied at the ONE exit every caller passes through,
   beside `tightClip` and `xfStage`, so the drawing, the outlines, ⚙ Deep's preview, capture and

@@ -170,8 +170,13 @@ const ok = (name, cond, detail) => {
   const st2 = await page.evaluate(() => window.__state());
   const un = await page.evaluate(() => window.__passes(8));
   const unN = new Set(un).size;
-  ok('the card calls it FIXED with no reason to offer',
-    st2.state === 'fixed' && st2.tags.length === 0, JSON.stringify(st2));
+  // RE-BASELINED 2026-09-20. This used to assert the LIE: the card called this
+  // FIXED with no tags while every note moved every pass. ⏻ Fixed is a MODE
+  // now (`L.fixed`) and VARIES is the floor, so the zero case reads VARIES —
+  // which is honest here, because the notes do change. The measurement below
+  // is unchanged and still the point.
+  ok('an untouched generated layer reads VARIES — nobody set anything',
+    st2.state === 'varies', JSON.stringify(st2));
   ok('…and its notes change pass to pass anyway (a 2-bar cycle over a 3-bar part)',
     unN > 1, unN + ' distinct note sets over 8 passes');
   console.log('        pass 1: ' + un[0]);
@@ -184,8 +189,12 @@ const ok = (name, cond, detail) => {
   ok('ALIGNING the cycle to the changes is what makes it fixed — one note set',
     alN === 1, alN + ' distinct note sets over 8 passes');
   const st3 = await page.evaluate(() => window.__state());
-  ok('…and the card says exactly the same word either way — the readout cannot tell them apart',
-    st3.state === st2.state && st3.tags.length === st2.tags.length,
+  // Both read VARIES, and that is now CORRECT rather than a failure to tell
+  // them apart: VARIES means "this may change", which is true of both. What
+  // separates them is whether the notes actually move, which the two checks
+  // above measure directly. ⏻ Fixed is how you say "it may not".
+  ok('…and both read VARIES — a permission, not a claim about the notes',
+    st3.state === 'varies' && st2.state === 'varies',
     JSON.stringify(st2) + ' vs ' + JSON.stringify(st3));
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));

@@ -16754,3 +16754,11 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
    recedes rather than disappearing, so the grid still reads as N steps */
 .v2-layer .v2-oddslane .v2-odd.v2-odd-maybe { background: rgba(246,173,85,0.22); color: #f6ad55; }
 .v2-layer .v2-oddslane .v2-odd.v2-odd-off { background: rgba(45,45,63,0.5); color: #6b6b8a; }
+
+/* ⏻ FIXED — the mode, beside the ⟳ Evolve clock it outranks. A control that
+   cannot act is GREYED where it stands, never hidden: a vanished control
+   teaches nothing, while a dimmed one points at its own cause (the same rule
+   the Evolve rows follow under Each cycle). It stays pressable, because the
+   press is how you find out why. */
+.v2-layer .v2-statesw .v2-statebtn.v2-outranked { opacity: 0.4; }
+.v2-layer .v2-statesw .v2-fixtog.on { background: rgba(159,122,234,0.28); color: #e6def8; }

@@ -89,7 +89,11 @@
       catch (e) { return Object.assign({}, L, L.instrument); }
     }
     const i = L.instrument || {};
-    sh.humanize = L.humanize; sh.velVar = L.velVar; sh.fine = L.fine;
+    // \u23fb Humanize and Vel var are the two per-pass draws v1's params builder
+    // reads off this shim, so FIXED has to zero them HERE or the promise breaks
+    // at the first note — Humanize especially, which is unseeded by design and
+    // can never replay.
+    sh.humanize = perfOf(L, 'humanize'); sh.velVar = perfOf(L, 'velVar'); sh.fine = L.fine;
     sh.portamento = L.portamento; sh.voiceTrim = L.voiceTrim;
     sh.attack = i.attack; sh.decay = i.decay; sh.sustain = i.sustain; sh.release = i.release;
     return sh;
@@ -203,9 +207,57 @@
   //             differ) · a chord/section mask at a probability, which is a
   //             per-instance draw
   // Everything else is static by measurement, and saying so is the point.
+  // ── ⏻ FIXED IS A MODE NOW, NOT A VERDICT (2026-09-20) ───────────────────
+  // It used to be COMPUTED: inspect ~15 settings, and if none of them draws,
+  // call it FIXED. Two things were wrong with that and both were reported.
+  //   · It is the ZERO CASE, so a freshly generated layer — nothing set, no
+  //     dice on — read FIXED. "I never chose it to be FIXED." Nobody did.
+  //   · It could be FALSE. Measured: a generated part with no vary and no
+  //     Evolve re-pitched every note every pass, because its cycle did not
+  //     divide the changes; `liveness` counts three ways the harmony can move
+  //     and not the plainest one.
+  // A verdict assembled from fifteen inputs is unreasonable to reason about,
+  // and it can be wrong. A MODE cannot: you set it, and the engine enforces it.
+  // So `L.fixed` is the whole answer — absent = fluid, which is what a new
+  // layer is, and the badge reads VARIES until you say otherwise.
+  // IT MUST ACTUALLY PIN, or it is just the old lie with a switch on it. Every
+  // per-pass draw reads through `perfOf`, the take clock through `fixedOf`, and
+  // NOTHING is deleted — the stored values survive untouched so turning it back
+  // off restores the layer exactly (the retire-a-control trap: outrank, never
+  // erase).
+  // WHAT IT DOES NOT PIN, deliberately: the CHANGES moving under the layer. A
+  // generated part resolves its pitches against the sounding chord, and that is
+  // the song rather than variance — so a FIXED layer still follows the
+  // progression, and the readout says so instead of pretending otherwise.
+  const fixedOf = (L) => !!(L && L.fixed);
+  // ❄ WHY A PART IS FROZEN, in ONE table — in the ENGINE half, because
+  // `normLayer` coerces the stored key and `liveTxt` (the UI half) prints it,
+  // and a second copy over there would be two tables for one fact plus the
+  // documented two-IIFE throw. Published as `V2.frozeWhy`.
+  // Absent = it was already written down — composed, loaded from the bank, or
+  // frozen before this existed — which needs no explanation.
+  const FROZE = {
+    note: ' — froze when you tapped a note to edit',
+    draw: ' — froze when you drew a note',
+    drag: ' — froze when you moved a note',
+    bar: ' — froze when you re-rolled one bar',
+    chord: ' — froze when you re-rolled one chord',
+  };
+  const FROZE_KEYS = FROZE;
+  const frozeWhy = (k) => FROZE[k] || '';
+  // The per-pass draws, in ONE reader — a new die on this axis cannot be added
+  // without coming through here and being outranked with the rest.
+  const perfOf = (L, k) => (fixedOf(L) ? 0 : (L ? L[k] : 0));
   function liveness(L, cfg) {
     const why = [];
     if (!L || !L.part) return { live: false, why, tags: [] };
+    // ⏻ THE MODE OUTRANKS THE INSPECTION. Asked FIRST, so none of the reasons
+    // below are collected for a layer that cannot act on them.
+    if (fixedOf(L)) {
+      return { live: false, state: 'fixed', evolve: null,
+        why: ['Fixed is on — this layer plays the same take every pass'],
+        tags: [] };
+    }
     // `Number.isFinite`, NOT `num` — that helper is declared in the UI IIFE and
     // this is the engine one. The bare name threw straight into `liveTxt`'s
     // catch and every layer answered "Static", including one with the dice on:
@@ -327,7 +379,12 @@
     // amber VARIES would sit over a lime button saying the opposite. VARIES
     // is left to the per-pass dice: timing, loudness, chance, the chords.
     const evEff = (L.part.vary && L.part.kind !== 'recorded') ? 1 : evAny;
-    const state = (evEff > 0) ? 'evolves' : (why.length ? 'varies' : 'fixed');
+    // VARIES IS THE FLOOR, not the "we found a reason" case. FIXED is returned
+    // above and only there, so the zero case — a fresh layer with nothing set —
+    // reads VARIES: it is free to be re-rolled, and \ud83c\udfb2 New take says so.
+    // VARIES is a PERMISSION now ("this may change"), not an observation
+    // ("we proved it does"), which is what makes it always true.
+    const state = (evEff > 0) ? 'evolves' : 'varies';
     return { live: why.length > 0, state, evolve: (evEff > 0) ? { ev: evEff } : null,
       why, tags: tags.filter((x, i, a) => a.indexOf(x) === i) };
   }
@@ -766,6 +823,10 @@
       if (Number.isFinite(L[k]) && L[k]) L[k] = clamp(L[k], 0, 100); else delete L[k];
     });
     if (L.tight) L.tight = 1; else delete L.tight;
+    // \u23fb FIXED \u2014 a MODE the user sets, absent = fluid. Stored as the bare flag
+    // it is, and nothing else is touched: every die it outranks keeps its value
+    // so turning it off restores the layer exactly.
+    if (L.fixed) L.fixed = 1; else delete L.fixed;
     try { if (typeof _ambNormalizeFx === 'function') _ambNormalizeFx(L); } catch (e) {}
     try { if (typeof _ambNormalizeSpread === 'function') _ambNormalizeSpread(L); } catch (e) {}
     try { if (typeof _ambNormalizeUnitGate === 'function') _ambNormalizeUnitGate(L); } catch (e) {}
@@ -1316,6 +1377,13 @@
       p.transpose = clamp((p.transpose | 0) || 0, -48, 48);
       // what was last DONE to these notes (absent on an untouched take)
       if (!TRANSFORMS[p.tf]) delete p.tf;
+      // ❄ …and WHY this part is written down, when a gesture is what wrote it.
+      // Additive, absent on every part that was composed, loaded or frozen
+      // before this existed. Coerced against the one table so a project cannot
+      // carry a reason the readout has no words for, and dropped the moment the
+      // part goes live again — a reason for a state you are not in is a lie
+      // waiting for the next freeze.
+      if (p.kind !== 'recorded' || !FROZE_KEYS[p.froze]) delete p.froze;
       // …and the transforms a GENERATED part applies to every take it makes
       // (`xfStage`): a list of {op, bars?}, additive, absent = none. Unknown
       // ops fall out rather than throwing — the v1 doctrine.
@@ -2669,6 +2737,11 @@
   // gets exactly what the emitter gets. Kept as-is rather than removed: it
   // names the origin this would use if the arrangement ever had one.
   function chgAt(L, ctx, cs, cyc) {
+    // \u23fb FIXED PINS THE TAKE. `chgAt` is the ONE computation of this clock
+    // (the trap this file keeps rediscovering), so outranking Evolve here
+    // outranks it everywhere — the emitter, the drawing and the outlines all
+    // ask through this and cannot disagree.
+    if (fixedOf(L)) return null;
     const c0 = L && L.chg; if (!c0) return null;
     let pi0 = -1;
     try { const w0 = _ambPartPassAt(ctx.E, ctx.cfg, cs); if (w0 && w0.pi >= 0) pi0 = w0.pi | 0; } catch (e) {}
@@ -3167,7 +3240,7 @@
     const chgAm = chg0 ? chg0.am : 100;
     const chgWhat = chg0 ? chg0.what : null;
     const cycIdx = Number.isFinite(TAKE_PIN) ? (TAKE_PIN | 0)
-      : ((L.part && L.part.vary)
+      : ((L.part && L.part.vary && !fixedOf(L))
           ? (Math.round(ctx.cycleStart / Math.max(0.001, cyc)) + (takeOf(L) | 0))
           : ((takeOf(L) | 0) + (chgEpoch | 0)));
     // …and if any bar generates by its own rules, this cycle is a composite of
@@ -3816,7 +3889,7 @@
       const strumAmt = clamp((L.strum | 0), 0, 100);
       if (strumAmt > 0 && ms.length > 1) {
         const spanSec = (strumAmt / 100) * (cyc / Math.max(1, ons.length));
-        const fid = clamp(L.strumFidelity | 0, 0, 100) / 100;
+        const fid = clamp(perfOf(L, 'strumFidelity') | 0, 0, 100) / 100;
         const order = [];
         for (let k2 = 0; k2 < ms.length; k2++) order.push(k2);
         if (fid > 0) {
@@ -4935,7 +5008,7 @@
         // only when non-zero — so a layer with no accent and a neutral groove
         // consumes no draw and shifts nothing downstream.
         try {
-          if (typeof _ambAccentVol === 'function') vol = _ambAccentVol(vol, (L.accent | 0) || 0);
+          if (typeof _ambAccentVol === 'function') vol = _ambAccentVol(vol, (perfOf(L, 'accent') | 0) || 0);
         } catch (e) {}
         if (L.instrument.voice === 'kit' && Number.isFinite(n.lane)) {
           if (L.instrument.kit === 'synth') {
@@ -4970,11 +5043,11 @@
         // SLIDE — v1's own rule: a glide only on a LEAP (3 or more source
         // tones), and only some of the time. Needs the previous degree, which
         // is why the note carries one. Absent or 0 spends no draw.
-        if ((L.slide | 0) > 0 && Number.isFinite(n.deg) && typeof _ambSlideMs === 'function') {
+        if ((perfOf(L, 'slide') | 0) > 0 && Number.isFinite(n.deg) && typeof _ambSlideMs === 'function') {
           try {
             const prev = st._slideDeg;
             if (Number.isFinite(prev)) {
-              const sms = _ambSlideMs({ slide: L.slide | 0 }, prev, n.deg,
+              const sms = _ambSlideMs({ slide: perfOf(L, 'slide') | 0 }, prev, n.deg,
                 () => vRnd((L.id | 0) ^ Math.round(at * 1000), 71));
               if (sms) { params.glideMs = Math.max(params.glideMs || 0, sms); params.glideLayer = adsrShim(L); }
             }
@@ -4984,8 +5057,8 @@
         // MOTION — v1's rule: a seeded detune offset of up to ±18 cents × the
         // amount, ADDED to whatever `fine` already put there (v1's own warning:
         // both write `params.detune`, so this must add rather than replace).
-        if ((L.motion | 0) > 0) {
-          const m3 = clamp(L.motion | 0, 0, 100) / 100;
+        if ((perfOf(L, 'motion') | 0) > 0) {
+          const m3 = clamp(perfOf(L, 'motion') | 0, 0, 100) / 100;
           const d3 = Math.round((vRnd((L.id | 0) ^ Math.round(at * 1000), 103) * 2 - 1) * 18 * m3);
           params.detune = (Number.isFinite(params.detune) ? params.detune : 0) + d3;
         }
@@ -5009,12 +5082,12 @@
         // v1's own `_ambOrnamentFlicks` (which plays them itself, so it needs
         // the dest and the built params). Seeded per onset, so the figure
         // replays for a take rather than fluttering differently every pass.
-        if ((L.ornament | 0) > 0 && Number.isFinite(n.deg) && typeof _ambOrnamentFlicks === 'function') {
+        if ((perfOf(L, 'ornament') | 0) > 0 && Number.isFinite(n.deg) && typeof _ambOrnamentFlicks === 'function') {
           try {
             const src3 = (typeof _ambNotesOf === 'function') ? _ambNotesOf(L) : null;
             if (src3) {
               withKeyTime(at, () => _ambOrnamentFlicks(
-                { ornament: L.ornament | 0 }, src3, n.deg, n.oct | 0, at, params, n.durMs, dest,
+                { ornament: perfOf(L, 'ornament') | 0 }, src3, n.deg, n.oct | 0, at, params, n.durMs, dest,
                 E.laneIdx ? E.laneIdx() : undefined,
                 () => vRnd((L.id | 0) ^ Math.round(at * 1000), 83)));
             }
@@ -6309,6 +6382,8 @@
     // STATIC vs LIVE — a computed property of the settings, not a stored mode.
     // Published because every consumer is in the UI IIFE.
     liveness,
+    fixed: fixedOf,                // \u23fb the mode, for the UI half (two IIFEs)
+    frozeWhy,                      // \u2744 …and why a part is written down
     scaleAt,                       // which pitch classes the keyboard should light
     toneCount: toneCountAt,        // …and how MANY there are, for the controls that index them
     chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
@@ -7698,14 +7773,29 @@
     const frozen = !!(L && L.part && L.part.kind === 'recorded');
     // EVOLVES is the third word (2026-09-19), and it carries its clock —
     // "every N passes" is the fact that separates it from VARIES.
-    const varies = lv.live ? (stateWord(lv) + evoCadence(lv) + ': ' + (lv.tags || lv.why).join(', ')) : 'FIXED';
-    return frozen ? ('FROZEN \u00b7 ' + varies) : varies;
+    // \u23fb FIXED comes from `stateWord` like the other two, never from `.live` —
+    // that fallback is exactly how "no reasons found" got printed as FIXED.
+    const varies = (lv.state === 'fixed')
+      ? 'FIXED'
+      : (stateWord(lv) + evoCadence(lv) +
+         ((lv.tags || lv.why || []).length ? (': ' + (lv.tags || lv.why).join(', ')) : ''));
+    // \u2744 AND WHY IT FROZE, which is the half the toast could not keep. A state
+    // that outlives its toast has to be readable off the card: "I never chose
+    // it to be FIXED" was asked of a part that froze when a note was tapped,
+    // with only the word FROZEN to go on. `part.froze` is additive and absent
+    // on every part that did not get there by a gesture.
+    const why = frozen ? V2.frozeWhy(L.part.froze) : '';
+    return frozen ? ('FROZEN' + why + ' \u00b7 ' + varies) : varies;
   }
   // THE STATE'S WORD, IN ONE PLACE. `liveness().state` is fixed · varies ·
   // evolves; this is the only map from it to a word, and STATE_CLS the only
   // map from the word to its chip class — so a surface cannot know two of
   // the three states. Never derive the word from `.live` or `.tags`.
-  const stateWord = (lv) => (lv && lv.state === 'evolves') ? 'EVOLVES' : ((lv && lv.live) ? 'VARIES' : 'FIXED');
+  // THE ONE MAP FROM STATE TO WORD. Reads `state` and nothing else — it used to
+  // fall back to `.live`, which is how FIXED got returned for "no reasons
+  // found" rather than for "the user set it".
+  const stateWord = (lv) => (lv && lv.state === 'fixed') ? 'FIXED'
+    : ((lv && lv.state === 'evolves') ? 'EVOLVES' : 'VARIES');
   const evoCadence = (lv) => (lv && lv.evolve && lv.evolve.ev > 0)
     ? (' every ' + (lv.evolve.ev === 1 ? 'cycle' : lv.evolve.ev + ' passes')) : '';
   // null-prototyped: a summary value is looked up by name, and a plain object
@@ -7867,13 +7957,30 @@
   // them. The take SEQUENCE is untouched: a take is a function of its index,
   // this only decides how many of the coming ones are drawn.
   const aheadOf = (L) => (L && Number.isFinite(L.ahead)) ? clamp(L.ahead | 0, 0, 7) : 7;
+  // ⏻ THE MODE'S OWN FACE. A one-word state on the button, like the Evolve
+  // toggle beside it: the face says what it IS, not what pressing would do.
+  const fixFace = (L) => V2.fixed(L)
+    ? '⏻ Fixed — the same take every pass'
+    : '⏻ Fixed: off — free to change';
+  const FIX_WHY = (L) => V2.fixed(L)
+    ? 'This layer plays the same take every pass: the dice are off and the take is pinned. Nothing is lost — every setting keeps its value and comes straight back when you turn this off. The chords still move underneath, so the pitches follow the changes.'
+    : 'This layer is free to change — 🎲 New take rolls another, and ⟳ Evolve can re-decide on a clock. Press to pin it to one take.';
+  const CLOCK_FIXED = '⏻ Fixed is on, so Evolve cannot act — turn Fixed off to use it. Your setting is kept.';
   function clockSwHtml(L) {
     const frozen = L.part.kind === 'recorded';
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
     const n = evoEveryOf(L, cfg);
     return '<span class="ambient-seg-row v2-statesw" title="How often the notes are re-decided">' +
-      '<button type="button" class="ambient-seg v2-statebtn v2-evotog' + (n > 0 ? ' on' : '') + (frozen ? ' v2-clockfrozen' : '') + '"' +
-        ' title="' + esc(frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY)) + '">' + clockFace(n) + '</button>' +
+      // ⏻ FIXED — the MODE, beside the clock it outranks. Same row, same
+      // chrome, because they are two settings of one question ("does this
+      // change?") and a mode that sat somewhere else would be the third
+      // control on an axis this card has already split twice.
+      '<button type="button" class="ambient-seg v2-statebtn v2-fixtog' + (V2.fixed(L) ? ' on' : '') + '"' +
+        ' title="' + esc(FIX_WHY(L)) + '">' + fixFace(L) + '</button>' +
+      '<button type="button" class="ambient-seg v2-statebtn v2-evotog' + (n > 0 ? ' on' : '') +
+        (frozen ? ' v2-clockfrozen' : '') + (V2.fixed(L) ? ' v2-outranked' : '') + '"' +
+        ' title="' + esc(V2.fixed(L) ? CLOCK_FIXED : (frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY))) + '">' +
+        clockFace(n) + '</button>' +
       '</span>' +
       // EVERY N — the one number Evolve needs on the face. `st` gives it the
       // card's own id (no -gen), so it is a second control over `chg.ev`
@@ -7894,11 +8001,22 @@
   function clockSwSync(card, L) {
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
     const n = evoEveryOf(L, cfg), frozen = L.part.kind === 'recorded';
+    const fx = V2.fixed(L);
+    // ⏻ the MODE is re-lit from the model here for the same reason the clock
+    // is: every route that moves it ends in a redraw, and a redraw ends here.
+    card.querySelectorAll('.v2-statesw .v2-fixtog').forEach((b) => {
+      b.classList.toggle('on', fx);
+      const face = fixFace(L); if (b.textContent !== face) b.textContent = face;
+      const want = FIX_WHY(L); if (b.title !== want) b.title = want;
+    });
     card.querySelectorAll('.v2-statesw .v2-evotog').forEach((b) => {
       b.classList.toggle('on', n > 0);
       b.classList.toggle('v2-clockfrozen', frozen);
+      // OUTRANKED, NOT GONE — greyed where it stands so it points at its own
+      // cause, which is the rule a vanished row breaks (it teaches nothing).
+      b.classList.toggle('v2-outranked', fx);
       const face = clockFace(n); if (b.textContent !== face) b.textContent = face;
-      const want = frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY);
+      const want = fx ? CLOCK_FIXED : (frozen ? CLOCK_FROZEN : (n > 0 ? CLOCK_ON_WHY : CLOCK_OFF_WHY));
       if (b.title !== want) b.title = want;
     });
     if (n > 0) card.querySelectorAll('.v2-evoevery .v2-f[data-f="chg.ev"]').forEach((i) => {
@@ -10715,6 +10833,27 @@
       return V2.takeNotesNow(E, L) || [];
     } catch (e) { return []; }
   }
+  // ── IS THERE ANYTHING HERE A PERSON MADE? (2026-09-20) ──────────────────
+  // The gate above says it is "silent when there is nothing to lose", and then
+  // asks whenever the take has NOTES — which for a LIVE part means the notes
+  // the rules are producing right now. Nothing is stored, nothing is at risk,
+  // and re-rolling is the entire job of the button being pressed. Reported
+  // exactly that way: "I just generated some chords … when I hit the new take
+  // button, I get hit with a confirmation modal; I want to be able to just hit
+  // new take at will". Measured: all five Material doors leave the part LIVE,
+  // and every one of them armed the gate.
+  // A dialog over nothing is what trains a person to dismiss dialogs without
+  // reading them — and then the one that mattered goes with it, which is the
+  // reason this gate exists at all.
+  // CONSERVATIVE BY CONSTRUCTION: this only ever answers "no" for a part with
+  // NO STORED NOTES. A written part still asks, every time, whatever made it —
+  // failing open costs a tap, failing closed costs somebody's work, and a
+  // plain note DRAG leaves no marker to tell an edited take from a rolled one.
+  function takeIsWork(L) {
+    const p = L && L.part;
+    if (!p) return false;
+    return p.kind === 'recorded' && (p.notes || []).length > 0;
+  }
   // `o` = { title, head, saveLabel, goLabel, ctx, go }. `ctx()` RE-RESOLVES the
   // layer: the count above runs `getCfg` on a live part and the popover's own
   // actions are deferred a tick past its dismiss, so an `L` captured at press
@@ -10723,7 +10862,9 @@
   function keepGate(E, L, o) {
     const n = takeShownNotes(E, L).length;
     const run = () => { const c = o.ctx(); if (c) o.go(c); };
-    if (!n || typeof _ambActionsPopover !== 'function') { run(); return; }
+    // `takeIsWork` is the "nothing to lose" test this gate's own comment
+    // promises; the note COUNT is only what the popover says once it opens.
+    if (!n || !takeIsWork(L) || typeof _ambActionsPopover !== 'function') { run(); return; }
     const save = () => {
       const c = o.ctx(); if (!c) return;
       const nm = saveTakeFn(E, c.L);
@@ -10742,7 +10883,7 @@
       { label: o.goLabel, danger: true, fn: run },
     ]);
   }
-  function captureShown(E, L, bars) {
+  function captureShown(E, L, bars, why) {
     let at = null;
     try {
       const pv = V2.previewCycle && V2.previewCycle();
@@ -10753,7 +10894,10 @@
     if (Array.isArray(bars) && bars.length) o.bars = bars;
     // a REPLACE rolls fresh; a first LOCK freezes exactly the take drawn
     if (L.part.kind === 'recorded' && (L.part.notes || []).length) o.reroll = true;
-    return V2.capture(E, L, o);
+    const okc = V2.capture(E, L, o);
+    // \u2744 REMEMBER WHY. The toast that used to say this fades; the state does not.
+    try { if (okc && why && L.part && L.part.kind === 'recorded') L.part.froze = why; } catch (e) {}
+    return okc;
   }
   // Normalize REPLACES every note object (it maps and re-sorts), so an index is
   // only good until the next `getCfg`. Notes are re-found by WHAT THEY ARE.
@@ -17242,7 +17386,7 @@
         if (px < pl.x0 || py < pg.top) return null;
         let locked = false;
         if (L.part.kind !== 'recorded') {
-          if (!captureShown(E2, L)) {
+          if (!captureShown(E2, L, null, 'draw')) {
             try { if (typeof showToast === 'function') showToast(
               'Nothing to draw into yet — press 🎲 New take first.', { ms: 3500 }); } catch (e) {}
             return null;
@@ -17349,7 +17493,7 @@
           // no stored notes to move) and the release then locked and rebuilt
           // the card, so the picture only moved once you let go.
           if (L.part.kind !== 'recorded') {
-            if (!captureShown(E, L)) return;           // nothing rolled yet
+            if (!captureShown(E, L, null, 'drag')) return;   // nothing rolled yet
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             try { if (typeof showToast === 'function') showToast(
               '\u2744 Froze this take so its notes can be moved \u2014 ' +
@@ -18115,6 +18259,38 @@
           return;
         }
 
+        // ⏻ FIXED — the MODE. One flag, and nothing else is touched: every die
+        // it outranks keeps its stored value, so turning it off hands the layer
+        // back exactly as it was. It changes what the NEXT cycles play, so it
+        // takes the same follow-through as Evolve below (cancel the future,
+        // drop the phase, redraw) and no more.
+        const fxt = t.closest('.v2-fixtog');
+        if (fxt) {
+          const ctx = layerOf(fxt); if (!ctx) return;
+          if (ctx.L.fixed) delete ctx.L.fixed; else ctx.L.fixed = 1;
+          const on = !!ctx.L.fixed;
+          try { E.getCfg(); } catch (e) {}
+          // ⚙ Deep open on this layer edits a STAGED copy — write it too, or
+          // its ✓ Done hands the old mode back (the same rule Evolve follows).
+          try { const S = V2.stagedOf(ctx.L.id | 0); if (S && S !== ctx.L) {
+            if (on) S.fixed = 1; else delete S.fixed; } } catch (e) {}
+          fxt.classList.toggle('on', on);
+          fxt.textContent = fixFace(ctx.L);
+          fxt.title = FIX_WHY(ctx.L);
+          try { clockSwSync(ctx.card, ctx.L); } catch (e) {}
+          try { applyGate(ctx.card, ctx.L); } catch (e) {}
+          // APPLY NOW, not when the schedule runs dry — the same cancel +
+          // drop-phase pair every other live edit here does.
+          try {
+            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+              cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now());
+            }
+          } catch (e) {}
+          try { if (E._v2Phase) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
+          try { if (V2.isStaged(ctx.L)) stageVizDraw(ctx.card, ctx.L); else drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
         // ⟳ EVOLVE — the face's one button over the re-decide clock
         // (`clockSwHtml`). Same follow-through as Each cycle below: it
         // changes what the NEXT cycles play.
@@ -19101,7 +19277,7 @@
             // new take has to be rolled and re-frozen (a take pin would change
             // nothing).
             if (c2.L.part.kind === 'recorded') {
-              if (!captureShown(E, c2.L, selBarsN)) {
+              if (!captureShown(E, c2.L, selBarsN, 'bar')) {
                 try { showToast('Nothing to roll \u2014 this cycle is empty. Check the live Rhythm settings.', { ms: 4500 }); } catch (e) {}
                 return;
               }
@@ -19415,7 +19591,7 @@
           const lab2 = BARPOP.nm || bs.map((k2) => V2.regLabel(k2)).join(' + ');
           if (ctx.L.part.kind === 'recorded') {
             if (!replaceOK(ctx.L, bs)) return;
-            if (!captureShown(E, ctx.L, bs)) {
+            if (!captureShown(E, ctx.L, bs, 'bar')) {
               try { showToast('Nothing to roll \u2014 these bars come out empty with these settings.', { ms: 4500 }); } catch (e) {}
               return;
             }

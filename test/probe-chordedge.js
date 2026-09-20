@@ -118,6 +118,41 @@ const ok = (name, cond, detail) => {
       }).join(' ');
     };
 
+    // ── AND THE SAME BOUNDARY DECIDES HOW LONG A NOTE IS DRAWN ───────────
+    // `_ambChordEndAt` asks the same question to find where a note is released,
+    // and it was asking it bare: for an onset exactly on a change it bisected
+    // for the end of the WRONG chord — the note's own onset — so `end > atSec`
+    // failed and the choke did not fire at all. Measured on 2-bar notes, the
+    // same take came out 1988 ms on one cycle start and 4000 ms on the next.
+    // A 5 ms tolerance: the boundary comes from a 14-step bisection with ~0.5 ms
+    // resolution, so neighbouring cycle starts legitimately differ by under a
+    // millisecond (sub-pixel, and far below the 2000 ms swing this is for).
+    const chokeSweep = () => {
+      const key = 'v2:' + L.id;
+      L.part.notes.forEach((n) => { n.dur = 2 / 3; });      // 2 bars of a 3-bar cycle
+      E.getCfg(); E._cfg = E.getCfg();
+      const rows = [];
+      for (let i = 0; i < 120; i++) {
+        const X = i * 0.0173 + 0.37;
+        E._progAnchor = X; E._playStartAt = X; E._barGridAnchor = X;
+        const ns = window._v2.withEdit(() => window._v2.notesFor(L,
+          { E, cfg: E.getCfg(), key, cycleStart: X, cycleSec: 6 })) || [];
+        const by = {};
+        ns.forEach((n) => { const k = Math.round((n.at - X) * 1000); if (!by[k]) by[k] = n; });
+        rows.push(Object.keys(by).sort((a, b) => a - b).map((k) => {
+          const n = by[k];
+          try { return Math.round(window._ambNoteChoke(key, n.at, n.durMs, {})); } catch (e) { return -1; }
+        }));
+      }
+      const first = rows[0];
+      let worst = 0, at = null;
+      rows.forEach((r, i) => r.forEach((v, j) => {
+        const d = Math.abs(v - first[j]);
+        if (d > worst) { worst = d; at = { X: (i * 0.0173 + 0.37), got: r }; }
+      }));
+      return { worst, first, at };
+    };
+
     const out = [];
     [['a FROZEN take, chordlocked (the reported shape)', () => frozen('chordlock')],
      ['a FROZEN take, following the changes diatonically', () => frozen('diatonic')],
@@ -132,15 +167,26 @@ const ok = (name, cond, detail) => {
       out.push({ nm, n: seen.size,
         rows: [...seen.entries()].slice(0, 4).map(([s, X]) => 'cycleStart ' + X.toFixed(4) + '  ' + s) });
     });
-    return out;
+    frozen('chordlock');
+    return { out, choke: chokeSweep() };
   });
 
   console.log('  240 cycle starts each, anchors pinned — the answer must not depend on which:\n');
-  run.forEach((r) => {
+  run.out.forEach((r) => {
     ok(r.nm + ' — one harmonisation across every cycle start',
       r.n === 1, r.rows.join('\n      '));
     if (r.n === 1) console.log('      ' + r.rows[0]);
   });
+
+  // …and the LENGTHS, over the same ladder
+  const ck = run.choke;
+  ok('a note on a change is choked the same way at every cycle start',
+    ck.worst <= 5,
+    'cycleStart 0.3700  ' + ck.first.join(', ') +
+    (ck.at ? ('\n      cycleStart ' + ck.at.X.toFixed(4) + '  ' + ck.at.got.join(', ')) : '') +
+    '\n      worst disagreement: ' + ck.worst + ' ms');
+  if (ck.worst <= 5) console.log('      lengths ' + ck.first.join(', ') +
+    '  (worst spread across 120 cycle starts: ' + ck.worst + ' ms)');
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

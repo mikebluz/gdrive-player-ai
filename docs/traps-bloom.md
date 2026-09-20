@@ -379,6 +379,18 @@
   definition, because the five of them disagreeing at a boundary is the same bug five ways. This
   file had already recorded this class twice ("`cs` … one ULP below its own boundary") — when a
   picture changes by a step or two at a bar line, suspect the boundary before the rules.
+- **THE BOUNDARY IS ASKED IN TWO FILES, AND BOTH HAVE TO AGREE.** Fixing `chgTime()` in
+  18-layer-v2.js fixed the PITCHES and left the LENGTHS flipping — `_ambChordEndAt` (17-ambient.js,
+  the choke's resolver) was asking `_ambProgStepAt(E, atSec)` bare. For an onset exactly on a change
+  it then bisects for the end of the WRONG chord, which IS that onset, so `end > atSec` fails and
+  **the choke does not fire at all**: measured, 2-bar notes came out 1988 ms at one cycle start and
+  4000 ms at the next, on the same take. `_AMB_CHG_EPS` is the same 0.1 ms for the same reason.
+  v2 decides WHICH CHORD a note is in and v1 decides WHERE THAT CHORD ENDS — one boundary, two
+  files, and a half-fix reads as a different bug ("it's still doing the truncation"). The residual
+  spread is ~1 ms, which is the bisection's own ~0.5 ms resolution, not a misassignment; gate it
+  with a tolerance, not on equality. **v1's per-onset emitters (`_ambProgStepAt(E, at)` at ~12613,
+  12762, 13059, 13529, 14569) still ask bare** — untouched deliberately, since golden-render and
+  arch-parity are green as they stand; treat them as the next place this shows.
 - **A GATE DRIVEN BY REAL PRESSES CAN BE A LOTTERY.** The first version of `probe-chordedge.js`
   drove ▶ Preview eight times and asserted the pitches agreed — and it PASSED with the fix reverted,
   because a press lands on a bad cycle start only about one time in eight. A poison that passes is

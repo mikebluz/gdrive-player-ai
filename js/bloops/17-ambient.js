@@ -42403,6 +42403,20 @@
     // monotonic in time, so a bisection on it finds the boundary and agrees with
     // the engine by construction.
     const _AMB_CHOKE_GAP = 0.012;        // leave the boundary clean, as the bed choke does
+    // A NOTE THAT BEGINS ON A CHANGE BELONGS TO THAT CHANGE (2026-09-20).
+    // `_ambProgStepAt` differences an ABSOLUTE time against an absolute anchor,
+    // so an onset sitting EXACTLY on a change is a subtraction of two large,
+    // nearly equal doubles and lands either side of its own boundary depending
+    // on the wall clock. Measured, the SAME onset at 2000 ms: step 0 from a
+    // cycle start of 0.3873 and step 1 from 0 or 9.38. `_ambChordEndAt` then
+    // bisects for the end of the WRONG chord — which for an on-change note is
+    // the note's own onset, so `end > atSec` fails and the choke does not fire
+    // AT ALL. That is why the same take drew full-length notes on one Preview
+    // press and truncated ones on the next ("it's still doing the truncation").
+    // Same 0.1 ms and same reasoning as `chgTime()` in 18-layer-v2.js; the two
+    // files each own one half of "which change is this note in" and both have
+    // to agree or the picture and the ear part company at every bar line.
+    const _AMB_CHG_EPS = 1e-4;
     let _ambChokeMemo = null;            // { sig, at, end } — one entry; steps repeat, so it hits
     // Does ANY chord carry its own length? When none does, every chord is exactly
     // barsPerChord and the callers below keep their original arithmetic — so a
@@ -42472,7 +42486,9 @@
       const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       let step0;
-      try { step0 = _ambProgStepAt(E, atSec) | 0; } catch (e) { return 0; }
+      // …asked PAST the boundary (see `_AMB_CHG_EPS`): an onset exactly on a
+      // change must resolve to the change it starts, not the one before it.
+      try { step0 = _ambProgStepAt(E, atSec + _AMB_CHG_EPS) | 0; } catch (e) { return 0; }
       // One-entry memo: consecutive notes in a chord ask the same question.
       const sig = step0 + '|' + (E._barGridAnchor || 0) + '|' + (E._progAnchor || 0) + '|' + bpm;
       if (_ambChokeMemo && _ambChokeMemo.sig === sig && _ambChokeMemo.end > atSec) return _ambChokeMemo.end;

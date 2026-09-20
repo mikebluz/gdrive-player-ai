@@ -240,6 +240,11 @@
   stamp \u2014 so a new Shape tab appears in Tweaks automatically while a new Content tab cannot leak in.
   \u273a Playing was a section over the SHAPE group carved out by one tab (`SEC_EXCL`, now empty), so
   merging Shape re-absorbed it. `secForTab` asks the spans FIRST: neither Shape nor Time is a section.
+  **FILTERING A ROW OUT OF A SHEET IS TWO THINGS:** dropping it from the tab grouping AND hiding it.
+  `syncSheet`'s visibility pass walks `tabs`, so a row filtered out before the grouping is in no tab,
+  never gets `v2-rowoff`, and stays on screen \u2014 \u2699 Deep's Method and the Bank showed under Tweaks'
+  Cycle tab within the hour. The span filter adds the class as it drops a row; the section that owns
+  the row toggles it off when the row lands in its own active tab.
   **\u266b ConFUGUED IS A PITCH KIND, NOT A ONE-OFF (2026-09-19, built to order).** `pitch.kind:
   'confug'` \u2014 N notes (2\u20135) at every onset, stacked by N\u22121 STATED semitone intervals (1\u201324), the
   order permuted per onset (up \u00b7 down \u00b7 alternate \u00b7 rotate \u00b7 random, seeded), each note bent toward the

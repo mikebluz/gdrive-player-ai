@@ -15867,11 +15867,23 @@
     // A SPAN CLAIMS PART OF A GROUP: the row's own `data-v2g` stamp says which
     // group it came from, so Content's Cycle/Bars/Every/Speed come through and
     // its Method/Pitch/Harmony do not — while Shape arrives whole (`'*'`).
+    // A ROW DROPPED FROM THE TAB LIST MUST STILL BE HIDDEN. The visibility
+    // pass at the tail of this function walks `tabs` — so a row filtered out
+    // HERE is in no tab, never gets `v2-rowoff`, and simply stays on screen:
+    // ⚙ Deep's Method and the Bank sat under ♯ Tweaks' Cycle tab, reported
+    // within the hour. Filtering a row out of a sheet is two things, not one
+    // (2026-09-19). Adding the class is safe because the section that DOES
+    // own the row toggles it off when that row lands in its active tab.
     const span = (POP && SEC_SPAN[POP.grp]) || null;
-    if (span) rows = rows.filter((r) => {
-      const a = span[(r.dataset && r.dataset.v2g) || ''];
-      return !!a && (a === '*' || a.indexOf(popTabName(r)) >= 0);
-    });
+    if (span) {
+      const keep = [];
+      rows.forEach((r) => {
+        const a = span[(r.dataset && r.dataset.v2g) || ''];
+        if (a && (a === '*' || a.indexOf(popTabName(r)) >= 0)) keep.push(r);
+        else r.classList.add('v2-rowoff');
+      });
+      rows = keep;
+    }
     const tabs = [], byName = {};
     rows.forEach(row => {
       const name = popTabName(row);

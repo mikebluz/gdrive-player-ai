@@ -16731,3 +16731,26 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 .v2-layer .v2-madeby .ambient-seg { flex: 1 1 0; min-width: 0; white-space: nowrap; }
 /* the switch names its question — two lit-or-not chips alone read as commands */
 .v2-layer .v2-madeby .v2-madelab { align-self: center; white-space: nowrap; flex: 0 0 auto; margin-right: 2px; }
+
+/* ⏱ ODDS — a probability per step, drawn as a BAR GRID like `.lane-chips`.
+   The cells are `.ambient-step-btn` so they read as the card's own chrome
+   rather than invented buttons — but that token is a FIXED 34px flex item,
+   and eight of those overflow a phone row. This file's first rule is that
+   nothing scrolls sideways, so they become grid cells that SHRINK: `1fr`
+   columns (set inline, because the count is the part's own step count) and
+   `min-width: 0`, which is what lets a grid item go below its content width.
+   Only the column count is inline; everything visual lives here. */
+.v2-layer .v2-oddsrow { align-items: start; }
+/* `.ambient-ctrl` is a GRID, not a flex row — measured, `flex: 1 1 auto` did
+   nothing here and the lane was handed 9px of the control column. Eight cells
+   want the whole width, so the lane takes a line of its own under the label. */
+.v2-layer .v2-oddslane { display: grid; gap: 2px; min-width: 0; grid-column: 1 / -1; }
+.v2-layer .v2-oddslane .v2-odd {
+  width: auto; min-width: 0; padding: 0; overflow: hidden;
+  min-height: 26px; border-radius: 5px;
+  font: 700 0.62rem 'Segoe UI', sans-serif;
+}
+/* a MAYBE wears the amber the triplet badge uses for "not exact"; an OFF step
+   recedes rather than disappearing, so the grid still reads as N steps */
+.v2-layer .v2-oddslane .v2-odd.v2-odd-maybe { background: rgba(246,173,85,0.22); color: #f6ad55; }
+.v2-layer .v2-oddslane .v2-odd.v2-odd-off { background: rgba(45,45,63,0.5); color: #6b6b8a; }

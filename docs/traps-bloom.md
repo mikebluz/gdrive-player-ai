@@ -379,6 +379,38 @@
   definition, because the five of them disagreeing at a boundary is the same bug five ways. This
   file had already recorded this class twice ("`cs` … one ULP below its own boundary") — when a
   picture changes by a step or two at a bar line, suspect the boundary before the rules.
+- **⏱ TIMING IS A STAGE IN `notesFor`, NOT A KNOB IN THE EMIT (2026-09-20).** `part.timing` —
+  `swingDiv` · `lean` · `odds` · `ratchet` — is applied at the ONE exit every caller passes through,
+  beside `tightClip` and `xfStage`, so the drawing, the outlines, ⚙ Deep's preview, capture and
+  playback cannot disagree about when a note fires. **Swing used to be added in the emit loop**, so
+  the picture never had it: measured, swing 100 delayed every odd slot 125 ms while `notesFor`
+  returned 0·250·500·750 unchanged. Moving it was a DELETE from the emit, not a copy — applying it
+  in both places doubles it. Anything new that MOVES an onset goes in this stage.
+  **SWING IS A WARP, NOT A PARITY TEST.** "Round to a slot index and delay the odd ones" only holds
+  while every onset is exactly on the grid, and off-grid onsets are normal here (`rateVar`,
+  Groundwork, a hand-drawn part). Measured on a 16-onset part swung in 8ths, `Math.round` put two
+  onsets on the same time — a note silently eaten. It is piecewise-linear through each pair with the
+  midpoint moved late by exactly `swSec`: monotonic, so onsets can never cross, and a note ON the
+  grid moves by exactly what it always did, so existing layers do not budge.
+  **THE AMOUNT STAYS `L.swing`** — the field the Area Groove macro folds into (`_ambSwingSec`);
+  `timing.swingDiv` only picks which grid the pairs are counted in. A second amount would be the
+  third time this card grew two controls for one value.
+  `odds` is additive over `rhythm.chance`, deliberately: Rests/chance is one number for the whole
+  grid, Odds is a statement about ONE step. 100 is stored as ABSENT, so an untouched lane costs
+  nothing. NOTE: `docs/bloom-stochastic-controls.md` is generated from v1's `_AMB_STOCH` and does
+  NOT know about these — they are part-level v2 fields.
+- **`.ambient-ctrl` IS A GRID, NOT A FLEX ROW.** `flex: 1 1 auto` on a control inside one does
+  nothing — measured, the Odds lane was handed 9px of the control column and its cells came out
+  0 wide. A full-width control there takes `grid-column: 1 / -1`. And `.ambient-step-btn` is a
+  FIXED 34px flex item, so eight of them overflow a phone row: as grid cells they need
+  `width: auto; min-width: 0` (a grid item's default `min-width: auto` is what stops it shrinking).
+  Measure `scrollWidth` vs `clientWidth` on the lane, not just its right edge against its parent's —
+  the first check passed while the content was still overflowing.
+- **REPAINTING A LANE WITH `innerHTML` KILLS THE CELL UNDER THE FINGER.** The Odds lane rebuilt its
+  own markup after each tap, which detaches the button that was just pressed — the next tap lands on
+  a node with no ancestors and the delegated handler never fires. Measured as six taps producing one
+  step. Update the cells IN PLACE (textContent + classList) and repaint FROM THE STORE, never from
+  the value you just wrote (normalize may have pruned it).
 - **THE BOUNDARY IS ASKED IN TWO FILES, AND BOTH HAVE TO AGREE.** Fixing `chgTime()` in
   18-layer-v2.js fixed the PITCHES and left the LENGTHS flipping — `_ambChordEndAt` (17-ambient.js,
   the choke's resolver) was asking `_ambProgStepAt(E, atSec)` bare. For an onset exactly on a change

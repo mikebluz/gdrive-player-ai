@@ -1225,6 +1225,62 @@
       else delete s.slip;
     }
     {
+      // ── ⏱ TIMING — HOW THE ONSETS SIT AGAINST THE GRID ──────────────────
+      // `rhythm` says WHERE the grid is; this says how a player sits on it.
+      // ADDITIVE AND ABSENT BY DEFAULT, like every field added since: a part
+      // that never opened Timing stores nothing and is byte-identical.
+      // It applies to a WRITTEN part too — a phrase you drew can swing.
+      const tm = (p.timing && typeof p.timing === 'object') ? p.timing : null;
+      if (tm) {
+        // WHICH GRID THE SWING PAIRS ARE COUNTED IN, in steps per BAR. Absent =
+        // the part's own rhythm grid, which is what swing has always used, so
+        // an existing layer is unchanged. The AMOUNT stays `L.swing` — one
+        // field, one door: it is the field the Area Groove macro folds into
+        // (`_ambSwingSec`), and a second amount here would be the third time
+        // this card grew two controls for one value.
+        // `| 0` FIRST: a <select> commits its value as a STRING, so a strict
+        // `=== 8` would have deleted the setting the moment it was chosen —
+        // the control would have looked dead. Coerce, then check.
+        const sd = tm.swingDiv | 0;
+        if (sd === 8 || sd === 16) tm.swingDiv = sd; else delete tm.swingDiv;
+        // LEAN — a CONSTANT push or drag in ms, negative = ahead of the beat.
+        // Distinct from `rateVar`, which is a symmetric per-onset SCATTER:
+        // this one moves the whole part and does not draw at all. Naming them
+        // apart matters — one axis with two vocabularies reads as two
+        // mechanisms (the house rule).
+        if (Number.isFinite(tm.lean) && (tm.lean | 0) !== 0) tm.lean = clamp(tm.lean | 0, -60, 60);
+        else delete tm.lean;
+        // ODDS — a per-STEP probability, sparse and keyed by step index, so a
+        // part that names one step stores one entry. Absent = the step plays,
+        // which is what keeps this additive over `rhythm.chance` (one number
+        // for the whole grid) rather than replacing it.
+        if (tm.odds && typeof tm.odds === 'object') {
+          const o2 = {};
+          Object.keys(tm.odds).forEach((k) => {
+            const i = k | 0; if (!(i >= 0) || i > 63) return;
+            const v = tm.odds[k];
+            if (!Number.isFinite(v)) return;
+            const pc = clamp(v | 0, 0, 100);
+            if (pc !== 100) o2[String(i)] = pc;          // 100 is "plays", i.e. absent
+          });
+          if (Object.keys(o2).length) tm.odds = o2; else delete tm.odds;
+        } else if (tm.odds !== undefined) delete tm.odds;
+        // RATCHET — a chance that one onset becomes N fast hits. `spread` is a
+        // NAMED shape rather than a typed list, for the same reason `series` is
+        // (a project cannot store a pattern the engine does not know).
+        if (tm.ratchet && typeof tm.ratchet === 'object' &&
+            Number.isFinite(tm.ratchet.chance) && (tm.ratchet.chance | 0) > 0) {
+          const rt = tm.ratchet;
+          tm.ratchet = {
+            chance: clamp(rt.chance | 0, 1, 100),
+            hits: clamp((rt.hits | 0) || 2, 2, 4),
+            spread: /^(even|accel|decel)$/.test(rt.spread) ? rt.spread : 'even',
+          };
+        } else if (tm.ratchet !== undefined) delete tm.ratchet;
+        if (!Object.keys(tm).length) delete p.timing;
+      } else if (p.timing !== undefined) delete p.timing;
+    }
+    {
       // RECORDED — literal notes. `t` is a fraction of the cycle [0,1), `midi`
       // absolute, `dur` in beats-of-the-cycle so a tempo change scales it.
       if (!Array.isArray(p.notes)) p.notes = [];
@@ -2746,6 +2802,110 @@
     }
     return out;
   }
+  // ── ⏱ TIMING — HOW THE ONSETS SIT AGAINST THE GRID ──────────────────────
+  // `onsetsOf` says WHERE the grid is. This says how a player sits on it:
+  // SWING (delay every second slot), LEAN (the whole part ahead of or behind
+  // the beat) and RATCHET (an onset becomes N fast hits).
+  //
+  // APPLIED HERE, at the ONE exit every caller passes through — the same place
+  // and the same reason as `tightClip`. Swing used to be applied in the EMIT
+  // LOOP instead, which meant the picture did not have it: measured, swing 100
+  // delayed every odd slot by 125 ms while `notesFor` returned 0·250·500·750
+  // unchanged, so the drawing, the outlines and ⚙ Deep's preview all showed
+  // straight 8ths over a shuffling layer. Anything that MOVES an onset goes
+  // here, or the picture and the ear part company again.
+  //
+  // ON THE OUTPUT, DELIBERATELY, not on the onsets. Pitch has already been
+  // resolved at the grid position, so a swung note still belongs to the chord
+  // of the slot it came from — which is both what a player does and what keeps
+  // this stage clear of the change-boundary arithmetic (`chgTime`).
+  //
+  // SEEDED FROM THE TAKE, so a ratchet falls the same way every pass and the
+  // picture can show it. `ctx._seedBase` is the take's own seed, stashed by
+  // `notesForRaw` — never a second computation.
+  function timingStage(L, ctx, out) {
+    const p = L && L.part; const tm = p && p.timing;
+    const swAmt = (() => { try { return (typeof _ambSwingSec === 'function') ? 1 : 0; } catch (e) { return 0; } })();
+    if (!Array.isArray(out) || !out.length) return out;
+    const cyc = Math.max(0.05, +ctx.cycleSec || 2);
+    const cs = +ctx.cycleStart || 0;
+    // SWING — the AMOUNT is `L.swing` (the field the Area Groove macro folds
+    // into); `timing.swingDiv` only chooses which grid the pairs are counted
+    // in. Absent = the part's own rhythm grid, which is what it has always
+    // used, so an existing layer does not move.
+    let slotSec = 0, swSec = 0;
+    if (swAmt) {
+      const bars = Math.max(0.125, +p.bars || 1);
+      const perBar = (tm && tm.swingDiv) ? (tm.swingDiv | 0) : 0;
+      const steps = perBar ? Math.max(1, Math.round(perBar * bars))
+                           : Math.max(1, ((p.rhythm && p.rhythm.steps) | 0) || 16);
+      slotSec = cyc / steps;
+      try { swSec = _ambSwingSec(L, slotSec) || 0; } catch (e) { swSec = 0; }
+    }
+    const lean = (tm && Number.isFinite(tm.lean)) ? (tm.lean | 0) / 1000 : 0;
+    const rt = tm && tm.ratchet;
+    if (!swSec && !lean && !rt) return out;                   // nothing to do, nothing spent
+    const seed = (ctx && Number.isFinite(ctx._seedBase)) ? (ctx._seedBase | 0) : 0;
+    const rnd = (rt && typeof _ambSeededRand === 'function')
+      ? _ambSeededRand((((seed ^ 0x5bf03635) * 2654435761) >>> 0)) : null;
+    const res = [];
+    for (let i = 0; i < out.length; i++) {
+      const n = out[i];
+      if (!n || !Number.isFinite(n.at)) { res.push(n); continue; }
+      let at = n.at;
+      if (swSec > 0 && slotSec > 0) {
+        // A WARP, NOT A PARITY TEST. Swing delays the second half of each PAIR
+        // of slots, and the obvious way to write that — round to a slot index
+        // and delay the odd ones — only works while every onset sits exactly on
+        // the grid. Measured with a 16-onset part swung in 8ths, `Math.round`
+        // put two different onsets on the same parity and they landed on the
+        // SAME TIME (0, 250, 375, 375, …): a collision, i.e. a note silently
+        // eaten. Off-grid onsets are normal here — `rateVar`, Groundwork and a
+        // hand-drawn part all make them.
+        // So map position CONTINUOUSLY through the pair: piecewise-linear with
+        // the midpoint moved late by exactly `swSec`. Monotonic (the shift is
+        // at most a quarter of the pair), so two onsets can never cross or
+        // collide, and a note ON the grid moves by exactly what it always did —
+        // u = 0 stays, u = 0.5 moves `swSec` — so existing layers do not budge.
+        const P = slotSec * 2;
+        const d = Math.min(0.49, swSec / P);            // the midpoint's shift, as a share of the pair
+        const rel = at - cs;
+        const pair = Math.floor(rel / P);
+        const u = (rel - pair * P) / P;
+        const u2 = (u <= 0.5) ? u * ((0.5 + d) / 0.5)
+                              : (0.5 + d) + (u - 0.5) * ((0.5 - d) / 0.5);
+        at = cs + (pair + u2) * P;
+      }
+      at += lean;
+      // never before the cycle it belongs to, never past its end
+      at = Math.max(cs, Math.min(cs + cyc - 0.001, at));
+      const m = Object.assign({}, n, { at });
+      if (!rt || !rnd || !(n.freq > 0)) { res.push(m); continue; }
+      if (rnd() * 100 >= rt.chance) { res.push(m); continue; }
+      // RATCHET — the onset becomes `hits` fast repeats of the SAME note, which
+      // is what a ratchet is; they share the pitch, so nothing about the
+      // harmony moves. The span is the note's own length, so a ratchet can
+      // never run into the next onset that `tightClip` has not already sized.
+      const hits = clamp(rt.hits | 0, 2, 4);
+      const span = Math.max(0.02, (m.durMs || 0) / 1000);
+      // SPREAD — even · accelerating · decelerating, as offsets within the span
+      const wts = [];
+      for (let h = 0; h < hits; h++) {
+        const f = hits > 1 ? h / (hits - 1) : 0;
+        wts.push(rt.spread === 'accel' ? f * f : rt.spread === 'decel' ? (1 - (1 - f) * (1 - f)) : f);
+      }
+      const each = Math.max(0.015, span / hits);
+      for (let h = 0; h < hits; h++) {
+        res.push(Object.assign({}, m, {
+          at: Math.min(cs + cyc - 0.001, m.at + wts[h] * (span - each)),
+          durMs: Math.round(each * 1000),
+          ratchet: 1,
+        }));
+      }
+    }
+    res.sort((a, b) => a.at - b.at);
+    return res;
+  }
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
@@ -2755,7 +2915,7 @@
     // — read it, and audio, drawing and outlines all come through here, so
     // the three cannot disagree. Saved and restored: `notesFor` nests.
     let sv = null; try { sv = window._ambSaltLayer; window._ambSaltLayer = L; } catch (e) {}
-    try { return tightClip(L, xfStage(L, ctx, notesForRaw(L, ctx))); }
+    try { return tightClip(L, timingStage(L, ctx, xfStage(L, ctx, notesForRaw(L, ctx)))); }
     finally { try { window._ambSaltLayer = sv; } catch (e) {} }
   }
   function notesForRaw(L, ctx) {
@@ -3252,6 +3412,9 @@
       const rest = (typeof _ambEffRest === 'function') ? (_ambEffRest(L) | 0) : (L.restProb | 0);
       const ghost = L.ghosts | 0, lvar = L.lenVary | 0;
       const rateV = clamp((p.rhythm && p.rhythm.rateVar) | 0, 0, 100);
+      // ⏱ Odds, resolved once for the loop — absent is the common case and
+      // costs one property read rather than a lookup per onset.
+      const tmOdds = (p.timing && p.timing.odds && typeof p.timing.odds === 'object') ? p.timing.odds : null;
     // ONE memory per cycle — that is what makes a proximity-shaped line
     // deterministic and replayable rather than dependent on tick boundaries.
     const mem = { prev: null };
@@ -3365,6 +3528,24 @@
       // A REST drops the whole onset — checked before anything is resolved, so a
       // dropped onset costs nothing and consumes no other draw.
       if (rest > 0 && vRnd(seedBase ^ (si * 40503), 11) * 100 < rest) continue;
+      // The step INDEX, not the onset ordinal: a drawn pitch belongs to the cell
+      // it was drawn on, so with a sparse rhythm step 5 must keep step 5's note
+      // even if it is only the second onset. Resolved HERE rather than below
+      // because ⏱ Odds keys on it too, and two copies of this formula is how
+      // a probability lane would come to address a different step from the
+      // pitch it is gating.
+      const stepOf = (p.rhythm.kind === 'euclid' || p.rhythm.kind === 'drawn' || p.rhythm.kind === 'chance')
+        ? Math.round(ons[i] * Math.max(1, p.rhythm.steps | 0)) : i;
+      // ⏱ ODDS — a PER-STEP probability, and the reason it is additive over
+      // Rests rather than folded into it: Rests is one number for the whole
+      // grid ("thin this out"), Odds is a statement about ONE step ("the 4 is
+      // a maybe"). A step with no entry plays, so a part that names one step
+      // behaves exactly as it did everywhere else. Seeded like every other
+      // per-take draw, so the picture can show which steps fell.
+      if (tmOdds) {
+        const pc = tmOdds[String(stepOf)];
+        if (Number.isFinite(pc) && vRnd(seedBase ^ (si * 2246822519), 23) * 100 >= pc) continue;
+      }
       let at = cs + ons[i] * cyc;
       // RATE VAR — v1's steady → rushes: a seeded push/pull of each onset
       // within its own span. Replays per take; 0 draws nothing.
@@ -3375,8 +3556,7 @@
       // The step INDEX, not the onset ordinal: a drawn pitch belongs to the cell
       // it was drawn on, so with a sparse rhythm step 5 must keep step 5's note
       // even if it is only the second onset.
-      let stepIdx = (p.rhythm.kind === 'euclid' || p.rhythm.kind === 'drawn' || p.rhythm.kind === 'chance')
-        ? Math.round(ons[i] * Math.max(1, p.rhythm.steps | 0)) : i;
+      let stepIdx = stepOf;
       // RESTART — the sweep counts from the first onset of THIS change.
       // `chgBase` is taken from the first onset that SOUNDS in the change, so a
       // rest on the downbeat does not shift the whole figure.
@@ -4737,15 +4917,13 @@
         // swing and no accent at all, however the Groove panel was set).
         // Swing delays every ODD slot of the layer's own grid, which is what
         // makes it shuffle rather than merely shift.
-        let at = n.at;
-        try {
-          if (typeof _ambSwingSec === 'function') {
-            const steps = Math.max(1, (L.part.rhythm && L.part.rhythm.steps) || 16);
-            const slotSec = cyc / steps;
-            const slot = Math.round((n.at - cs) / slotSec);
-            if (slot % 2 === 1) at += _ambSwingSec(L, slotSec);
-          }
-        } catch (e) {}
+        // SWING IS APPLIED IN `timingStage` NOW, inside `notesFor` — the one
+        // seam the drawing, the outlines, ⚙ Deep's preview, capture and this
+        // emit all come through. It used to be added HERE, which is exactly
+        // why the picture never had it (measured: swing 100 delayed every odd
+        // slot 125 ms while `notesFor` returned the straight grid). Adding it
+        // in both places would double it, so this is a DELETE, not a move.
+        const at = n.at;
         let vol = n.ghost ? Math.max(1, Math.round(lvl * 0.42)) : lvl;
         // A HAND-EDITED NOTE'S OWN VOLUME, as a percentage of the layer's level
         // — applied BEFORE accent and velVar so those still shape it, exactly
@@ -11778,6 +11956,35 @@
     // says which dry it removes.
     ftog(L, fxk + '.dryKill', 'Dry kill (this stage)', 'On — wet only', 'Off',
          'remove THIS stage\u2019s dry signal — the layer\u2019s own Dry Kill is in the strip above', when);
+  // ⏱ ODDS — the per-step probability lane. One cell per step of the part's own
+  // grid, each tap stepping 100 → 75 → 50 → 25 → 0 → 100. The VALUE is the
+  // percentage the step plays; 100 stores nothing (the normalizer prunes it),
+  // so a lane nobody has touched costs no bytes and reads as "all of them".
+  // ONLY WHERE THERE IS A GRID: a `pulse` rhythm has no steps to address, and
+  // `ground` puts its onsets on the changes — so the row is gated to the three
+  // kinds that have cells, exactly as the grid controls above it are.
+  const ODDS_STEPS = [100, 75, 50, 25, 0];
+  function oddsLaneHtml(L) {
+    const p = (L && L.part) || {};
+    const r = p.rhythm || {};
+    const n = clamp((r.steps | 0) || 8, 1, 64);
+    const odds = (p.timing && p.timing.odds) || {};
+    let cells = '';
+    for (let i = 0; i < n; i++) {
+      const v = Number.isFinite(odds[String(i)]) ? (odds[String(i)] | 0) : 100;
+      cells += '<button type="button" class="ambient-step-btn v2-odd' +
+        (v === 100 ? '' : (v === 0 ? ' v2-odd-off' : ' v2-odd-maybe')) +
+        '" data-i="' + i + '" aria-label="Step ' + (i + 1) + ', ' + v + '%">' +
+        (v === 100 ? '●' : v === 0 ? '·' : v) + '</button>';
+    }
+    return '<div class="ambient-ctrl v2-oddsrow" data-v2when="kind:live;rhythm:euclid,drawn,chance">' +
+      '<label>Odds</label>' +
+      // ONLY THE COLUMN COUNT IS INLINE — it is the part's own step count and
+      // cannot be a stylesheet rule; everything visual is in bloops.css.
+      '<span class="v2-oddslane" style="grid-template-columns:repeat(' + n + ',1fr)">' +
+        cells + '</span>' +
+      '<span class="ambient-hint">how likely each step is to play — tap to step it down</span></div>';
+  }
   const sel = (L, field, label, cur, opts, when, hint) =>
     '<div class="ambient-ctrl"' + (when ? ' data-v2when="' + when + '"' : '') + '><label for="' + uid(L, field) + '">' + esc(label) + '</label>' +
     '<select id="' + uid(L, field) + '" class="ambient-select v2-f" data-f="' + field + '">' +
@@ -13371,11 +13578,54 @@
           // ONE TAB, MOVED WHOLE. Shape's strip is already long, and four loose
           // rows would have become four more tabs on it — the group travels.
           tb('Feel',
-            sl(L, 'swing', 'Swing', num(L.swing, 0), 0, 100, 'straight → shuffle', 'kind:live') +
+            sl(L, 'swing', 'Swing', num(L.swing, 0), 0, 100, 'straight → shuffle') +
+            // WHICH GRID THE SWING PAIRS ARE COUNTED IN. Beside Swing because
+            // it is the same control's other half — a subdivision with its
+            // amount three rows away is the second-door failure this card keeps
+            // paying for. Absent = the part's own rhythm grid, which is what
+            // swing has always used. Shown even at Swing 0: a row that is
+            // merely OUTRANKED is greyed, not hidden (the house rule).
+            sel(L, 'part.timing.swingDiv', 'Swing grid',
+                ((L.part.timing || {}).swingDiv | 0) || '',
+                [['', 'The part’s own grid'], [8, '8ths'], [16, '16ths']],
+                '', 'which pairs swing counts') +
+            // LEAN — the whole part ahead of or behind the beat. NOT a scatter:
+            // Humanize and Rate var already do that, and naming them apart is
+            // what stops one axis growing two vocabularies. Every onset moves
+            // by the same amount, so a lean is a FEEL, not a variance.
+            sl(L, 'part.timing.lean', 'Lean', num((L.part.timing || {}).lean, 0), -60, 60,
+               'ms — behind the beat, or ahead of it') +
             '<div class="ambient-ctrl"><label>Tight</label>' +
               '<button type="button" class="ambient-seg v2-tighttoggle' + (L.tight ? ' on' : '') + '">' +
                 (L.tight ? 'On — clipped' : 'Off') + '</button>' +
               '<span class="ambient-hint">cut each note short of the next</span></div>') +
+          // ── ⏱ RATCHET — an onset becomes N fast hits ────────────────────
+          // Its own tab rather than three more rows on Feel: Feel is how a note
+          // SITS, this ADDS notes, and the strip is already long enough that
+          // four loose rows would have become four tabs (the reason Feel was
+          // gathered in the first place).
+          // ── ⏱ ODDS — a probability per STEP ─────────────────────────────
+          // Rests is one number for the whole grid ("thin this out"); this is a
+          // statement about ONE step ("the 4 is a maybe"), which is the thing a
+          // drum machine's probability lane is for and the thing this card had
+          // no way to say. Additive over Rests rather than replacing it: a step
+          // with no entry plays, so a part that names one step is otherwise
+          // exactly what it was.
+          // A BAR GRID, like `.lane-chips` above it — one cell per step, no
+          // horizontal scrolling, `1fr` columns so it shrinks instead of
+          // overflowing (UI rule 1).
+          tb('Odds', oddsLaneHtml(L)) +
+          tb('Ratchet',
+            sl(L, 'part.timing.ratchet.chance', 'Chance',
+               num(((L.part.timing || {}).ratchet || {}).chance, 0), 0, 100,
+               'how often an onset repeats instead of sounding once', 'kind:live') +
+            sel(L, 'part.timing.ratchet.hits', 'Hits',
+                (((L.part.timing || {}).ratchet || {}).hits | 0) || 2,
+                [[2, '2'], [3, '3'], [4, '4']], 'kind:live', 'how many, when it fires') +
+            sel(L, 'part.timing.ratchet.spread', 'Spread',
+                ((L.part.timing || {}).ratchet || {}).spread || 'even',
+                [['even', 'Even'], ['accel', 'Accelerating'], ['decel', 'Decelerating']],
+                'kind:live', 'how the repeats are spaced')) +
           tb('Every pass',
             // (Re-roll every cycle and Voicing feel moved to ⚙ Deep, 2026-09-17:
             // both re-run the RULES on a schedule, so they author CONTENT. This
@@ -14052,6 +14302,12 @@
         // (rests / ghosts / len vary are ⚙ Deep's now, and vel var is ✺ Playing's —
         // a summary names only what is behind THIS door)
         if (num(L.swing, 0) > 0) bits.push('swing');
+        // \u23f1 TIMING names itself here too \u2014 a summary that omits a control
+        // behind its own door is the folded group lying about what is set.
+        const tmS = p.timing || {};
+        if (num(tmS.lean, 0) !== 0) bits.push('lean: ' + (tmS.lean > 0 ? '+' : '') + (tmS.lean | 0) + 'ms');
+        if (tmS.odds && Object.keys(tmS.odds).length) bits.push('odds: ' + Object.keys(tmS.odds).length + ' steps');
+        if (tmS.ratchet && (tmS.ratchet.chance | 0) > 0) bits.push('ratchet: ' + (tmS.ratchet.hits | 0));
         return bits.length ? bits.join(' \u00b7 ') : 'struck';
       })(),
       Mix: (() => {
@@ -17958,6 +18214,48 @@
           try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
+        // ⏱ ODDS — one cell of the probability lane. Repaints the lane in
+        // place rather than rebuilding the card (an innerHTML rewrite kills the
+        // control under the finger — the documented Humanize bug) and redraws
+        // the picture, because the odds decide which onsets there ARE.
+        const od = t.closest('.v2-odd');
+        if (od) {
+          const ctx = layerOf(od); if (!ctx) return;
+          const p = ctx.L.part; if (!p) return;
+          const i = od.getAttribute('data-i') | 0;
+          const cur = (p.timing && p.timing.odds && Number.isFinite(p.timing.odds[String(i)]))
+            ? (p.timing.odds[String(i)] | 0) : 100;
+          const at = ODDS_STEPS.indexOf(cur);
+          const nx = ODDS_STEPS[(at < 0 ? 0 : at + 1) % ODDS_STEPS.length];
+          if (!p.timing || typeof p.timing !== 'object') p.timing = {};
+          if (!p.timing.odds || typeof p.timing.odds !== 'object') p.timing.odds = {};
+          p.timing.odds[String(i)] = nx;                // 100 is pruned by normalize
+          try { E.getCfg(); } catch (e) {}
+          // REPAINT FROM THE STORE, never from `nx` — normalize may have pruned
+          // it, and painting the intent rather than the result is how a readout
+          // comes to disagree with what is saved (the published-geometry rule).
+          // IN PLACE, CELL BY CELL, never `innerHTML` on the lane: that
+          // detaches the very button the finger is on, so the NEXT tap lands on
+          // a node with no ancestors and the delegated handler never fires.
+          // Measured exactly that way — six taps, one step (the documented
+          // "an innerHTML rewrite kills the control under the finger").
+          const row2 = od.closest('.v2-oddsrow');
+          if (row2) {
+            const odds2 = (ctx.L.part.timing && ctx.L.part.timing.odds) || {};
+            row2.querySelectorAll('.v2-odd').forEach((b2) => {
+              const j = b2.getAttribute('data-i') | 0;
+              const v2 = Number.isFinite(odds2[String(j)]) ? (odds2[String(j)] | 0) : 100;
+              const face = (v2 === 100) ? '●' : (v2 === 0 ? '·' : String(v2));
+              if (b2.textContent !== face) b2.textContent = face;
+              b2.classList.toggle('v2-odd-off', v2 === 0);
+              b2.classList.toggle('v2-odd-maybe', v2 !== 0 && v2 !== 100);
+              b2.setAttribute('aria-label', 'Step ' + (j + 1) + ', ' + v2 + '%');
+            });
+          }
+          try { if (V2.isStaged(ctx.L)) stageVizDraw(ctx.card, ctx.L); else drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
         }
         const tt = t.closest('.v2-tighttoggle');

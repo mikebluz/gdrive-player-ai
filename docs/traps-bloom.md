@@ -239,6 +239,9 @@
   the outlines agree. Absent motion/lag = the old parallel voicing, byte-identical. A caller that passes
   no `mem` gets parallel only (no memory, no canon) — pass it. The per-voice rows address their entry
   BY POSITION (`part.pitch.harm.<j>.motion`) — the list is stored in draw order, so keep it so.
+  `series` is a NAMED pattern (`HARM_SERIES`: wave · rise · fall · alt · wide — degree offsets around
+  the chosen interval, one per onset) rather than a typed list, so a project cannot store a sequence
+  the engine does not know; `every` (2–4) makes the voice sound on every k-th onset only.
   **SALT STAYS ON THE CHANGES; A LAYER DECIDES HOW IT FOLLOWS (2026-09-19).** Per-layer *salting* was
   asked for and refused: the colouring is central (`_ambProgSoundAt`, seeded from the project) so every
   following layer hears ONE coloured chord — per-layer seeds would cost that harmony, the chord band's

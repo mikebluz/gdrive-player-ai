@@ -1138,6 +1138,9 @@
             // absent = parallel, now, the old way — byte-identical
             if (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') o.motion = h.motion;
             if (Number.isFinite(+h.lag) && (+h.lag | 0) > 0) o.lag = clamp(+h.lag | 0, 1, 8);
+            // …a SERIES of intervals around the chosen one, and a rhythm of its own
+            if (HARM_SERIES[h.series]) o.series = h.series;
+            if (Number.isFinite(+h.every) && (+h.every | 0) > 1) o.every = clamp(+h.every | 0, 2, 4);
             return o;
           })
           .filter((h) => h && h.deg);
@@ -1877,6 +1880,13 @@
   // random. The motion modes read the FIRST lead pitch as "the line" (a chord
   // lead is harmonised from that voice); parallel keeps voicing every lead
   // pitch, as before.
+  // SERIES — the interval itself moves, per onset, as scale-degree offsets
+  // around the chosen one ("apply a series of harmonies"): a 3rd under
+  // `wave` is 3rd · 4th · 3rd · 2nd · 3rd … Named patterns rather than a
+  // typed list, so the row is a select and a project cannot store a sequence
+  // the engine does not know. EVERY — the voice sounds on every k-th onset
+  // only, which gives it a rhythm of its own against the line.
+  const HARM_SERIES = { wave: [0, 1, 0, -1], rise: [0, 1, 2, 1], fall: [0, -1, -2, -1], alt: [0, 2], wide: [0, 3] };
   function applyHarm(part, E, cfg, at, reg, out, L, mem, idx) {
     const hs = part.pitch && part.pitch.harm;
     if (!Array.isArray(hs) || !hs.length || !out.length) return out;
@@ -1898,7 +1908,11 @@
     const add = [];
     for (let j = 0; j < hs.length; j++) {
       const h = hs[j]; if (!h) continue;
-      const st = h.deg | 0; if (!st) continue;
+      const ser = HARM_SERIES[h.series] || null;
+      const st = (h.deg | 0) + (ser ? ser[((n % ser.length) + ser.length) % ser.length] : 0);
+      if (!st) continue;
+      const every = clamp(h.every | 0, 0, 4);
+      if (every > 1 && ((n % every) + every) % every !== 0) continue;   // its own rhythm: every k-th onset
       const lag = clamp(h.lag | 0, 0, 8);
       let src = out;
       if (lag > 0) { src = (hist && hist[n - lag]) ? hist[n - lag] : null; if (!src) continue; }
@@ -6348,13 +6362,15 @@
   // set is) so the harmony bends with the scale instead of running parallel.
   const HARM_OPTS = [[-5, '−6th'], [-2, '−3rd'], [2, '3rd'], [3, '4th'], [4, '5th'], [5, '6th']];
   const HARM_MOTIONS = [['', 'Parallel'], ['contrary', 'Contrary'], ['oblique', 'Oblique'], ['free', 'Free']];
+  const HARM_SERIES_OPTS = [['', 'Fixed'], ['wave', 'Wave (+1 · 0 · \u22121)'], ['rise', 'Rise (+1 +2 +1)'], ['fall', 'Fall (\u22121 \u22122 \u22121)'], ['alt', 'Alternate (+2)'], ['wide', 'Wide (+3)']];
   function harmRowHtml(L, t) {
     const list = Array.isArray(t.harm) ? t.harm : [];
     const on = new Set(list.map((h) => h && (h.deg | 0)).filter(Boolean));
     const name = (d) => (HARM_OPTS.find((o) => o[0] === d) || [d, String(d)])[1];
     // WHAT THE VOICES DO, in the line under the chips — the words the rows use
-    const said = list.filter((h) => h && (h.motion || (h.lag | 0))).map((h) =>
-      name(h.deg | 0) + (h.motion ? ' ' + h.motion : '') + ((h.lag | 0) ? ' canon +' + (h.lag | 0) : ''));
+    const said = list.filter((h) => h && (h.motion || (h.lag | 0) || h.series || (h.every | 0) > 1)).map((h) =>
+      name(h.deg | 0) + (h.motion ? ' ' + h.motion : '') + (h.series ? ' ' + h.series : '') +
+      ((h.lag | 0) ? ' canon +' + (h.lag | 0) : '') + ((h.every | 0) > 1 ? ' every ' + (h.every | 0) : ''));
     // ── A ROW PER LIT VOICE (2026-09-19): how it moves, and how far behind ──
     // Rows share the chips' `data-v2tab`, so they are the same Harmony tab.
     // Each control is a `.v2-f` over its entry BY POSITION in `harm` — the
@@ -6365,6 +6381,8 @@
       if (!h || !(h.deg | 0)) return '';
       const mo = (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') ? h.motion : '';
       const lag = clamp(h.lag | 0, 0, 8);
+      const ser = HARM_SERIES_OPTS.some((o) => o[0] === h.series) ? h.series : '';
+      const every = Math.max(1, clamp(h.every | 0, 0, 4));
       return '<div data-v2tab="Harmony" class="ambient-ctrl v2-harmopt" data-v2when="kind:live;voice:synth">' +
         '<label>' + esc(name(h.deg | 0)) + '</label>' +
         '<span class="ambient-seg-row v2-harmrow">' +
@@ -6372,6 +6390,16 @@
             'title="How this voice moves against the line \u2014 parallel: with it · contrary: against it · oblique: holds while the line moves · free: the nearest tone on its own side, never a unison">' +
             HARM_MOTIONS.map((o) => '<option value="' + o[0] + '"' + (mo === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
           '</select>' +
+          '<select class="ambient-select v2-f v2-harmser" data-f="part.pitch.harm.' + j + '.series" ' +
+            'title="A series of intervals around this one, one per note of the line \u2014 the harmony itself moves">' +
+            HARM_SERIES_OPTS.map((o) => '<option value="' + o[0] + '"' + (ser === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+          '</select>' +
+          '<span class="ambient-stepper v2-harmevwrap" title="This voice sounds on every k-th note of the line only \u2014 its own rhythm">' +
+            '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="More often">\u2212</button>' +
+            '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.every" ' +
+              'min="1" max="4" step="1" value="' + every + '" aria-label="Every k-th note">' +
+            '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Less often">+</button>' +
+          '</span>' +
           '<span class="ambient-stepper v2-harmlagwrap" title="Canon \u2014 this voice plays the line this many notes later, at its interval">' +
             '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Sooner">\u2212</button>' +
             '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.lag" ' +
@@ -6379,7 +6407,7 @@
             '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Later">+</button>' +
           '</span>' +
         '</span>' +
-        '<span class="ambient-hint">motion \u00b7 canon (notes behind the line; 0 = with it)</span></div>';
+        '<span class="ambient-hint">motion \u00b7 series \u00b7 every k-th note \u00b7 canon (notes behind the line; 0 = with it)</span></div>';
     }).join('');
     return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
       '<label>Harmony voices</label><span class="ambient-seg-row">' +

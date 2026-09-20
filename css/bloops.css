@@ -15848,7 +15848,7 @@
    explicit width and flex 0 0 auto, or it swallows the stepper (the documented
    five-victims trap). */
 .v2-layer .v2-harmrow { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
-.v2-layer .v2-harmrow select.ambient-select.v2-harmmo { width: auto; flex: 0 0 auto; min-width: 7.5em; }
+.v2-layer .v2-harmrow select.ambient-select.v2-harmmo, .v2-layer .v2-harmrow select.ambient-select.v2-harmser { width: auto; flex: 0 0 auto; min-width: 7.5em; }
 .v2-layer .v2-harmrow .ambient-stepper { flex: 0 0 auto; }
 /* 🧂 the Salt follow rows — same shape as Evolve's, Salt's own hue */
 .v2-layer .ambient-ctrl.v2-saltrow { box-shadow: inset 3px 0 0 var(--salt, #e879f9); padding-left: 8px; }

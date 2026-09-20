@@ -295,7 +295,9 @@
   "fixed" into a per-part answer this function cannot compute.
 
 - **THERE IS NO "\u2699 Generate" DOOR. The way back from a frozen take is `\u22ef \u25b8 \u26a1 Release`.** The
-  freeze toast named \u2699 Generate for months and it has never existed — `MAT_LABEL` has no such
+  freeze toast named \u2699 Generate for months and it has never existed — and the Transform refusal named
+  "❄ Freeze this take", a button gone since 2026-09-17 (fixed 2026-09-19; `capFace` still builds that
+  face for a `.v2-capture` nothing renders) — `MAT_LABEL` has no such
   entry and no button carries it; the only unfreeze is the \u22ef menu's "\u26a1 Release \u2014 back to live"
   (a Material door also makes a part live, but REPLACES the content). Reported as "unless i'm missing
   something" by a user doing exactly what the card told them. **A hint that names a door is a claim —

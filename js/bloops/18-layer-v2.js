@@ -18118,8 +18118,15 @@
           const cp = ctx.L.part;
           if (cp.kind !== 'recorded' || !(cp.notes || []).length) {
             try {
+              // THE DOOR IT NAMES MUST EXIST (2026-09-19): it said "Press ❄ Freeze
+              // this take" — a button that left the take bar on 2026-09-17. The
+              // ways to a frozen take are ⋯ ▸ ❄ Capture and tapping a note; and
+              // what freezing MEANS for an evolving part is said too, since that
+              // is the question a transform on an evolving part is really asking.
               showToast('Transforms rework notes that are already there \u2014 this part is Generated, ' +
-                'so its notes come from the rules, not a list. Press \u2744 Freeze this take first.', { ms: 6000 });
+                'so its notes come from the rules, not a list. \u22ef \u25b8 \u2744 Capture keeps the take that is ' +
+                'playing (tapping a note does too); the part then plays that list every cycle, Evolve rests, ' +
+                'and Transform works on it. \u22ef \u25b8 \u26a1 Release goes back to the rules.', { ms: 8000 });
             } catch (e) {}
             return;
           }

@@ -8132,7 +8132,16 @@
     // is how the two would drift — and only while playing, because it resolves
     // the boundary off the CLOCK and a stopped one is stale (the documented
     // audition-stub trap).
-    if (playing && typeof window._ambNoteChoke === 'function') {
+    // …AND IN BOTH STATES (2026-09-20). Asking only while PLAYING meant a note
+    // drew its full length stopped and its choked length the instant you
+    // pressed play — measured on a 4-bar held chord over 1-bar changes: 444px
+    // stopped, 110px playing, the same note. Reported as "some events appear
+    // to begin as one size then shrink after play starts". The drawn cycle's
+    // `cs` is a resolved CHORD ANCHOR, not a wall clock, so the boundary the
+    // choke finds for it is the same one it will find at play — which is the
+    // difference from the stale-anchor case its own comment warns about (an
+    // audition asking with `Tone.now()`).
+    if (typeof window._ambNoteChoke === 'function') {
       notes = notes.map((n) => {
         if (!n || !(n.durMs > 0)) return n;
         try {

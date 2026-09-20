@@ -9101,7 +9101,18 @@
         // A transition is not a chord and must not read as one — it takes the
         // walk accent and opts out of the in/out-of-key colouring, which has no
         // meaning for a line that is passing through by design.
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · sounds ' + esc(_ambChordShort(fn(c)) || '?') : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + // WHAT IT SOUNDS, ON THE CARD (2026-09-20). This pane edits the SCORE, so
+        // the note names are the written ones — but under Key/transpose the engine
+        // re-roots the whole progression, so a written C E G SOUNDS as D. The
+        // sounding name was in the `title` only, which a phone never shows (the
+        // documented rule), so the strip said "D Em F#m G" and this said
+        // "C E G · D F A · E G B · C F A" and the two read as different chords:
+        // "it says D Em F#m G, but when I click into the part these triads are
+        // different". Both are on the card now — sounding first, since that is
+        // what every other surface names — and the written notes keep their own
+        // line, which is what the buttons below edit.
+        (_vsEd ? '<u class="pe-sounds">' + esc(_ambChordShort(fn(c)) || '?') + '</u>' : '') +
+        '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
         '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
       // Summaries shown on a folded header, so a fold never hides what state it holds.

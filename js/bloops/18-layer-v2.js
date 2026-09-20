@@ -7168,7 +7168,21 @@
       if (I(r.syncop) > 0) wh.push(kv('Syncopate', I(r.syncop) + '%'));
     } else if (r.kind === 'ground') {
       wh.push(kv('Rhythm', esc(whyName(RHYTHM_OPTS, 'ground', 'Groundwork'))));
-      wh.push(kv('Onsets', 'one per change'));
+      // STRIKE AND ANTICIPATION ARE PART OF THE ONSET RULE (2026-09-20). This
+      // said "one per change" while Strike = Comp was putting a SECOND onset
+      // in every bar (the 1 and the & of 2) and anticipation was pulling the
+      // on-change hit an eighth early — so the panel claimed 4 onsets over a
+      // picture showing 8, none of them on a bar line, and the generator read
+      // as broken. Measured: with Strike off, onsets land at 0 · 0.25 · 0.5 ·
+      // 0.75 of a 4-bar cycle, exactly the bar lines. A readout that names one
+      // of three rules is the confident-wrong-answer shape this panel exists
+      // to prevent.
+      const _sk = r.strike;
+      wh.push(kv('Onsets', 'one per change' +
+        (_sk === 'comp' ? ' \u00b7 plus the & of 2 in each bar'
+          : _sk === 'half' ? ' \u00b7 plus every half bar'
+          : _sk === 'bar' ? ' \u00b7 plus every bar' : '') +
+        (r.antic ? ' \u00b7 anticipated an 8th early' : '')));
     } else {
       wh.push(kv('Rhythm', esc(whyName(RHYTHM_OPTS, 'pulse', 'Pulse'))));
       wh.push(kv('Onsets', Math.max(1, I(r.n)) + ' per cycle'));

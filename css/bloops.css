@@ -15942,6 +15942,14 @@
   border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
 }
 .v2-layer .v2-harmrow .ambient-step-inp { min-width: 0; text-align: center; }
+/* WHAT A CHORD CARD SOUNDS AS, beside what it is written as (2026-09-20).
+   Teal, like every other "this is what you hear" mark in the app, and above
+   the written notes because it is the name every OTHER surface uses for this
+   chord — the strip, the chord band, the layer readouts. */
+.pe-chord .pe-sounds {
+  display: block; text-decoration: none; font: 700 0.78rem 'Segoe UI', sans-serif;
+  color: #4fd1c5; line-height: 1.15; margin-top: 1px;
+}
 /* 🧂 the Salt follow rows — same shape as Evolve's, Salt's own hue */
 .v2-layer .ambient-ctrl.v2-saltrow { box-shadow: inset 3px 0 0 var(--salt, #e879f9); padding-left: 8px; }
 .v2-layer .ambient-ctrl.v2-saltrow > label { color: var(--salt, #e879f9); }

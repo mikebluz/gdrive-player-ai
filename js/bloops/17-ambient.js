@@ -42558,14 +42558,27 @@
     // delegated touch-slider handling; `.v2-knob` markup + `V2.knobify` paint
     // and drag it, which is why there is no second knob implementation here.
     function _ambSaltDial(id, label, max, step, sub, title) {
-      return '<div class="ambient-ctrl ambient-salt-dial" title="' + esc(title) + '">' +
-        '<label for="' + id + '">' + label + '</label>' +
+      // IT CARRIES ITS OWN ESCAPER. There is NO file-level `esc` in
+      // 17-ambient — all ~35 of them are LOCAL consts inside the function that
+      // builds their markup — and this helper sits in a scope with none.
+      // Written as `esc(...)` it threw a ReferenceError on the FIRST call,
+      // inside the single expression that builds the whole Bloom panel, and a
+      // surrounding catch swallowed it: the panel came out EMPTY — no layers,
+      // no arrangement bar, no add button — with a clean console. Measured, not
+      // guessed: a counter in this body read 1 of 5 calls.
+      // A SHARED HELPER MUST DEPEND ON NOTHING IT CANNOT SEE. `_ambEscAttr` is
+      // a real file-level function declaration; the text escaper is local, so
+      // this function needs nothing from whatever scope calls it.
+      const _t = (x) => String(x == null ? '' : x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      const _a = (x) => (typeof _ambEscAttr === 'function') ? _ambEscAttr(x) : _t(x).replace(/"/g, '&quot;');
+      return '<div class="ambient-ctrl ambient-salt-dial" title="' + _a(title) + '">' +
+        '<label for="' + id + '">' + _t(label) + '</label>' +
         // NOT `.ambient-salt-in` — that class is v1's 52px NUMBER BOX chrome
         // (border, background, fixed width), and a range wearing it looks like
         // a broken field in the one state where the knob fails to build.
         '<input type="range" class="ambient-sl" id="' + id + '" ' +
-          'min="0" max="' + max + '" step="' + step + '" value="0" aria-label="' + esc(label) + '">' +
-        '<span class="ambient-hint ambient-salt-sub">' + esc(sub) + '</span></div>';
+          'min="0" max="' + max + '" step="' + step + '" value="0" aria-label="' + _a(label) + '">' +
+        '<span class="ambient-hint ambient-salt-sub">' + _t(sub) + '</span></div>';
     }
     function _ambProgGrpPopover(E, key, title) {
       _E = E;

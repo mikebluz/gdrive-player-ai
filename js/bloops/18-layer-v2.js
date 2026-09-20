@@ -1222,6 +1222,14 @@
       p.transpose = clamp((p.transpose | 0) || 0, -48, 48);
       // what was last DONE to these notes (absent on an untouched take)
       if (!TRANSFORMS[p.tf]) delete p.tf;
+      // …and the transforms a GENERATED part applies to every take it makes
+      // (`xfStage`): a list of {op, bars?}, additive, absent = none. Unknown
+      // ops fall out rather than throwing — the v1 doctrine.
+      if (Array.isArray(p.xf)) {
+        p.xf = p.xf.filter((x) => x && TRANSFORMS[x.op])
+          .map((x) => (Array.isArray(x.bars) && x.bars.length) ? { op: x.op, bars: x.bars.slice() } : { op: x.op });
+        if (!p.xf.length) delete p.xf;
+      } else if (p.xf != null) delete p.xf;
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
@@ -2526,7 +2534,7 @@
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
-  function notesFor(L, ctx) { return tightClip(L, notesForRaw(L, ctx)); }
+  function notesFor(L, ctx) { return tightClip(L, xfStage(L, ctx, notesForRaw(L, ctx))); }
   function notesForRaw(L, ctx) {
     // PER-PART CONTENT. `L.part` is always the record being EDITED; `L.partFor`
     // names which arrangement part it belongs to and `L.parts` files the
@@ -2787,6 +2795,7 @@
       return composite({ base: cycIdx, bars: {}, rules: p.ruleb });
     }
     const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
+    try { ctx._seedBase = seedBase; } catch (e) {}   // for `xfStage` — the take's own seed, not a second one
     // ── WHICH SEED EACH STAGE READS ───────────────────────────────────────
     // A change may touch only SOME of the material (`am`) and only SOME of its
     // stages (`what`). A stage that is not changing reads the KEEP seed — the
@@ -3666,10 +3675,15 @@
       label: '\ud83d\udd00 Shuffle', word: 'shuffled', hint: 'same rhythm, the notes re-ordered',
       // The RHYTHM is the part's identity, so shuffling moves the PITCHES
       // between the onsets it already has rather than moving the onsets.
-      fn: (list) => {
+      // `rnd` — SEEDED when the op runs as a stage over a generated take
+      // (`xfStage`), so the same take shuffles the same way every pass and the
+      // drawing, the outlines and the audio agree; `Math.random` only for the
+      // one-shot edit of a stored list, where the result is what gets kept.
+      fn: (list, w0, w1, rnd) => {
+        const R = (typeof rnd === 'function') ? rnd : Math.random;
         const pit = list.map(n => n.midi);
         for (let i = pit.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
+          const j = Math.floor(R() * (i + 1));
           const t = pit[i]; pit[i] = pit[j]; pit[j] = t;
         }
         return list.map((n, i) => Object.assign({}, n, { midi: pit[i] }));
@@ -3688,6 +3702,50 @@
     if (!(hi > lo)) return [0, 1];
     const span = barsF * SPB;
     return [clamp(lo / span, 0, 1), clamp(hi / span, 0, 1)];
+  }
+  // ── TRANSFORMS AS A STAGE OVER THE RULES' OUTPUT (2026-09-19) ─────────
+  // "why don't we just have it add the transform operation as a function on
+  // the rules output, so just take what's generated then apply the
+  // transformation." On a GENERATED part ✨ Transform used to refuse: it
+  // reworks a list and there was none. Now it appends to `part.xf`, and
+  // every take the rules make passes through here on its way out — the
+  // emitter's, the drawing's, the outlines', ⚙ Deep's, a capture's: ONE seam
+  // (`notesFor`), so no two of them can disagree. Evolve keeps evolving;
+  // each new take comes out transformed. The ops are the SAME table the
+  // one-shot edit uses, over the stored shape (t · dur · midi, fractions of
+  // the cycle), so the emitter's {at, freq, durMs} are folded in and back
+  // out around them, the original note kept for everything else it carries
+  // (nidx, antic, a line). Shuffle draws from the TAKE's seed (stashed on
+  // the ctx by notesForRaw) so a take shuffles the same way every pass.
+  // A RECORDED part skips the stage: its list was edited in place, and a
+  // capture already carries the stage's result.
+  function xfStage(L, ctx, out) {
+    const xf = L && L.part && L.part.kind === 'live' && Array.isArray(L.part.xf) ? L.part.xf : null;
+    if (!xf || !xf.length || !Array.isArray(out) || !out.length) return out;
+    const cs = ctx.cycleStart || 0, cyc = Math.max(0.001, ctx.cycleSec || 1);
+    let list = out.map((n, i) => ({
+      t: clamp((n.at - cs) / cyc, 0, 0.99999),
+      midi: freqToMidi(n.freq),
+      dur: clamp((n.durMs / 1000) / cyc, 0.001, 8),
+      _i: i,
+    }));
+    const seed0 = Number.isFinite(ctx._seedBase) ? (ctx._seedBase | 0) : 0;
+    xf.forEach((x, k) => {
+      const T = TRANSFORMS[x.op]; if (!T) return;
+      const [w0, w1] = tfWindow(L, x.bars);
+      const inScope = (n) => n.t >= w0 - 1e-9 && n.t < w1 - 1e-9;
+      const scoped = list.filter(inScope);
+      if (!scoped.length) return;
+      let draws = 0;
+      const rnd = () => vRnd(seed0 ^ ((k + 1) * 0x9e3779b1), 7919 + (draws++));
+      const done = T.fn(scoped, w0, w1, rnd) || scoped;
+      list = list.filter((n) => !inScope(n)).concat(done);
+    });
+    return list.sort((a, b) => a.t - b.t).map((n) => Object.assign({}, out[n._i], {
+      at: cs + n.t * cyc,
+      freq: 440 * Math.pow(2, (n.midi - 69) / 12),
+      durMs: n.dur * cyc * 1000,
+    }));
   }
   function transformFn(E, L, op, bars) {
     const T = TRANSFORMS[op];
@@ -5794,6 +5852,27 @@
     notesFor,                      // the interface, callable directly
     onsetsOf,
     transform: transformFn,        // commands over the notes you already have
+    // …and over every take a GENERATED part makes (`xfStage`)
+    xfAdd: (E, L, op, bars) => {
+      if (!TRANSFORMS[op] || !L || !L.part) return false;
+      const x = (Array.isArray(bars) && bars.length) ? { op, bars: bars.slice() } : { op };
+      L.part.xf = (Array.isArray(L.part.xf) ? L.part.xf : []).concat([x]);
+      try { E.getCfg(); } catch (e) {}
+      return true;
+    },
+    xfPop: (E, L) => {
+      if (!L || !L.part || !Array.isArray(L.part.xf) || !L.part.xf.length) return false;
+      L.part.xf = L.part.xf.slice(0, -1); if (!L.part.xf.length) delete L.part.xf;
+      try { E.getCfg(); } catch (e) {}
+      return true;
+    },
+    xfClear: (E, L) => {
+      if (!L || !L.part || !L.part.xf) return false;
+      delete L.part.xf; try { E.getCfg(); } catch (e) {}
+      return true;
+    },
+    xfWords: (L) => ((L && L.part && Array.isArray(L.part.xf)) ? L.part.xf : [])
+      .map((x) => ((TRANSFORMS[x.op] && TRANSFORMS[x.op].word) || x.op) + (x.bars && x.bars.length ? ' (bars)' : '')),
     transformList: () => Object.keys(TRANSFORMS).map(k => ({ op: k, label: TRANSFORMS[k].label, hint: TRANSFORMS[k].hint })),
     transformWord: (op) => (TRANSFORMS[op] && TRANSFORMS[op].word) || '',
     capture: captureFn,            // door 1 into a recorded part: freeze the live one
@@ -7425,7 +7504,7 @@
         // always PRESENT (a control you cannot find is a control you do not
         // have) and refuses with an explanation on a live part, the same
         // pattern the no-op rhythm tabs use.
-        '<button type="button" class="ambient-seg v2-tform" title="Rework the notes you already have — reverse, shuffle, and more. Tap bars in the drawing first to rework just those.">\u2728 Transform\u2026</button>' +
+        '<button type="button" class="ambient-seg v2-tform" title="Reverse, shuffle, and more. On a Generated part it applies to every take the rules make — as it evolves; on a frozen one it reworks the notes. Tap bars in the drawing first to scope it.">\u2728 Transform\u2026</button>' +
         // ℹ WHY? — what decided these notes. It sits on the TAKE BAR because
         // that is where the take's own actions live and because the take bar
         // survives the picture's fold, so the explanation is reachable from a
@@ -8547,6 +8626,10 @@
       // NOT CALLED "GHOSTS", though that is the internal name: ⚙ Deep already
       // owns that word for "% quiet extra hits", which SOUND and draw SOLID.
       // One word for two mechanisms reads as one mechanism.
+      // THE STAGES IN FORCE, named on the line (2026-09-19): a take that comes
+      // out reversed with nothing saying so is a rule nobody can find.
+      const xfTxt = (L.part.kind !== 'recorded' && (V2.xfWords(L) || []).length)
+        ? ' · every take ' + V2.xfWords(L).join(', ') + ' (✨ Transform…)' : '';
       const ghostTxt = ghosts.length
         ? tapTxt(L, ' · outlines: the next ' + AHEAD + ' take' + (AHEAD === 1 ? '' : 's') + ', a colour each (⟳ Show ahead)' +
             (evoEv > 0 ? ' \u2014 one every ' + evoEv + ' pass' + (evoEv === 1 ? '' : 'es') : ''))
@@ -8618,7 +8701,7 @@
                 (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : tapTxt(L, ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it')) +
-                (fromPv ? ' · as previewed' : '')) + thawTxt + ghostTxt + overTxt + otherTxt;
+                (fromPv ? ' · as previewed' : '')) + thawTxt + xfTxt + ghostTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
     try { vizChrome(card, L, E); } catch (e) {}
@@ -13351,7 +13434,9 @@
           : (p.kind === 'recorded' ? '' : 'rhythm: ' + (now.rhythm === 'drawn' ? 'drawn' : now.rhythm) + ' \u00b7 steps: ' + p.rhythm.steps);
         const feel = onOf([['swing', 'swing'], ['accent', 'accent'], ['humanize', 'humanize']]);
         if (L.tight) feel.push('tight');
+        const xfW = (p.kind !== 'recorded') ? (V2.xfWords(L) || []) : [];
         return head + (rh ? ' \u00b7 ' + rh : '') + (feel.length ? ' \u00b7 feel: ' + feel.join(' + ') : '') +
+          (xfW.length ? ' \u00b7 transform: ' + xfW.join(' + ') : '') +
           ((typeof L.when === 'string' && L.when && L.when !== 'always') ? ' \u00b7 when: not every cycle' : '');
       })(),
       Pitch: 'pitch: ' + now.pitch +
@@ -18116,44 +18201,58 @@
         if (tf) {
           const ctx = layerOf(tf); if (!ctx) return;
           const cp = ctx.L.part;
-          if (cp.kind !== 'recorded' || !(cp.notes || []).length) {
-            try {
-              // THE DOOR IT NAMES MUST EXIST (2026-09-19): it said "Press ❄ Freeze
-              // this take" — a button that left the take bar on 2026-09-17. The
-              // ways to a frozen take are ⋯ ▸ ❄ Capture and tapping a note; and
-              // what freezing MEANS for an evolving part is said too, since that
-              // is the question a transform on an evolving part is really asking.
-              showToast('Transforms rework notes that are already there \u2014 this part is Generated, ' +
-                'so its notes come from the rules, not a list. \u22ef \u25b8 \u2744 Capture keeps the take that is ' +
-                'playing (tapping a note does too); the part then plays that list every cycle, Evolve rests, ' +
-                'and Transform works on it. \u22ef \u25b8 \u26a1 Release goes back to the rules.', { ms: 8000 });
-            } catch (e) {}
+          const live = cp.kind !== 'recorded';
+          if (!live && !(cp.notes || []).length) {
+            try { showToast('Nothing to transform — this part has no notes yet.', { ms: 3500 }); } catch (e) {}
             return;
           }
           const selT = bselOf(ctx.L);
           const barsT = selT ? bselKeys(selT) : null;
-          const where = selT ? (' \u2014 ' + bselLabel(selT)) : '';
+          const where = selT ? (' — ' + bselLabel(selT)) : '';
           const r2 = tf.getBoundingClientRect();
-          // deferred a tick: showCtxMenu arms its own dismiss listener, and
-          // opening it inside this dispatch tears it down again (documented)
-          setTimeout(() => {
-            try {
-              showCtxMenu(r2.left, r2.bottom + 4, (V2.transformList() || []).map(it => ({
-                label: it.label + (where ? where : '') + ' \u2014 ' + it.hint,
-                fn: () => setTimeout(() => {
-                  const n2 = V2.transform(E, ctx.L, it.op, barsT);
-                  if (!n2) {
-                    try { showToast('Nothing to transform' + (selT ? ' in ' + bselLabel(selT) : '') + '.', { ms: 3500 }); } catch (e) {}
-                    return;
-                  }
-                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                  try { showToast(n2 + ' note' + (n2 === 1 ? '' : 's') + ' ' + V2.transformWord(it.op) +
-                    (selT ? (' in ' + bselLabel(selT)) : '') + '.', { ms: 3500 }); } catch (e) {}
-                  h._sig = ''; V2.render(E);
-                }, 0),
-              })));
-            } catch (e) {}
-          }, 0);
+          // ON A GENERATED PART THE OP BECOMES A STAGE (2026-09-19): it applies
+          // to every take the rules make, Evolve included — see `xfStage`. On
+          // a frozen list it edits the list, as before. Same menu, one word of
+          // difference in each entry, and the list of stages in force below it.
+          const cur = live ? (V2.xfWords(ctx.L) || []) : [];
+          const items = (V2.transformList() || []).map(it => ({
+            label: it.label + (where ? where : '') + ' — ' + it.hint + (live ? ' · every take' : ''),
+            fn: () => setTimeout(() => {
+              if (live) {
+                if (!V2.xfAdd(E, ctx.L, it.op, barsT)) return;
+                try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                try { showToast(V2.transformWord(it.op).replace(/^./, (c) => c.toUpperCase()) +
+                  (selT ? ' in ' + bselLabel(selT) : '') + ' — on every take this part makes, as it evolves. ' +
+                  '✨ Transform… lists it; ✕ there takes it off.', { ms: 5000 }); } catch (e) {}
+                h._sig = ''; V2.render(E);
+                return;
+              }
+              const n2 = V2.transform(E, ctx.L, it.op, barsT);
+              if (!n2) {
+                try { showToast('Nothing to transform' + (selT ? ' in ' + bselLabel(selT) : '') + '.', { ms: 3500 }); } catch (e) {}
+                return;
+              }
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              try { showToast(n2 + ' note' + (n2 === 1 ? '' : 's') + ' ' + V2.transformWord(it.op) +
+                (selT ? (' in ' + bselLabel(selT)) : '') + '.', { ms: 3500 }); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }, 0),
+          }));
+          if (cur.length) {
+            items.push('hr');
+            items.push({ label: 'In force: ' + cur.join(', '), fn: () => {} });
+            items.push({ label: '✕ Take off the last (' + cur[cur.length - 1] + ')', fn: () => setTimeout(() => {
+              if (!V2.xfPop(E, ctx.L)) return;
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }, 0) });
+            items.push({ label: '✕ Take all off', fn: () => setTimeout(() => {
+              if (!V2.xfClear(E, ctx.L)) return;
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            }, 0) });
+          }
+          setTimeout(() => { try { showCtxMenu(r2.left, r2.bottom + 4, items); } catch (e) {} }, 0);
           return;
         }
         const cap = t.closest('.v2-capture');

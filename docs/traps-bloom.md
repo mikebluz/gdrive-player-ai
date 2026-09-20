@@ -232,6 +232,16 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **TRANSFORMS ARE A STAGE OVER THE RULES' OUTPUT (2026-09-19).** On a GENERATED part ✨ Transform
+  appends to `part.xf` (additive, absent = none, validated in the normalizer beside `part.tf`), and
+  `notesFor` = `tightClip(xfStage(notesForRaw))` — ONE seam every caller passes through (emitter,
+  drawing, outlines, ⚙ Deep, capture), so none can disagree. The ops are the same `TRANSFORMS`
+  table the one-shot list edit uses, over the stored shape (t · dur · midi), so the emitter's
+  {at, freq, durMs} are folded in and back out around them with the original note kept.
+  `shuffle` takes an `rnd`: seeded from the TAKE's own seed (`ctx._seedBase`, stashed by
+  notesForRaw — never a second computation), so a take shuffles the same way every pass. A RECORDED
+  part skips the stage (its list was edited in place; a capture already carries the result). A new
+  op goes in `TRANSFORMS` with a 4th `rnd` argument if it draws — never `Math.random` in a stage.
   **THE OUTLINES ARE NAMED WHERE EVOLVE IS SET (2026-09-19).** Seven coloured sets of hollow notes
   appeared the moment Evolve came on, and the only line saying what they were sat at the tail of the
   drawing's readout — "totally opaque to the user why there are 7 unshaded sets of notes". The face

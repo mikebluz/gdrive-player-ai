@@ -407,6 +407,16 @@
   marker to tell an edited take from a rolled one (`made` gives provenance, `p.tf` a transform, and
   neither catches a drag). Do not "improve" this into a cleverer predicate without a marker to
   stand on.
+- **`liveBadge` EATS THE SEPARATOR IT LIFTS, AND ONLY AT THE START.** It lifts `FROZEN` into a chip,
+  strips the following ` · `, then looks for the state word at the START of what is left — so any
+  text placed BETWEEN them silently stops VARIES/EVOLVES/FIXED being lifted at all. The freeze
+  reason therefore goes AFTER the state word (`FROZEN · VARIES: timing · a take you froze`), never
+  between. Two consequences for probes: the readable `textContent` has NO ` · ` after a lifted word
+  (`FROZEN a take you froze`, and `FROZENVARIES` when both lift), so assert on that shape; and the
+  badge's colour must be read while it is still in the document — `probe-roll-legend`'s hue check
+  clicks `.v2-genbtn` (which rebuilds the card) after capturing the node and then reads
+  `getComputedStyle` on a DETACHED span, which returns `''`. That failure is the stale reference,
+  not the hue: `--evo` and `.v2-sum-evo` are both fine and the class is applied.
 - **A STATE THAT OUTLIVES ITS TOAST HAS TO BE READABLE OFF THE CARD.** A part freezes when you tap a
   note, draw one, drag one, or re-roll a single bar — `captureShown`, which the readout itself
   invites ("tap a note to edit · a bar or chord to re-roll") without saying it writes the part down.

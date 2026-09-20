@@ -238,6 +238,64 @@ const ok = (name, cond, detail) => {
   ok('\u2026an unknown reason is dropped, never printed', fr.bogus);
   ok('\u2026and the reason does not outlive the state', fr.clearedOnRelease);
 
+  // ── EVERY FROZEN PART EXPLAINS ITSELF ────────────────────────────────
+  // "why does it say Frozen" \u2014 asked of a part with only the bare word. The
+  // gesture field only names freezes since it shipped, so `made` is the
+  // fallback, and it covers every part that exists including old saves.
+  const prov = await page.evaluate(() => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0], p = L.part;
+    const set = (o) => { p.kind = 'recorded'; delete p.froze; delete p.from; delete L.fixed;
+      Object.keys(o).forEach((k) => { p[k] = o[k]; }); E.getCfg();
+      return window._v2.liveTxt ? '' : ''; };
+    const line = () => { try { _ambRebuildMaster(); } catch (e) {}
+      const c = document.querySelector('.v2-layer');
+      if (c) { c.classList.remove('collapsed');
+        c.querySelectorAll('.ambient-grp').forEach((g) => g.classList.add('open')); }
+      return ((document.querySelector('.v2-vizlab') || {}).textContent || '').replace(/\s+/g, ' ').trim(); };
+    const NOTES = [{ t: 0, midi: 60, dur: 0.2 }, { t: 0.5, midi: 64, dur: 0.2 }];
+    const out = {};
+    // no per-pass draws at all \u2014 the bare-VARIES case from the report
+    ['humanize', 'velVar', 'accent', 'slide', 'ornament', 'motion', 'strumFidelity']
+      .forEach((k) => { delete L[k]; });
+    set({ made: 'take', notes: JSON.parse(JSON.stringify(NOTES)) });
+    out.take = line();
+    set({ made: 'compose', notes: JSON.parse(JSON.stringify(NOTES)) });
+    out.compose = line();
+    set({ made: 'compose', notes: [] });
+    out.empty = line();
+    set({ made: 'phrase', notes: JSON.parse(JSON.stringify(NOTES)), from: 'Hymn' });
+    out.phrase = line();
+    // a recorded gesture still wins over `made`
+    set({ made: 'take', notes: JSON.parse(JSON.stringify(NOTES)), froze: 'note' });
+    out.gesture = line();
+    // …and with a per-pass draw ON, VARIES comes back \u2014 and is still lifted
+    // into its own chip, which the word ORDER is what protects
+    set({ made: 'take', notes: JSON.parse(JSON.stringify(NOTES)) });
+    L.humanize = 40; E.getCfg();
+    out.withDraw = line();
+    out.chips = [...document.querySelectorAll('.v2-vizlab .v2-madebadge, .v2-vizlab .v2-livebadge')]
+      .map((x) => x.textContent.trim());
+    delete L.humanize; E.getCfg();
+    return out;
+  });
+  console.log('\n  \u2744 every frozen part says which kind it is:\n');
+  Object.keys(prov).forEach((k) => { if (k !== 'chips')
+    console.log('   ' + k.padEnd(9) + prov[k].slice(0, 78)); });
+  ok('a frozen TAKE says so, with no bare VARIES beside it',
+    /^FROZEN\s*\u00b7?\s*a take you froze/.test(prov.take), prov.take.slice(0, 90));
+  ok('drawn notes say so', /^FROZEN\s*\u00b7?\s*notes you drew/.test(prov.compose), prov.compose.slice(0, 90));
+  ok('an empty written part says it is ready to draw into',
+    /^FROZEN\s*\u00b7?\s*empty/.test(prov.empty), prov.empty.slice(0, 90));
+  ok('a phrase from the bank names itself',
+    /^FROZEN\s*\u00b7?\s*the phrase \u201cHymn\u201d, from the bank/.test(prov.phrase), prov.phrase.slice(0, 90));
+  ok('a recorded gesture outranks the provenance',
+    /^FROZEN\s*\u00b7?\s*froze when you tapped a note/.test(prov.gesture), prov.gesture.slice(0, 90));
+  ok('\u2026and with a per-pass draw on, VARIES comes back and names it',
+    /^FROZEN\s*\u00b7?\s*VARIES: timing \u00b7 a take you froze/.test(prov.withDraw), prov.withDraw.slice(0, 90));
+  ok('\u2026with BOTH words still lifted into their chips (the word order is what protects this)',
+    prov.chips && prov.chips.length === 2 && prov.chips[0] === 'FROZEN' && prov.chips[1] === 'VARIES',
+    JSON.stringify(prov.chips));
+
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

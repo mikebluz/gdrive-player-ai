@@ -237,14 +237,36 @@
   // Absent = it was already written down — composed, loaded from the bank, or
   // frozen before this existed — which needs no explanation.
   const FROZE = {
-    note: ' — froze when you tapped a note to edit',
-    draw: ' — froze when you drew a note',
-    drag: ' — froze when you moved a note',
-    bar: ' — froze when you re-rolled one bar',
-    chord: ' — froze when you re-rolled one chord',
+    note: 'froze when you tapped a note to edit',
+    draw: 'froze when you drew a note',
+    drag: 'froze when you moved a note',
+    bar: 'froze when you re-rolled one bar',
+    chord: 'froze when you re-rolled one chord',
   };
   const FROZE_KEYS = FROZE;
-  const frozeWhy = (k) => FROZE[k] || '';
+  // …AND WHEN NO GESTURE WAS RECORDED, `made` IS THE ANSWER THAT WAS ALWAYS
+  // THERE (2026-09-20). `froze` only names freezes that happen after it
+  // shipped, so every project saved before it — and every door that writes
+  // notes without a gesture (Compose, the Bank, ⌫ Clear, a brand-new layer) —
+  // printed the bare word FROZEN and nothing else. Asked outright: "why does
+  // it say Frozen". `made` already distinguishes all of them and the readout
+  // simply was not using it, so the fallback costs no stored field and covers
+  // every part that exists.
+  // ORDER MATTERS ELSEWHERE: this phrase goes AFTER the state word in
+  // `liveTxt`, because `liveBadge` lifts FROZEN and then looks for the state
+  // at the START of what is left — a reason in between stops VARIES being
+  // lifted into its chip at all.
+  function frozeWhy(p) {
+    if (!p) return '';
+    if (FROZE[p.froze]) return FROZE[p.froze];
+    const n = (p.notes || []).length;
+    if (p.made === 'phrase') {
+      return 'the phrase' + (p.from ? ' “' + p.from + '”' : '') + ', from the bank';
+    }
+    if (p.made === 'take') return 'a take you froze';
+    if (p.made === 'compose') return n ? 'notes you drew' : 'empty — ready to draw into';
+    return '';
+  }
   // The per-pass draws, in ONE reader — a new die on this axis cannot be added
   // without coming through here and being outranked with the rest.
   const perfOf = (L, k) => (fixedOf(L) ? 0 : (L ? L[k] : 0));
@@ -7784,8 +7806,22 @@
     // it to be FIXED" was asked of a part that froze when a note was tapped,
     // with only the word FROZEN to go on. `part.froze` is additive and absent
     // on every part that did not get there by a gesture.
-    const why = frozen ? V2.frozeWhy(L.part.froze) : '';
-    return frozen ? ('FROZEN' + why + ' \u00b7 ' + varies) : varies;
+    // \u23fb A STATE WORD WITH NOTHING BEHIND IT IS NOISE ON A FROZEN PART. The
+    // rules cannot re-run on a stored list, so Evolve and per-cycle vary are
+    // already inert there; only the performance draws (Humanize, Vel var,
+    // Accent, Slide, Ornament, Wobble) can still touch the notes. With none of
+    // them on, "FROZEN VARIES" is a permission nothing can exercise sitting
+    // next to the word that actually matters \u2014 and it reads as a
+    // contradiction, which is how it was reported.
+    // THIS IS NOT THE OLD VERDICT COMING BACK: the zero case here is NO WORD,
+    // never FIXED. FIXED still comes only from the toggle, and is always shown
+    // because the user set it.
+    const tags = (lv.tags && lv.tags.length) ? lv.tags : (lv.why || []);
+    const showState = !frozen || lv.state === 'fixed' || tags.length > 0;
+    const why = frozen ? V2.frozeWhy(L.part) : '';
+    return frozen
+      ? ('FROZEN' + (showState ? (' \u00b7 ' + varies) : '') + (why ? (' \u00b7 ' + why) : ''))
+      : varies;
   }
   // THE STATE'S WORD, IN ONE PLACE. `liveness().state` is fixed · varies ·
   // evolves; this is the only map from it to a word, and STATE_CLS the only

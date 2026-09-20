@@ -15946,6 +15946,13 @@
    Teal, like every other "this is what you hear" mark in the app, and above
    the written notes because it is the name every OTHER surface uses for this
    chord — the strip, the chord band, the layer readouts. */
+/* THE DEFERRED-KNOBS LINE in ⚙ Deep — amber, because it is the same class of
+   fact as the FROZEN badge: what you change here lands on the NEXT take, not on
+   the notes below. Full width; its label cell is empty by design. */
+.v2-layer .ambient-ctrl.v2-deferhint > .ambient-hint {
+  grid-column: 1 / -1; color: #f6ad55; font-size: 0.72rem; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
 .pe-chord .pe-sounds {
   display: block; text-decoration: none; font: 700 0.78rem 'Segoe UI', sans-serif;
   color: #4fd1c5; line-height: 1.15; margin-top: 1px;

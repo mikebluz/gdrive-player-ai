@@ -12179,6 +12179,21 @@
               // Options are filled by `genSync` — which shape is in force, and
               // whether its preset has been tuned, move without a rebuild.
               '<div class="ambient-mod-sub v2-genzone v2-genzone2"><b class="v2-zonen">2</b>The knobs that matter<span class="v2-zonefor"></span></div>' +
+              // THESE KNOBS ARE DEFERRED ON A WRITTEN PART, AND MUST SAY SO
+              // (2026-09-20, "not resizing when i change length"). `gateNowOf`
+              // deliberately counts a written take as BOTH live and recorded,
+              // so these stay ungreyed — the reasoning is sound (🎲 New take
+              // re-rolls a written part in place, so they decide what the NEXT
+              // roll gives, which is deferred rather than dead) and it was
+              // nowhere on screen. Measured: on a frozen take, setting Length
+              // to 15 writes 15 and the preview stays byte-identical — 9 notes,
+              // 163px wide, before and after. A control whose effect is
+              // invisible until another press must name that press.
+              '<div class="ambient-ctrl v2-deferhint" data-v2when="kind:recorded">' +
+                '<label></label><span class="ambient-hint">' +
+                'These notes are written down, so these knobs do not move them \u2014 ' +
+                'they decide what \ud83c\udfb2 New take rolls next. \u22ef \u25b8 \u26a1 Release hands the part ' +
+                'back to the rules for good.</span></div>' +
               '<div class="ambient-ctrl v2-presetctl" hidden>' +
                 '<label for="' + uid(L, 'preset') + '-gen">Character</label>' +
                 '<select id="' + uid(L, 'preset') + '-gen" class="ambient-select v2-presetpick"></select>' +

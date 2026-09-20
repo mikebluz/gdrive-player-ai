@@ -8510,7 +8510,13 @@
           edParts = c0.prog.parts.map(x => Object.assign({}, x, x && x.salt ? { salt: Object.assign({}, x.salt) } : {}, x && x.key ? { key: Object.assign({}, x.key) } : {}));
         }
       } catch (e) {}
-      _ambProgEd = { E, chords, sel: 0, altSel: -1, name, target, parts: edParts, part: -1 };
+      // `one` — a ONE-CHORD scope (2026-09-20, "when clicking a single Chord in
+      // a part it should open just that chord's editor, there should be a
+      // separate button for editing the entire Part"). -1 = the whole part, as
+      // before; an index shows that chord alone with a way back out. It scopes
+      // the STRIP only: every edit still writes the same chord in the same
+      // list, so nothing downstream knows this exists.
+      _ambProgEd = { E, chords, sel: 0, altSel: -1, name, target, parts: edParts, part: -1, one: -1 };
       let host = document.getElementById('ambient-prog-editor');
       if (!host) {
         host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
@@ -8750,6 +8756,20 @@
         const nm = 'Changes ' + n; if (!used.has(nm)) return nm;
       }
       return 'Changes';
+    }
+    // WHICH PART TAB A DOOR LANDS ON. Opening on a chord (or on a part) has to
+    // select the part that OWNS it, or the strip is scoped to a different part
+    // and the chord it was asked for is not in it. `pi` wins when given; else
+    // the part containing `ci` is found by walking the same ranges the tabs use.
+    function _ambPeFocusPart(ed, ci, pi) {
+      const parts = _ambPeParts(ed);
+      if (!parts || !parts.length) { ed.part = -1; return; }
+      if (Number.isFinite(pi) && pi >= 0) { ed.part = Math.min(parts.length - 1, pi | 0); return; }
+      for (let k = 0; k < parts.length; k++) {
+        const r = _ambPePartRange(ed, k);
+        if (ci >= r.from && ci < r.to) { ed.part = k; return; }
+      }
+      ed.part = 0;
     }
     function _ambPePartRange(ed, pi) {
       const ps = _ambPeParts(ed); if (!ps || pi < 0 || pi >= ps.length) return { from: 0, to: ed.chords.length };
@@ -9094,7 +9114,16 @@
           '</button>' +
           '<div class="pe-secbody">' + body + '</div></div>';
       };
-      const chordsRow = ed.chords.map((c, i) => {
+      // ONE CHORD, WHEN THAT IS WHAT WAS OPENED. The range still comes from the
+      // part (so "back to all" knows where to return to) — this narrows what the
+      // strip DRAWS, and the way out is drawn beside it rather than left to the
+      // part tabs, which are not obviously a way out of a chord.
+      const _peOne = (Number.isFinite(ed.one) && ed.one >= _peRange.from && ed.one < _peRange.to) ? (ed.one | 0) : -1;
+      const chordsRow = (_peOne >= 0
+        ? ('<button type="button" class="pe-chord pe-allchords" data-pe="allchords" ' +
+             'title="Back to every chord in these changes">\u25c2 All</button>')
+        : '') + ed.chords.map((c, i) => {
+        if (_peOne >= 0 && i !== _peOne) return '';             // one-chord scope
         if (i < _peRange.from || i >= _peRange.to) return '';   // scoped to the active part; indices stay ABSOLUTE
         const rn = _ambPeRoman(fn(c), kRoot, kScale);
         const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
@@ -9113,8 +9142,9 @@
         // line, which is what the buttons below edit.
         (_vsEd ? '<u class="pe-sounds">' + esc(_ambChordShort(fn(c)) || '?') + '</u>' : '') +
         '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em>' + (altN ? '<i class="pe-chord-alt">×' + (altN + 1) + '</i>' : '') + '</button>'; }).join('') +
+        (_peOne >= 0 ? '' :
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>' +
-        '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>';
+        '<button type="button" class="pe-chord pe-add pe-addtrans" data-pe="addtrans" title="Add a TRANSITION after this chord — a walk from it to the next one. Length is editable like any chord; each layer opts in through its cell in the chord matrix.">⇝</button>');
       // Summaries shown on a folded header, so a fold never hides what state it holds.
       const _pcur = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
       const pnmSum = _pcur ? ((_pcur.name || ('Changes ' + (ed.part + 1))) + ((_pcur.plays | 0) > 1 ? ' · ' + (_pcur.plays | 0) + '×' : '') + (_pcur.salt ? ' · salt' : '')) : '';
@@ -9357,6 +9387,8 @@
       const notesSorted = () => _ambPeNotes(tgt).slice().sort((x, y) => x - y);
       const serialize = () => ed.chords.map(_ambCloneChord);   // preserves bars + alts
       if (op === 'sel') { ed.sel = arg | 0; ed.altSel = -1; }
+      // ◂ All — leave the one-chord scope for the whole part (see `ed.one`)
+      else if (op === 'allchords') { ed.one = -1; }
       // Insertion is positional (after the selected chord), so growing the part
       // that OWNS ed.sel is what makes "add a chord to THIS part" work — without
       // it _ambRepairParts hands every new chord to the last part on save.
@@ -41320,6 +41352,11 @@
           h += '<div class="ambient-pov-parthdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
             '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) + _cadHtml +
+              // ✎ THE WHOLE SET OF CHANGES. A chord chip below opens just that
+              // chord now, so the part needs its own door rather than being the
+              // thing you got by accident when you meant one chord.
+              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partedit" data-pov="partedit:' + r.pi + '"' +
+                ' title="Edit these changes \u2014 every chord in ' + esc(r.name || 'this part') + ', their lengths and alternates">\u270e Part</span>' +
               // A part's own key is a modulation, so it is named right on the part
               // header rather than buried — you can see where the music changes key.
               // A KEY CHIP ONLY WHEN THE PART MODULATES. Following the area key is
@@ -41362,6 +41399,10 @@
                 : ('No key is set \u2014 the area is chromatic.')) + '">' +
               '<i>♪</i> ' + (cfg.keyOn ? _kl : 'Chromatic') +
             '</span>' + _rootH +
+            // ✎ THE WHOLE SET OF CHANGES — the part-less header needs the door
+            // too, since its chord chips now open one chord each.
+            '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partedit" data-pov="partedit:0"' +
+              ' title="Edit these changes \u2014 every chord, their lengths and alternates">\u270e Part</span>' +
             // …AND ITS CADENCE, the same chip every part header carries. With no
             // chain these changes ARE the one part, so `cad:0` is its cadence —
             // which is what the area row used to show from over here.
@@ -41856,10 +41897,32 @@
         _povWrite(steps);
         persist(); refresh(); return;
       }
+      // A CHORD CHIP OPENS THAT CHORD (2026-09-20). It used to open the whole
+      // part's editor with the chord merely selected, so tapping one chord of
+      // four handed you all four and the tap read as "open the part". The part
+      // still has a door — ✎ Part on its header, right beside these chips —
+      // and ◂ All inside the editor widens the scope without closing it.
       if (op === 'chord') {
         const i = a[1] | 0;
         _ambOpenProgEditor(E, { scope: 'area' });
-        if (_ambProgEd) { _ambProgEd.sel = Math.max(0, Math.min(_ambProgEd.chords.length - 1, i)); _ambPeRender(); }
+        if (_ambProgEd) {
+          const n2 = _ambProgEd.chords.length;
+          _ambProgEd.sel = Math.max(0, Math.min(n2 - 1, i));
+          _ambProgEd.one = _ambProgEd.sel;
+          try { _ambPeFocusPart(_ambProgEd, _ambProgEd.sel); } catch (e) {}
+          _ambPeRender();
+        }
+        return;
+      }
+      // …and the whole set of changes, from the part header
+      if (op === 'partedit') {
+        const pi = a[1] | 0;
+        _ambOpenProgEditor(E, { scope: 'area' });
+        if (_ambProgEd) {
+          _ambProgEd.one = -1;
+          try { _ambPeFocusPart(_ambProgEd, -1, pi); } catch (e) {}
+          _ambPeRender();
+        }
         return;
       }
       if (op === 'progren') { const nm = (typeof prompt === 'function') ? prompt('Name for these changes', _ambProgTitle(prog.name)) : null;

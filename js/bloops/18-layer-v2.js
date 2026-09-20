@@ -16806,6 +16806,28 @@
   V2.cascadeScan = cascadeScanFn;
   V2.cascadeBars = cascadeBarsFn;
   V2.cascadeAsk = cascadeModalFn;
+  // ⇗ THE RAMPS BLOCK, ON EVERY PATH THROUGH `render` (2026-09-20).
+  // Appended rather than baked into `cardHtml`: that template ends in nested
+  // group divs, so an insertion point there is a guess — this is the same
+  // `appendChild` into `.ambient-layer-body` the lane expander uses.
+  // IDEMPOTENT AND CALLED TWICE, because `render` has TWO paths and the first
+  // version only took one. The structure-signature early return — the common
+  // case, since it fires for every value edit on an unchanged set of cards —
+  // re-applies the gate and returns, so a card that already existed never got
+  // the block: reported as "where" against a card that ends at ▶ Preview.
+  // A fresh layer got it (full rebuild) and an existing one never did, which is
+  // exactly the shape that makes a feature look like it shipped.
+  function ensureRampsBlock(card, id) {
+    try {
+      if (typeof _ambLayerRampsHtml !== 'function') return;
+      if (card.querySelector('.ambient-layer-ramps')) return;
+      const body = card.querySelector(':scope > .ambient-layer-body') || card;
+      const tmpR = document.createElement('div');
+      tmpR.innerHTML = _ambLayerRampsHtml('v2:' + (id | 0));
+      const node = tmpR.firstElementChild;
+      if (node) body.appendChild(node);
+    } catch (e) {}
+  }
   V2.render = function (E) {
     _cardE = E;
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
@@ -16820,8 +16842,14 @@
     if (h._sig === sig && h.querySelectorAll('.v2-layer').length === list.length) {
       h.querySelectorAll('.v2-layer').forEach(card => {
         const L = list.find(x => x.id === (card.getAttribute('data-v2id') | 0));
-        if (L) applyGate(card, L);
+        if (!L) return;
+        ensureRampsBlock(card, L.id);
+        applyGate(card, L);
       });
+      // …and fill it. This path is where an EXISTING card lives, so without
+      // these two lines the block only ever reached a layer added after the
+      // page loaded.
+      try { if (typeof _ambRenderRamps === 'function') _ambRenderRamps(E); } catch (e) {}
       return;
     }
     h._sig = sig;
@@ -16903,15 +16931,7 @@
       // `appendChild` into `.ambient-layer-body` the lane expander uses.
       // `_ambRenderRamps` fills it and wires the ＋ (it now sweeps this host
       // too); the block is inert markup until then.
-      try {
-        if (typeof _ambLayerRampsHtml === 'function' && !card.querySelector('.ambient-layer-ramps')) {
-          const body = card.querySelector(':scope > .ambient-layer-body') || card;
-          const tmpR = document.createElement('div');
-          tmpR.innerHTML = _ambLayerRampsHtml('v2:' + id);
-          const node = tmpR.firstElementChild;
-          if (node) body.appendChild(node);
-        }
-      } catch (e) {}
+      ensureRampsBlock(card, id);
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (!(openFolds.get(String(id)) || []).some((k) => k.indexOf('v2-ftt-') === 0)) card.classList.add('v2-ftt-rhythm');
       (openFolds.get(String(id)) || []).forEach((k) => {

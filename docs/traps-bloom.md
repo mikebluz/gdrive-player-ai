@@ -422,6 +422,14 @@
   a second listener on the v2 host made one press add **two** ramps — the double-wiring trap, in the
   add direction. **Before broadening a sweep for v2, check whether the v2 host is already inside
   the one being swept.**
+- **`V2.render` HAS TWO PATHS, AND THE EARLY RETURN IS THE COMMON ONE.** The structure-signature
+  guard (`h._sig === sig`) fires for every value edit on an unchanged set of cards — i.e. nearly
+  every render — re-applies the gate and RETURNS. Anything that decorates a card must run on BOTH
+  paths or it reaches only layers added after page load, which is the shape that makes a feature
+  look shipped: the Ramps block landed on a fresh layer and never on an existing one, reported as
+  "where" against a card that ends at \u25b6 Preview. `ensureRampsBlock` is idempotent and called
+  from both. A probe that BUILDS a fresh layer only ever drives the rebuild path — drive the early
+  return too (render twice with no structural change).
 - **A GATE MUST FAIL LEGIBLY, NOT CRASH.** Poisoning this one first produced a `null.click()` stack
   trace instead of named failures, because every check after the first drives the block. It bails
   cleanly now when the block is absent. A crash still exits non-zero, so it is *caught* — but it

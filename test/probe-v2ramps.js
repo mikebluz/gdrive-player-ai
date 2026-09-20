@@ -86,6 +86,47 @@ const ok = (name, cond, detail) => {
     process.exit(1);
   }
 
+  // ── AND ON A CARD THAT ALREADY EXISTS ────────────────────────────────
+  // `V2.render` has TWO paths. The structure-signature early return — which
+  // fires for every value edit on an unchanged set of cards, i.e. nearly every
+  // render — re-applies the gate and bails. The first version of this feature
+  // only appended on the full-rebuild path, so a layer added after page load
+  // got the block and one that was already there never did. The gate missed it
+  // because it builds a FRESH layer; this drives the path a real card takes.
+  const persists = await page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const before = !!card.querySelector('.ambient-layer-ramps');
+    // strip it, then re-render with NO structural change — the early return
+    const blk = card.querySelector('.ambient-layer-ramps');
+    if (blk) blk.remove();
+    const stripped = !!card.querySelector('.ambient-layer-ramps');
+    window._v2.render(_masterEng);
+    const after = document.querySelector('.v2-layer').querySelector('.ambient-layer-ramps');
+    return { before, stripped, restored: !!after,
+             key: after ? after.getAttribute('data-rampkey') : null,
+             onePerCard: document.querySelectorAll('.v2-layer .ambient-layer-ramps').length };
+  });
+  ok('an EXISTING card gets the block too — the early return is the common path',
+    persists.stripped === false && persists.restored === true &&
+    persists.key === 'v2:' + id, JSON.stringify(persists));
+  ok('…and exactly one per card, however many times render runs',
+    persists.onePerCard === 1, JSON.stringify(persists));
+
+  // The check above REMOVES the block to prove render puts it back, so every
+  // check below it depends on that having worked. Bail legibly rather than
+  // dying on a null button — the same lesson as the guard further up, which I
+  // wrote and then walked straight past when adding this check.
+  if (!persists.restored) {
+    ok('＋ Ramp adds exactly ONE ramp, owned by THIS layer', false, 'block not restored by render');
+    ok('…and the row renders inside the card, not somewhere else', false, 'block not restored by render');
+    ok('the row has a reachable target picker', false, 'block not restored by render');
+    ok('…and this layer’s own parameters are on offer', false, 'block not restored by render');
+    ok('a ramp on a v2 parameter sweeps it', false, 'not reached');
+    console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
+    await browser.close();
+    process.exit(1);
+  }
+
   // ── PRESSING IT MAKES A RAMP ON THIS LAYER ───────────────────────────
   const added = await page.evaluate(() => {
     const card = document.querySelector('.v2-layer');

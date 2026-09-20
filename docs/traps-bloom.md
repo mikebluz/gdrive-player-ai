@@ -422,16 +422,20 @@
   a second listener on the v2 host made one press add **two** ramps — the double-wiring trap, in the
   add direction. **Before broadening a sweep for v2, check whether the v2 host is already inside
   the one being swept.**
-- **\u21d7 RAMPS IS A GROUP AND A SECTION, NOT AN APPENDED STRIP.** First cut appended
-  `_ambLayerRampsHtml` under `.ambient-layer-body`: v1 chrome (a 0.72rem label, a small pill at 0.8
-  opacity) under a card built from big section buttons \u2014 the bolted-on control this file's own
-  rule forbids, and unfindable ("where"). It is `grpOpen('Ramps', \u2026)` in `cardHtml` with 'Ramps'
-  in BOTH `GRPS` and `SECS`, so the existing machinery renders its chip in the sheet navigator
-  beside Mix and FX and opens it like any other section; `secGrp` falls through to the group of the
-  same name, so no `SEC_GRP` entry is needed. Being in the markup also removes the two-path problem
-  below outright \u2014 there is nothing to append on either path.
-  **DO NOT WRAP IT IN `.ambient-ctrl`.** That class is a GRID (see the Odds lane), and it put the
-  ramp row's target picker in an 18px column. The block is its own layout, exactly as on a v1 card.
+- **\u21d7 RAMPS IS A TAB OF MIX, IN THE CARD'S MARKUP.** It went through three homes in one day and
+  the two dead ends are the lesson. (1) APPENDED under `.ambient-layer-body`: v1 chrome under a card
+  built from big section buttons \u2014 the bolted-on control this file's own rule forbids, and
+  unfindable ("where"). (2) ITS OWN GROUP + SECTION: findable, but a seventh chip for one control.
+  It is now a row in the Mix group carrying `data-v2tab="Ramps"`, beside Mod \u2014 the other surface
+  that moves a value over time. Being in `cardHtml` also removes the two-path problem below outright:
+  there is nothing to append on either path.
+  **A TAB IS BUILT FROM A ROW.** `syncSheet` groups `.ambient-ctrl` rows by `data-v2tab`, so a bare
+  block gets NO TAB \u2014 measured, the Mix sheet came up Level \u00b7 EQ \u00b7 Space \u00b7 Mod with the ramps
+  nowhere. It must carry `.ambient-ctrl`. But that class is a GRID, and inside one the ramp's target
+  picker is handed an 18px column (the squeeze the \u23f1 Odds lane escapes with `grid-column: 1 / -1`)
+  \u2014 so `.v2-rampctl` turns that row back into a block. Row-hood for the tab, block for the layout.
+  Stamp the ROW, never the block: `tb()` adds the attribute to EVERY `<div `, and this block is
+  nested markup `_ambRenderRamps` writes into.
 - **`V2.render` HAS TWO PATHS, AND THE EARLY RETURN IS THE COMMON ONE.** The structure-signature
   guard (`h._sig === sig`) fires for every value edit on an unchanged set of cards — i.e. nearly
   every render — re-applies the gate and RETURNS. Anything that decorates a card must run on BOTH

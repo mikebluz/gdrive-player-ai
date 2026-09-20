@@ -16762,3 +16762,11 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
    press is how you find out why. */
 .v2-layer .v2-statesw .v2-statebtn.v2-outranked { opacity: 0.4; }
 .v2-layer .v2-statesw .v2-fixtog.on { background: rgba(159,122,234,0.28); color: #e6def8; }
+
+/* ⇗ RAMPS, as a row of the Mix sheet. It must carry `.ambient-ctrl` to be a
+   ROW — that is what `syncSheet` builds the sheet's tabs from, and without it
+   the block gets no tab at all. But `.ambient-ctrl` is a GRID, and the ramp
+   row's target picker came out 18px wide inside one. The block owns its own
+   layout (it is v1's, unchanged), so this row is simply a block again. */
+.v2-layer .v2-rampctl { display: block; }
+.v2-layer .v2-rampctl .ambient-layer-ramps { margin-top: 0; border-top: 0; padding-top: 0; }

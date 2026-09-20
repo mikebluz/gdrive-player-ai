@@ -12294,10 +12294,9 @@
   // (Verse/Chorus: the ⇶ Parts view, the part tabs, and the ⟲ N × part badge
   // on this very card), and one word for two mechanisms is how a control gets
   // misread. The DATA keys stay `part.*` for save-compat (the naming rule).
-  // ⇗ Ramps is a GROUP of its own (2026-09-20): its body is the ramp list, and
-  // a section chip over it is what makes it read as part of the card instead of
-  // a strip bolted under it ("make it a group button like Mix and FX").
-  const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX', 'Ramps'];   // ✦ Pitch lives in Generate (2026-09-18)
+  // ⇗ Ramps is a TAB OF MIX (2026-09-20), not a group — it sits beside Mod,
+  // which is the other surface on this card that moves a value over time.
+  const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX'];   // ✦ Pitch lives in Generate (2026-09-18)
   // ✺ LIVE (2026-09-16, user: "consolidate them all into a single menu behind a
   // new button 'Live' next to 'Generate'"). Everything that makes a pass differ
   // from the last — the dice, Humanize, Vel var, and the line naming what
@@ -12317,10 +12316,7 @@
   // SECTION OVER THE SHAPE GROUP carved out by one tab (`SEC_EXCL`), so
   // merging Shape in re-absorbs it \u2014 which is why the user's list of six is
   // exactly what falls out, with nothing left unreachable.
-  // …and a SECTION, which is what puts the chip in the sheet's navigator beside
-  // Mix and FX. `secGrp('Ramps')` falls through to the group of the same name,
-  // so no SEC_GRP entry is needed and `secForTab` keeps working unchanged.
-  const SECS = ['Instrument', 'Generate', 'Tweaks', 'Mix', 'FX', 'Bank', 'Ramps'];
+  const SECS = ['Instrument', 'Generate', 'Tweaks', 'Mix', 'FX', 'Bank'];
   // ── WHAT AN EFFECT IS CALLED ───────────────────────────────────
   // The DATA KEYS are `dist`, `autopan`, `pecho` — kept forever for save-compat
   // — and the card's words are Drive, Auto-pan, Pitch echo. The FX summary
@@ -13887,7 +13883,27 @@
                _ambModTarget('v2-' + L.id, 'vca', 'VCA \u00b7 amplitude', 'tremolo', 30) +
                _ambModTarget('v2-' + L.id, 'vco', 'VCO \u00b7 pitch', 'vibrato', 20) +
                _ambModTarget('v2-' + L.id, 'vcf', 'VCF \u00b7 cutoff', 'sweep', 15))
-            : ''))
+            : '')) +
+          // \u2500\u2500 \u21d7 RAMPS \u2014 a TAB of Mix, not a section of its own \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+          // It was briefly its own section chip; it belongs with Mod, which is
+          // the other thing on this card that moves a value over time. One less
+          // chip in the navigator, and the two automation surfaces sit together.
+          // STAMPED ON THE OUTER DIV ONLY, not through `tb()`: that helper adds
+          // the attribute to EVERY `<div ` it is given, and this block is nested
+          // markup (`_ambLayerRampsHtml` owns it, and `_ambRenderRamps` writes
+          // rows into it) \u2014 stamping its children would put the sheet's tab
+          // filter on nodes that are not rows.
+          // IT HAS TO BE A ROW TO BE A TAB. `syncSheet` builds the sheet's tabs
+          // from `.ambient-ctrl` rows, so a bare block gets no tab at all —
+          // measured: the Mix sheet came up Level · EQ · Space · Mod with the
+          // ramps nowhere. So it IS a row, and `.v2-rampctl` turns that row
+          // back into a block: `.ambient-ctrl` is a GRID, and inside one the
+          // ramp's target picker was handed an 18px column (the same squeeze
+          // the ⏱ Odds lane takes `grid-column: 1 / -1` to escape).
+          '<div class="ambient-ctrl v2-rampctl" data-v2tab="Ramps">' +
+            ((typeof _ambLayerRampsHtml === 'function')
+              ? _ambLayerRampsHtml('v2:' + L.id) : '') +
+          '</div>'
         ) +
         // ── FX — the effect stages ────────────────────────────────────────
         // AN EFFECT'S PARAMETERS ALWAYS SHOW ON ITS TAB (2026-09-18, user:
@@ -14024,24 +14040,6 @@
           // is why nothing is rendered here.
           ''
         ) +
-        // ── ⇗ RAMPS ────────────────────────────────────────────────────
-        // A GROUP, so the section machinery renders its chip beside Mix and FX
-        // and opens it in the same sheet as everything else. It was appended
-        // under the card body before, which put v1's thin strip — a 0.72rem
-        // label and a small pill — below a card built from big section buttons:
-        // the bolted-on control this file's own rule forbids, and unfindable
-        // ("where").
-        // ONE ROW, BUILT BY `_ambLayerRampsHtml`, so the markup, the ＋ button's
-        // delegation and `_ambRenderRamps`' fill stay exactly v1's — the block
-        // moved, nothing was reimplemented.
-        // NOT WRAPPED IN `.ambient-ctrl`. That class is a GRID — the same thing
-        // that squeezed the ⏱ Odds lane to 9px — and it put the ramp row's
-        // target picker in an 18px column (measured). The block is its own
-        // layout, exactly as it is on a v1 card, so it goes in the group body
-        // directly.
-        grpOpen('Ramps', false,
-          ((typeof _ambLayerRampsHtml === 'function')
-            ? _ambLayerRampsHtml('v2:' + L.id) : '')) +
       '</div></div>';
   }
 
@@ -14514,19 +14512,6 @@
         if (tmS.ratchet && (tmS.ratchet.chance | 0) > 0) bits.push('ratchet: ' + (tmS.ratchet.hits | 0));
         return bits.length ? bits.join(' \u00b7 ') : 'struck';
       })(),
-      // ⇗ How many ramps this layer drives, and what they are aimed at — a
-      // folded group that says nothing is the one lying about what is set.
-      Ramps: (() => {
-        let mine = [];
-        try {
-          const all = (_cfgOf() || {}).ramps || [];
-          mine = all.filter((r2) => r2 && r2.layerKey === 'v2:' + (L.id | 0));
-        } catch (e) { mine = []; }
-        if (!mine.length) return 'none';
-        const n = mine.filter((r2) => r2.on !== false).length;
-        return mine.length + ' ramp' + (mine.length === 1 ? '' : 's') +
-          (n < mine.length ? ' · ' + n + ' on' : '');
-      })(),
       Mix: (() => {
         const bits = ['level: ' + num(L.level, 70)];
         if (num(L.revSend, 0) > 0) bits.push('reverb: ' + num(L.revSend, 0));
@@ -14536,6 +14521,14 @@
         const m = L.mod || {};
         const mods = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
         if (mods.length) bits.push('mod: ' + mods.join('+'));
+        // \u21d7 \u2026and the ramps, which are a tab of this group now. A folded group
+        // that omits a control behind its own door is the one lying about what
+        // is set \u2014 the same rule \u23f1 Timing follows in Shape.
+        try {
+          const mine = ((_cfgOf() || {}).ramps || [])
+            .filter((r2) => r2 && r2.layerKey === 'v2:' + (L.id | 0));
+          if (mine.length) bits.push('ramps: ' + mine.length);
+        } catch (e) {}
         return bits.join(' \u00b7 ');
       })(),
       // EVERY WORD HERE NAMES A CONTROL YOU CAN FIND — the stage's own tab name,

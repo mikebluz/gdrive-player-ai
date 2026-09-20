@@ -95,7 +95,7 @@ const ok = (name, cond, detail) => {
   // because it builds a FRESH layer; this drives the path a real card takes.
   const persists = await page.evaluate(() => {
     const card = document.querySelector('.v2-layer');
-    const grp = card.querySelector('.ambient-grp[data-v2grp="Ramps"]');
+    const grp = card.querySelector('.ambient-grp[data-v2grp="Mix"]');
     const before = !!card.querySelector('.ambient-layer-ramps');
     // re-render with NO structural change — the early-return path, which is
     // what nearly every render takes
@@ -106,16 +106,28 @@ const ok = (name, cond, detail) => {
     return { before, inGroup: !!(grp && grp.contains(card.querySelector('.ambient-layer-ramps'))),
              still: !!after, key: after ? after.getAttribute('data-rampkey') : null,
              onePerCard: document.querySelectorAll('.v2-layer .ambient-layer-ramps').length,
+             tab: (() => { const row = after && after.closest('.ambient-ctrl');
+                    return row ? row.getAttribute('data-v2tab') : null; })(),
+             innerTabs: after ? after.querySelectorAll('[data-v2tab]').length : -1,
              secs: (window._v2.secs ? window._v2.secs() : []) };
   });
-  ok('the block lives INSIDE the Ramps group, not bolted under the card',
+  ok('the block lives INSIDE the Mix group, not bolted under the card',
     persists.inGroup === true, JSON.stringify(persists));
   ok('…and survives re-renders that take the early-return path',
     persists.still === true && persists.key === 'v2:' + id, JSON.stringify(persists));
   ok('…exactly one per card, however many times render runs',
     persists.onePerCard === 1, JSON.stringify(persists));
-  ok('Ramps is a SECTION, so the sheet navigator lists it beside Mix and FX',
-    (persists.secs || []).indexOf('Ramps') >= 0, JSON.stringify(persists.secs));
+  // A TAB OF MIX, not a section of its own — so the navigator is unchanged and
+  // the block carries `data-v2tab="Ramps"`, which is what makes the sheet give
+  // it a tab beside Mod.
+  ok('Ramps is NOT its own section \u2014 the navigator is unchanged',
+    (persists.secs || []).indexOf('Ramps') < 0, JSON.stringify(persists.secs));
+  // The stamp is on the ROW (`.ambient-ctrl.v2-rampctl`) — that is what
+  // `syncSheet` groups into tabs; the block inside is v1's markup, untouched.
+  ok('\u2026it is a TAB of Mix, stamped on its row',
+    persists.tab === 'Ramps', JSON.stringify(persists));
+  ok('\u2026and the stamp is on the OUTER div only, not its children',
+    persists.innerTabs === 0, JSON.stringify(persists));
 
   // The check above REMOVES the block to prove render puts it back, so every
   // check below it depends on that having worked. Bail legibly rather than
@@ -200,6 +212,45 @@ const ok = (name, cond, detail) => {
   ok('a ramp on a v2 parameter sweeps it',
     swept.distinct > 2, JSON.stringify(swept));
   console.log('      pulses over 8 ticks: ' + JSON.stringify(swept.seen));
+
+  // ── AND THE TAB ACTUALLY RENDERS IN THE MIX SHEET ────────────────────
+  // LAST, because it navigates the card and would disturb every check above
+  // it — the first version clicked the group HEAD (which opens the group
+  // inline, not the sheet) and left the target picker at 0 wide.
+  // The sheet is navigated by its own chips: the card opens on Content, and
+  // `.v2-gototab[data-goto="Mix"]` is how a finger gets to Mix.
+  // The card must be expanded BY ITS HANDLER — `classList.remove('collapsed')`
+  // (what the setup above does) skips the code that opens the default sheet,
+  // so there is no navigator to click. Collapse, then tap the caret for real.
+  await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer'); if (c) c.classList.add('collapsed');
+  });
+  await zz(300);
+  const caret = await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer .ambient-collapse'); if (!c) return null;
+    c.scrollIntoView({ block: 'center' });
+    const r = c.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (caret) await page.touchscreen.tap(caret.x, caret.y);
+  await zz(900);
+  await page.evaluate(() => {
+    document.querySelectorAll('.v2-secpop-close').forEach((b2) => b2.click());
+    const g = document.querySelector('.v2-layer .v2-gototab[data-goto="Mix"]');
+    if (g) g.click();
+  });
+  await zz(900);
+  const tabInfo = await page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const all = [...card.querySelectorAll('.v2-pop-tabs button, .v2-pop-tab')];
+    const chips = all.map((e) => (e.textContent || '').trim());
+    const chip = all.find((e) => /^Ramps$/i.test((e.textContent || '').trim()));
+    const r = chip ? chip.getBoundingClientRect() : null;
+    return { chips, has: !!chip, w: r ? Math.round(r.width) : 0,
+             on: !!(chip && chip.offsetParent) };
+  });
+  ok('the Mix sheet shows a Ramps tab, beside Mod',
+    tabInfo.has && tabInfo.on && tabInfo.w > 20, JSON.stringify(tabInfo));
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

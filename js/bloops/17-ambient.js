@@ -41150,8 +41150,25 @@
         // the progression on screen, so they belong on its own bar rather than
         // as two more accordions below it — and as accordions they pushed the
         // matrices further down every time they were opened.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:salt" ' +
-          'title="Salt — deterministic per-cycle spice: lengths, colours, vary, tension, take, scatter">🧂 Salt</span>' +
+        // SALT IS THE LOUD ONE (2026-09-19, "Salt needs to be a larger/louder
+        // option since it's so crucial"): its own class, filled in Salt's hue,
+        // and it SAYS whether anything is on rather than only naming itself —
+        // a chip that looks identical at 0 and at full is a readout that does
+        // not read.
+        ((function () {
+          const _sv = (prog && prog.salt) || {};
+          const _bits = [];
+          if ((_sv.colors | 0) > 0) _bits.push((_sv.colors | 0) + ' colours');
+          if ((prog.vary | 0) > 0) _bits.push('vary ' + (prog.vary | 0));
+          if ((prog.tension | 0) > 0) _bits.push('tension ' + (prog.tension | 0));
+          if ((prog.reroll | 0) > 0) _bits.push('take ' + (prog.reroll | 0));
+          if ((_sv.scatter | 0) > 0) _bits.push('scatter ' + (_sv.scatter | 0));
+          const _on = _bits.length > 0;
+          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-saltbtn' + (_on ? ' on' : '') + '" data-pov="grp:salt" ' +
+            'title="' + esc('Salt \u2014 deterministic per-cycle spice: colours, vary, tension, take, scatter. ' +
+              (_on ? ('On: ' + _bits.join(' \u00b7 ') + '.') : 'Everything at 0 \u2014 the changes play exactly as written.')) + '">' +
+            '\ud83e\uddc2 Salt' + (_on ? ('<b>' + esc(_bits.length === 1 ? _bits[0] : (_bits.length + ' on')) + '</b>') : '') + '</span>';
+        })()) +
         // ↔ RUBATO NEEDS ITS OWN DOOR. It is a `pop` group, i.e. PARKED hidden in
         // the pane and only visible while lifted into the popover — so without a
         // button here the whole section was unreachable, which is exactly the
@@ -41172,24 +41189,14 @@
         // opens. It opens the whole piece laid out end to end: the song map.
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="arrmap" ' +
           'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤ Song map</span>' +
-        // CADENCE, when there are no PARTS to hang it on. A progression without a
-        // chain renders no part header — and `_ambRepairParts` collapses a
-        // single part to none — so hanging this only on the header made it
-        // invisible on the common case: measured 0 chips with no parts AND with
-        // one, 2 chips with two. Without parts the whole progression is one
-        // cadence, which is exactly what `_ambCadRange(cfg, 0)` already returns.
-        ((function () {
-          const _hasParts = !!(Array.isArray(prog.parts) && prog.parts.length);
-          if (_hasParts) return '';                      // each part carries its own
-          const _cad = _ambCadence(cfg, 0);
-          if (!_cad.length) return '';
-          const _flat = _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
-          const _tot = _cad.reduce((a, v) => a + v, 0);
-          return '<span role="button" tabindex="0" class="ambient-pov-cad' + (_flat ? '' : ' on') + '" data-pov="cad:0"'
-            + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
-            + esc(_ambFmtBpc(_tot)) + ' bars). Click to edit or generate a new shape.">'
-            + '<i>\u29d6</i>' + esc(_flat ? ('even \u00d7' + _cad.length) : _ambCadStr(_cad)) + '</span>';
-        })()) +
+        // CADENCE IS NOT HERE. It belongs to a PART — one cadence per part —
+        // and this row is the area's. It sat here for the no-parts case, which
+        // put it beside \u25a4 Song map on the commonest project shape and read as
+        // an area-wide setting (2026-09-19: "there should always be a Cadence
+        // button on the Part; when there's only one part it's next to Song map
+        // and it should not be"). Every part header carries its own now,
+        // INCLUDING the part-less header (`.ambient-pov-solohdr`), so there is
+        // no shape left for this to cover.
         // WHICH ROUND. A round is one trip through all the parts; with an
         // arrGrid the order differs from one to the next, so the strip shows one
         // round at a time and this says which — exactly as the Scheduler is told
@@ -41288,9 +41295,12 @@
           const _cad = _ambCadence(cfg, r.pi);
           const _cadFlat = _cad.length && _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
           const _cadTot = _cad.reduce((a, v) => a + v, 0);
-          // FLAT LENGTHS SAY NOTHING the chord count does not already say, so the
-          // chip renders only for a real shape. ⋯ → Cadence… is the door otherwise.
-          const _cadHtml = (_cad.length && !_cadFlat)
+          // ALWAYS SHOWN (2026-09-19). It was hidden on a FLAT cadence — "the
+          // count already says it" — which is true of the READOUT and false of
+          // the DOOR: with an even cadence there was no way in but the ⋯ menu,
+          // and that is the state you are most likely to want to change. Flat
+          // still reads quietly (no `on`), so a shaped cadence stands out.
+          const _cadHtml = (_cad.length)
             ? ('<span role="button" tabindex="0" class="ambient-pov-cad' + (_cadFlat ? '' : ' on') + '" data-pov="cad:' + r.pi + '"'
                + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
                + esc(_ambFmtBpc(_cadTot)) + ' bars). Click to edit or generate a new shape.">'
@@ -41341,6 +41351,19 @@
                 : ('No key is set \u2014 the area is chromatic.')) + '">' +
               '<i>♪</i> ' + (cfg.keyOn ? _kl : 'Chromatic') +
             '</span>' + _rootH +
+            // …AND ITS CADENCE, the same chip every part header carries. With no
+            // chain these changes ARE the one part, so `cad:0` is its cadence —
+            // which is what the area row used to show from over here.
+            ((function () {
+              const _c0 = _ambCadence(cfg, 0);
+              if (!_c0.length) return '';
+              const _f0 = _c0.every(v => Math.abs(v - _c0[0]) < 1e-6);
+              const _t0 = _c0.reduce((a, v) => a + v, 0);
+              return '<span role="button" tabindex="0" class="ambient-pov-cad' + (_f0 ? '' : ' on') + '" data-pov="cad:0"'
+                + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_c0)) + ' = '
+                + esc(_ambFmtBpc(_t0)) + ' bars). Click to edit or generate a new shape.">'
+                + '<i>\u29d6</i>' + esc(_f0 ? ('even \u00d7' + _c0.length) : _ambCadStr(_c0)) + '</span>';
+            })()) +
             '</div>';
         }
         h += '<div class="ambient-pov-chords">';
@@ -42523,6 +42546,27 @@
     // Titles for the popover groups, in ONE place — a ternary meant a third group
     // silently took the wrong title (or its own key) instead.
     const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order' };
+    // ── A SALT DIAL ─────────────────────────────────────────────────────
+    // (2026-09-19, "change these inputs to mobile-friendly dials and present
+    // in a clean symmetrical way".) Five bare number boxes on one wrapping
+    // line were unusable on a phone — a 40px box that wants a keyboard — and
+    // read as a form rather than as five settings of one thing.
+    // A DIAL IS A WRAPPER OVER THE REAL INPUT, never a replacement: the
+    // `<input>` keeps its ID, its min/max/step and its `input` event, so every
+    // reader and writer in this file is untouched (the same wrap-don't-replace
+    // rule the v2 knobs follow). It is a RANGE now, so it also inherits the
+    // delegated touch-slider handling; `.v2-knob` markup + `V2.knobify` paint
+    // and drag it, which is why there is no second knob implementation here.
+    function _ambSaltDial(id, label, max, step, sub, title) {
+      return '<div class="ambient-ctrl ambient-salt-dial" title="' + esc(title) + '">' +
+        '<label for="' + id + '">' + label + '</label>' +
+        // NOT `.ambient-salt-in` — that class is v1's 52px NUMBER BOX chrome
+        // (border, background, fixed width), and a range wearing it looks like
+        // a broken field in the one state where the knob fails to build.
+        '<input type="range" class="ambient-sl" id="' + id + '" ' +
+          'min="0" max="' + max + '" step="' + step + '" value="0" aria-label="' + esc(label) + '">' +
+        '<span class="ambient-hint ambient-salt-sub">' + esc(sub) + '</span></div>';
+    }
     function _ambProgGrpPopover(E, key, title) {
       _E = E;
       const grp = _ambGet(E, 'ambient-proggrp-' + key); if (!grp) return;
@@ -42539,6 +42583,9 @@
       grp.classList.add('open');            // inside the popover it is always open
       grp.style.display = '';
       host.appendChild(grp);
+      // DIALS, PAINTED BY THE ONE IMPLEMENTATION (`V2.knobify`, 18-layer-v2) —
+      // the group is only in the DOM's popover now, so this is the moment.
+      try { if (window._v2 && window._v2.knobify) window._v2.knobify(host); } catch (e) {}
       const close = () => {
         try {
           if (mark.parentElement) mark.parentElement.insertBefore(grp, mark);
@@ -51853,6 +51900,10 @@
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
+            // …and the dial faces follow the values (a knob is painted FROM the
+            // input, so a value written here has to repaint it — the documented
+            // "a computed face with one writer is frozen" rule)
+            try { if (window._v2 && window._v2.knobSync) window._v2.knobSync(saltRow); } catch (e) {}
             // ↔ Rubato lives in its OWN row — same visibility rule, its own store.
             { const rRow = document.getElementById(tr('ambient-prog-rubatorow'));
               if (rRow) {
@@ -52333,12 +52384,13 @@
             // _ambProgCurrentChord). All zeros = played exactly as written.
             _ambProgGrpOpen('salt', '🧂 Salt', false, true) +
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
-              '<span class="ambient-sched-lbl salt-lbl">🧂 salt</span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">colors</span><input type="number" class="ambient-salt-in" id="ambient-salt-colors" min="0" max="7" step="1" value="0" title="How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌊 vary</span><input type="number" class="ambient-salt-in" id="ambient-prog-vary" min="0" max="100" step="5" value="0" title="Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🌡 tension</span><input type="number" class="ambient-salt-in" id="ambient-prog-tension" min="0" max="100" step="5" value="0" title="Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">🎲 take</span><input type="number" class="ambient-salt-in" id="ambient-prog-reroll" min="0" max="100" step="5" value="0" title="Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored."></span>' +
-              '<span class="ambient-sched-grp"><span class="ambient-sched-lbl">scatter</span><input type="number" class="ambient-salt-in" id="ambient-salt-scatter" min="0" max="100" step="5" value="0" title="How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically)."></span>' +
+              '<div class="ambient-salt-dials">' +
+              _ambSaltDial('ambient-salt-colors', 'Colours', 7, 1, 'recolours per chord', 'How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections.') +
+              _ambSaltDial('ambient-prog-vary', '🌊 Vary', 100, 5, 'harmony variance', 'Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly.') +
+              _ambSaltDial('ambient-prog-tension', '🌡 Tension', 100, 5, 'ramp toward the turn', 'Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written.') +
+              _ambSaltDial('ambient-prog-reroll', '🎲 Take', 100, 5, 'substituted chords', 'Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored.') +
+              _ambSaltDial('ambient-salt-scatter', 'Scatter', 100, 5, 'how uneven the colours fall', 'How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically).') +
+              '</div>' +
               // NAME THE LADDER. This row is the AREA rung, and the narrower ones
               // now have surfaces of their own — a control that is silently the
               // widest of three is how the whole axis came to feel scattered.

@@ -10066,6 +10066,12 @@
   try { V2.vizModeOf = (L) => vizMode(L); } catch (e) {}
   try { V2.secs = () => SECS.slice(); } catch (e) {}
   try { V2.secGrp = (sec) => secGrp(sec); } catch (e) {}
+  // THE KNOB, LENT OUT (2026-09-19). Any `.ambient-ctrl` holding an
+  // `input.ambient-sl` becomes a dial — 17-ambient's Salt popover uses this
+  // rather than growing a second knob implementation. `knobify` builds and
+  // paints; `knobSync` repaints faces after something writes the inputs.
+  try { V2.knobify = (root) => { try { knobifyAll(root); root.querySelectorAll('.v2-knob').forEach(knobFace); } catch (e) {} }; } catch (e) {}
+  try { V2.knobSync = (root) => { try { (root || document).querySelectorAll('.v2-knob').forEach(knobFace); } catch (e) {} }; } catch (e) {}
   // A MATERIAL PRESS DOES ONE OF THREE THINGS, and the card never said which:
   // ADOPT (already in that mode — nothing changes), RESTORE (a material you
   // have used before comes back with the settings you left it at), or BUILD
@@ -16709,7 +16715,11 @@
       // horizontal DISTANCE slows it for fine work — the touch-slider rule,
       // rotated 90°. Cumulative travel arms the drag (the per-move-delta
       // mistake is documented: slow drags never cross a per-move threshold).
-      h.addEventListener('pointerdown', (ev) => {
+      // ON THE DOCUMENT, not the panel host (2026-09-19): knobs are markup, and
+      // the Salt popover builds them outside this host — a handler bound to the
+      // host is a knob that paints and cannot be turned. The first line still
+      // returns unless the press is on a knob, so nothing else changes.
+      document.addEventListener('pointerdown', (ev) => {
         const k = ev.target.closest && ev.target.closest('.v2-knob'); if (!k) return;
         if (ev.target.closest('.v2-knob-num')) return;   // typing in the entry
         const inp = knobInputOf(k); if (!inp) return;

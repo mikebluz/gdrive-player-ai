@@ -407,6 +407,25 @@
   marker to tell an edited take from a rolled one (`made` gives provenance, `p.tf` a transform, and
   neither catches a drag). Do not "improve" this into a cleverer predicate without a marker to
   stand on.
+- **⇗ RAMPS REACHED v2 ALL ALONG — THE CARD JUST NEVER EMITTED THE BLOCK (2026-09-20).** Asked as
+  "v2 layers should have ramps", and the engine half was already complete: `_AMB_RAMP_PARAMS.v2`
+  lists 34 params (61 offered, with the shared Stereo/Spatialize/FX append), `_ambRampTargetGroups`
+  enumerates `cfg.layers`, and a saw on `part.rhythm.pulses` sweeps (measured 1·5·9·12·1·5·9·12).
+  What was missing was `_ambLayerRampsHtml('v2:'+id)` on the card — every v1 card renders one, so
+  the only way in was Area ▸ Ramps. `V2.render` appends it (into `.ambient-layer-body`, the
+  lane-expander idiom — `cardHtml`'s tail is nested group divs and any insertion point there is a
+  guess) and then calls `_ambRenderRamps`, which is the ONE writer for every layer model's rows.
+  **`#bloom-v2-layers` IS INSIDE THE PANEL HOST.** So `_ambRenderRamps`' existing
+  `host.querySelectorAll` already finds a v2 block as a descendant, and the ＋ button's delegated
+  listener already catches its press. Both were "fixed" before being checked and both were wrong:
+  restricting the sweep to `E.hostId` explicitly changed NOTHING (the poison passed 8/8), and wiring
+  a second listener on the v2 host made one press add **two** ramps — the double-wiring trap, in the
+  add direction. **Before broadening a sweep for v2, check whether the v2 host is already inside
+  the one being swept.**
+- **A GATE MUST FAIL LEGIBLY, NOT CRASH.** Poisoning this one first produced a `null.click()` stack
+  trace instead of named failures, because every check after the first drives the block. It bails
+  cleanly now when the block is absent. A crash still exits non-zero, so it is *caught* — but it
+  tells the next person nothing about which contract broke.
 - **`liveBadge` EATS THE SEPARATOR IT LIFTS, AND ONLY AT THE START.** It lifts `FROZEN` into a chip,
   strips the following ` · `, then looks for the state word at the START of what is left — so any
   text placed BETWEEN them silently stops VARIES/EVOLVES/FIXED being lifted at all. The freeze

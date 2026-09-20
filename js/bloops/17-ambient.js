@@ -51757,6 +51757,14 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       const cfg = E.getCfg(); if (!cfg) return;
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
+      // THIS ALREADY REACHES v2 (2026-09-20). `#bloom-v2-layers` is INSIDE the
+      // panel host — it is inserted after the extras — so this query finds a v2
+      // card's Ramps block as a descendant, and the ＋ button's delegated
+      // listener on the same host catches its press on the way up. Both were
+      // verified by poisoning: restricting the sweep to `E.hostId` explicitly
+      // changed nothing, and wiring a SECOND listener on the v2 host made one
+      // press add TWO ramps. The only thing missing was the block itself, which
+      // v2's card now appends (see `V2.render`).
       const wraps = host.querySelectorAll('.ambient-layer-ramps[data-rampkey]');
       if (!wraps.length) return;
       const wired = [];

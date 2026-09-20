@@ -16892,6 +16892,26 @@
           });
         } catch (e) {}
       }
+      // ⇗ RAMPS — the per-layer block every v1 card has had and this one has
+      // not. The engine side was already complete: `_AMB_RAMP_PARAMS.v2` lists
+      // 61 targets and `_ambRampTargetGroups` offers this layer, so a ramp
+      // aimed at a v2 param sweeps today (measured: a saw on
+      // `part.rhythm.pulses` gave 1·5·9·12·1·5·9·12). What was missing was the
+      // ＋ door on the card, so the only way in was the Area ▸ Ramps block.
+      // APPENDED, not baked into `cardHtml`: that template ends in nested group
+      // divs, so an insertion point there is a guess — this is the same
+      // `appendChild` into `.ambient-layer-body` the lane expander uses.
+      // `_ambRenderRamps` fills it and wires the ＋ (it now sweeps this host
+      // too); the block is inert markup until then.
+      try {
+        if (typeof _ambLayerRampsHtml === 'function' && !card.querySelector('.ambient-layer-ramps')) {
+          const body = card.querySelector(':scope > .ambient-layer-body') || card;
+          const tmpR = document.createElement('div');
+          tmpR.innerHTML = _ambLayerRampsHtml('v2:' + id);
+          const node = tmpR.firstElementChild;
+          if (node) body.appendChild(node);
+        }
+      } catch (e) {}
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (!(openFolds.get(String(id)) || []).some((k) => k.indexOf('v2-ftt-') === 0)) card.classList.add('v2-ftt-rhythm');
       (openFolds.get(String(id)) || []).forEach((k) => {
@@ -20015,6 +20035,13 @@
         _docScroller.scrollTop = _docScrollWas;
       }
     } catch (e) {}
+    // ⇗ FILL THE RAMP BLOCKS the loop above appended. `_ambRenderRamps` is the
+    // ONE writer for every layer model's ramp list — it reads `cfg.ramps` and
+    // renders each into the block whose `data-rampkey` matches, so v2 gets the
+    // same rows, wiring and A/B ranges as v1 with no second implementation.
+    // After the scroll restore, because it writes into cards that are already
+    // placed and must not change the height this pass just put back.
+    try { if (typeof _ambRenderRamps === 'function') _ambRenderRamps(E); } catch (e) {}
   };
 
   // A NEW LAYER OPENS ON THE PATTERN GRID. It defaulted to `pulse`, which has no

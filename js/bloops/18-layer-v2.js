@@ -6100,6 +6100,10 @@
     notesFor,                      // the interface, callable directly
     onsetsOf,
     resetLayer: resetLayerFn,      // \u21ba everything back to a new layer's defaults
+    // …and what those defaults ARE, for anything that needs to ask (the
+    // \u2699 Deep panel's "Changed" line compares against this). One source, so a
+    // new field is covered the moment it is normalized.
+    defaultLayer: () => { try { return normLayer({ id: 1 }, 0); } catch (e) { return null; } },
     transform: transformFn,        // commands over the notes you already have
     // …and over every take a GENERATED part makes (`xfStage`)
     xfAdd: (E, L, op, bars) => {
@@ -9471,6 +9475,21 @@
         'part.pitch.stutter': 0, 'proximity': 0, 'part.shape.slip': 0, 'part.pitch.tones': '',
         'part.pitch.motif': '', 'part.rhythm.antic': '', 'part.pitch.inv': 0,
         'restProb': 0, 'ghosts': 0, 'lenVary': 0, 'startVary': 0, 'twist': 0, 'phrasing': 0 };
+      // Built ONCE per sync — `normLayer` is cheap but this walks ~40 rows.
+      // `null` distinguishes "absent on a fresh layer" (which is a real default:
+      // Strike off, Evolve off, no ConFugued) from "not a layer field".
+      const _freshDef = (() => { try { return V2.defaultLayer ? V2.defaultLayer() : null; } catch (e) { return null; } })();
+      const _freshDefGet = (path) => {
+        if (!_freshDef) return undefined;
+        const ks = String(path).split('.');
+        let o = _freshDef;
+        for (let i = 0; i < ks.length; i++) {
+          if (o == null || typeof o !== 'object') return undefined;
+          if (!(ks[i] in o)) return (i === ks.length - 1) ? null : undefined;   // absent leaf = a real default
+          o = o[ks[i]];
+        }
+        return (o && typeof o === 'object') ? undefined : o;                     // scalars only
+      };
       const st0 = V2.presetState ? V2.presetState(L) : { id: null };
       const pr = st0.id ? (V2.presets || []).find((x) => x.id === st0.id) : null;
       const selNorm = (x) => (x === 0 || x === '0' || x == null || x === false) ? '' : String(x);
@@ -9494,9 +9513,28 @@
         if (seen.has(f)) return;
         if (byMacro[f]) return;                     // the macro's chip speaks for it
         const has = pr && pr.set && Object.prototype.hasOwnProperty.call(pr.set, f);
-        if (!has && !(f in DEF)) return;
-        const target = has ? pr.set[f] : DEF[f];
         const isSel = c.tagName === 'SELECT';
+        // WHAT "DEFAULT" MEANS, ASKED OF A FRESH LAYER (2026-09-20). `DEF` is a
+        // hand-kept table and a row whose field was missing from it was SKIPPED
+        // — so changing Strike to Comp left the line reading "nothing — every
+        // knob at its default" while the staged drawing had just gone from 12
+        // notes to 24. Reported as "Strike is not editing the content when
+        // changed (Comp does nothing)": the engine and the preview were both
+        // right and the readout said otherwise, which is the only evidence a
+        // user has. `strike` was one of many missing — Voicing, Evolve, Show
+        // ahead and every ConFugued field were too.
+        // DEF still wins where it is explicit (a few defaults differ from what
+        // normalize leaves behind); a fresh layer answers for everything else,
+        // and a field ABSENT on a new layer defaults to empty — which is what
+        // absent means for every one of them.
+        let target;
+        if (has) target = pr.set[f];
+        else if (f in DEF) target = DEF[f];
+        else {
+          const dv = _freshDefGet(f);
+          if (dv === undefined) return;             // not a layer field at all
+          target = (dv === null) ? (isSel ? '' : 0) : dv;
+        }
         const same = isSel ? selNorm(c.value) === selNorm(target) : (+c.value === +target);
         if (same) return;
         seen.add(f);

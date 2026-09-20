@@ -9177,16 +9177,23 @@
       // in one line and hides the rest until asked. The in-key colouring the
       // chips carried survives as a marker in the option TEXT (◈ / ·), since
       // option styling is not reliable across platforms.
-      const rootSel = '<select class="ambient-select pe-rootsel" id="pe-rootsel" title="The chord\u2019s root note">' +
+      // THE ROOT IS NAMED AS IT SOUNDS, and still STORED as written (2026-09-20,
+      // "the whole menu needs to reflect the chord selected"). The card above
+      // says D; this said C, because the value IS C and the engine re-roots the
+      // progression to the key. The option's VALUE is untouched — the label is
+      // shifted — so `setroot:` writes exactly what it always wrote and nothing
+      // downstream changes. The in-key mark already tested the shifted pitch.
+      const _pcHeard = (pc) => (((pc + _vsEd) % 12) + 12) % 12;
+      const rootSel = '<select class="ambient-select pe-rootsel" id="pe-rootsel" title="The chord\u2019s root note, named as it sounds">' +
         _AMB_CHROM.map((nm, pc) => '<option value="' + pc + '"' + (pc === curRoot ? ' selected' : '') + '>' +
-          esc(nm) + (showScale ? (_ambPeInScale(pc, kRoot, kScale) ? ' \u25c8' : ' \u00b7') : '') + '</option>').join('') + '</select>';
+          esc(_AMB_CHROM[_pcHeard(pc)]) + (showScale ? (_ambPeInScale(_pcHeard(pc), kRoot, kScale) ? ' \u25c8' : ' \u00b7') : '') + '</option>').join('') + '</select>';
       const qualSel = '<select class="ambient-select pe-qualsel" id="pe-qualsel" title="The chord\u2019s quality \u2014 which notes sit above the root">' +
         (curQual ? '' : '<option value="" selected>custom</option>') +
         _AMB_PE_QUALITIES.map(q => '<option value="' + esc(q[0]) + '"' + (q[0] === curQual ? ' selected' : '') + '>' + esc(q[0]) + '</option>').join('') + '</select>';
       // Alternates row — the base chord (◆) + each alternate (◇) as selectable edit
       // targets; a mode toggle (cycle/random) appears once there's ≥1 alternate.
       const altChip = (glyph, j, active, chObj) =>
-        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + (_vsEd ? ' · sounds ' + esc(_ambChordShort(_ambChordShift(chObj, _vsEd)) || '?') : '') + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(chObj) || '?') +
+        '<span role="button" class="pe-alt-chip' + (active ? ' sel' : '') + '" data-pe="altsel:' + j + '" title="' + esc(_ambPeChLabel(chObj)) + (_vsEd ? ' · sounds ' + esc(_ambChordShort(_ambChordShift(chObj, _vsEd)) || '?') : '') + ' — edit this ' + (j < 0 ? 'chord' : 'alternate') + '">' + glyph + ' ' + esc(_ambChordShort(_ambChordShift(chObj, _vsEd)) || '?') +
         (j >= 0 ? '<button type="button" class="pe-x" data-pe="altrm:' + j + '" title="Remove this alternate">✕</button>' : '') + '</span>';
       const altMode = (ch.altMode === 'random') ? 'random' : 'cycle';
       const altsRow = '<div class="pe-altrow"><label title="Alternate chords that swap in on repeats — reharmonize this slot">Alternates</label>' +

@@ -11383,8 +11383,8 @@
   const SALT_UPTO = [['', 'Everything'], ['ninths', 'Up to 9ths'], ['sevenths', 'Up to 7ths']];
   function saltRows(L, when, deep) {
     const up = (L.saltUpTo === 'sevenths' || L.saltUpTo === 'ninths') ? L.saltUpTo : '';
-    const w = when + ';salt:on';
-    const hintUp = 'which colours this layer may voice on the shared chord \u2014 a colour beyond it holds the written chord';
+    const w = when + ';saltrel:on';
+    const hintUp = 'which of Salt\u2019s colours this layer takes from the shared chord \u2014 a colour beyond it holds the written chord (a chord layer needs Salt re-voice on)';
     const hintSh = '% of coloured segments this layer takes \u2014 the rest it holds the written chord';
     return (deep
       ? gsel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w) +
@@ -11938,7 +11938,7 @@
                 '<button type="button" class="ambient-seg v2-gensalt' + (L.followSalt ? ' on' : '') + '">' +
                   (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
                 '<span class="ambient-hint">re-voice inside a chord as Salt recolours it</span></div>' +
-              saltRows(L, 'kind:live;voice:synth;pitch:chord', true) +
+              saltRows(L, 'kind:live;voice:synth', true) +
               ((typeof harmRowHtml === 'function')
                 ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
                     'data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed,walk,chance"')
@@ -12715,7 +12715,7 @@
             '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
               (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
             '<span class="ambient-hint v2-salthint"></span></div>' +
-          saltRows(L, 'kind:live;voice:synth;pitch:chord', false)) +
+          saltRows(L, 'kind:live;voice:synth', false)) +
           st(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
           // What a RECORDED part does when the chords move under it. Inert on a
           // live part, which re-resolves its pitches every cycle by definition —
@@ -13194,7 +13194,13 @@
         : ((p.kind === 'recorded' && p.made === 'take') ? ['live', 'recorded'] : p.kind),
       voice: (L.instrument && L.instrument.voice) || 'synth',
       tg: (L.tg && L.tg.on) ? 'on' : 'off',   // the gate's own rows follow it
-      salt: L.followSalt ? 'on' : 'off',        // Up to / How often mean nothing while it holds the chord
+      salt: L.followSalt ? 'on' : 'off',        // the chord re-voice switch
+      // …and whether Salt's COLOURS reach this layer at all ("where are the
+      // salt controls on layer", 2026-09-19 — hidden on a melody, whose pitches
+      // DO resolve against the coloured chord): a chord layer only hears them
+      // through Salt re-voice; a walk / arp / any other generated pitch hears
+      // them from the chord resolver as it is
+      saltrel: (((p.pitch && p.pitch.kind) === 'chord') ? !!L.followSalt : true) ? 'on' : 'off',
       spat: (L.spat && L.spat.on) ? 'on' : 'off',
       rhythm: (p.rhythm && p.rhythm.kind) || '',
       // THE MATERIAL'S FORM. What it scopes is deliberately small — the grid's

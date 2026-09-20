@@ -13274,9 +13274,13 @@
     const lvWord = stateWord(lvS) + evoCadence(lvS);
     const sum = card.querySelector('.v2-summary');
     if (sum) {
+      // KEY: VALUE (2026-09-19, "make these into key: value pairs so user
+      // knows what each one means") — a bare "16 steps" says the unit and
+      // "euclid" says nothing; the name of the control the value belongs to
+      // is what makes a summary readable without opening the group.
       sum.textContent = lvWord + ' \u00b7 ' + (p.kind === 'recorded'
-        ? ((p.notes || []).length + ' notes \u00b7 ' + p.bars + ' bars')
-        : ((now.rhythm === 'drawn' ? 'pattern\u270e' : now.rhythm) + ' \u00b7 ' + now.pitch + ' \u00b7 ' + p.bars + ' bars'));
+        ? ('notes: ' + (p.notes || []).length + ' \u00b7 bars: ' + p.bars)
+        : ('rhythm: ' + (now.rhythm === 'drawn' ? 'pattern\u270e' : now.rhythm) + ' \u00b7 pitch: ' + now.pitch + ' \u00b7 bars: ' + p.bars));
     }
     // GROUP SUMMARIES. A folded group is one line, so that line has to say
     // what is engaged inside it — the drum-solo lesson: state that can vanish
@@ -13303,49 +13307,52 @@
         const head = i2.voice === 'kit' ? kitName(i2.kit)
                    : i2.voice === 'speech' ? 'speech'
                    : (i2.tone || 'default');
-        const bits = ['A ' + (i2.attack | 0) + ' \u00b7 R ' + (i2.release | 0)];
-        if (num(L.cutoff, 100) < 100) bits.push('filter ' + num(L.cutoff, 100));
+        // KEY: VALUE throughout the summaries (2026-09-19) — the control's
+        // own name before its value, so a reader knows what each number is
+        // without opening the group; a bare flag (glide, tight) stays a word.
+        const bits = ['attack: ' + (i2.attack | 0), 'release: ' + (i2.release | 0)];
+        if (num(L.cutoff, 100) < 100) bits.push('filter: ' + num(L.cutoff, 100));
         if (num(L.portamento, 0) > 0) bits.push('glide');
-        if (num(L.voiceTrim, 0) !== 0) bits.push('trim ' + num(L.voiceTrim, 0) + 'dB');
-        return head + ' \u00b7 ' + bits.join(' \u00b7 ');
+        if (num(L.voiceTrim, 0) !== 0) bits.push('trim: ' + num(L.voiceTrim, 0) + 'dB');
+        return (i2.voice === 'kit' ? 'kit: ' : i2.voice === 'speech' ? 'voice: ' : 'tone: ') + head + ' \u00b7 ' + bits.join(' \u00b7 ');
       })(),
       // Rhythm folded into Content, so its summary did too — the head keeps
       // carrying what its rows now hold (the dashboard rule).
       // ✺ LIVE says WHAT varies, in the badge's own words — or FIXED
-      Live: lvS.live ? (lvWord + ' \u00b7 ' + (lvS.tags || []).join(' \u00b7 ')) : 'FIXED',
+      Live: lvS.live ? (lvWord + ' \u00b7 what: ' + (lvS.tags || []).join(', ')) : 'FIXED',
       Content: (() => {
-        const head = lvWord + (p.kind === 'recorded' ? ' \u00b7 ' + (p.notes || []).length + ' notes' : '') +
-          ' \u00b7 ' + (p.clock === 'free' ? (p.ms || 2000) + 'ms free' : p.bars + ' bars');
+        const head = lvWord + (p.kind === 'recorded' ? ' \u00b7 notes: ' + (p.notes || []).length : '') +
+          ' \u00b7 ' + (p.clock === 'free' ? 'free: ' + (p.ms || 2000) + 'ms' : 'bars: ' + p.bars);
         const rh = (now.voice === 'kit')
-          ? ((p.rhythm.lanes || []).reduce((a4, row) => a4 + (row || []).reduce((x, c3) => x + (c3 ? 1 : 0), 0), 0) + ' hits')
-          : (p.kind === 'recorded' ? '' : (now.rhythm === 'drawn' ? 'drawn' : now.rhythm) + ' \u00b7 ' + p.rhythm.steps + ' steps');
+          ? ('hits: ' + (p.rhythm.lanes || []).reduce((a4, row) => a4 + (row || []).reduce((x, c3) => x + (c3 ? 1 : 0), 0), 0))
+          : (p.kind === 'recorded' ? '' : 'rhythm: ' + (now.rhythm === 'drawn' ? 'drawn' : now.rhythm) + ' \u00b7 steps: ' + p.rhythm.steps);
         const feel = onOf([['swing', 'swing'], ['accent', 'accent'], ['humanize', 'humanize']]);
         if (L.tight) feel.push('tight');
-        return head + (rh ? ' \u00b7 ' + rh : '') + (feel.length ? ' \u00b7 ' + feel.join(' \u00b7 ') : '') +
-          ((typeof L.when === 'string' && L.when && L.when !== 'always') ? ' \u00b7 not every cycle' : '');
+        return head + (rh ? ' \u00b7 ' + rh : '') + (feel.length ? ' \u00b7 feel: ' + feel.join(' + ') : '') +
+          ((typeof L.when === 'string' && L.when && L.when !== 'always') ? ' \u00b7 when: not every cycle' : '');
       })(),
-      Pitch: now.pitch +
-             ((L.part.pitch.chordMode) ? ' \u00b7 ' + L.part.pitch.chordMode : '') +
-             (((L.part.pitch.harm || []).length) ? ' \u00b7 +' + L.part.pitch.harm.length + ' harmony' : '') +
+      Pitch: 'pitch: ' + now.pitch +
+             ((L.part.pitch.chordMode) ? ' \u00b7 voicing: ' + L.part.pitch.chordMode : '') +
+             (((L.part.pitch.harm || []).length) ? ' \u00b7 harmony: +' + L.part.pitch.harm.length : '') +
              (num(L.proximity, 0) > 0 ? ' \u00b7 close' : ''),
       Shape: (() => {
         const bits = [];
-        if ((L.strum | 0) > 0) bits.push('strum ' + (L.strum | 0));
-        if (p.shape && p.shape.lenRatio !== 100) bits.push('len ' + p.shape.lenRatio + '%');
+        if ((L.strum | 0) > 0) bits.push('strum: ' + (L.strum | 0));
+        if (p.shape && p.shape.lenRatio !== 100) bits.push('length: ' + p.shape.lenRatio + '%');
         // (rests / ghosts / len vary are ⚙ Deep's now, and vel var is ✺ Playing's —
         // a summary names only what is behind THIS door)
         if (num(L.swing, 0) > 0) bits.push('swing');
         return bits.length ? bits.join(' \u00b7 ') : 'struck';
       })(),
       Mix: (() => {
-        const bits = ['level ' + num(L.level, 70)];
-        if (num(L.revSend, 0) > 0) bits.push('reverb ' + num(L.revSend, 0));
-        if (L.bus && L.bus !== 'a') bits.push('bus ' + String(L.bus).toUpperCase());
-        if (num(L.space, 0) !== 0) bits.push('width ' + num(L.space, 0));
+        const bits = ['level: ' + num(L.level, 70)];
+        if (num(L.revSend, 0) > 0) bits.push('reverb: ' + num(L.revSend, 0));
+        if (L.bus && L.bus !== 'a') bits.push('bus: ' + String(L.bus).toUpperCase());
+        if (num(L.space, 0) !== 0) bits.push('width: ' + num(L.space, 0));
         if (now.spat === 'on') bits.push('moving');
         const m = L.mod || {};
         const mods = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
-        if (mods.length) bits.push(mods.join('+'));
+        if (mods.length) bits.push('mod: ' + mods.join('+'));
         return bits.join(' \u00b7 ');
       })(),
       // EVERY WORD HERE NAMES A CONTROL YOU CAN FIND — the stage's own tab name,

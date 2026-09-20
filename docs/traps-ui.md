@@ -188,6 +188,11 @@
 - **`classList.remove('collapsed')` IS NOT EXPANDING A CARD.** The head's handler is what calls
   `popOpen`, so stripping the class gives an expanded-looking card with NO sheet and every section
   door missing — a probe doing it reported "no FX door" against working code. Drive the head.
+- **A SUMMARY VALUE CARRIES ITS CONTROL'S NAME (2026-09-19, "make these into key: value pairs so
+  user knows what each one means").** `EVOLVES every 4 passes · 4 bars · euclid · 16 steps` said the
+  units and not the questions — "euclid" is an answer to nothing on its own. Every group summary
+  (`sums`) and the card head's line print `name: value` (`bars: 4 · rhythm: euclid · steps: 16`),
+  the name being the control's own label; a bare FLAG (glide, tight, close) stays a word.
 - **A SUMMARY THAT PRINTS STORAGE KEYS INVENTS A SECOND VOCABULARY.** The FX head read `dist` for a
   layer with Drive engaged — a word appearing nowhere else on the card, so it cannot be looked up
   ("what does this dist readout mean"). Data keys stay forever for save-compat; every SURFACE says the

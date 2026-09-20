@@ -11386,11 +11386,15 @@
     const w = when + ';saltrel:on';
     const hintUp = 'which of Salt\u2019s colours this layer takes from the shared chord \u2014 a colour beyond it holds the written chord (a chord layer needs Salt re-voice on)';
     const hintSh = '% of coloured segments this layer takes \u2014 the rest it holds the written chord';
+    // ONE HUE FOR THE FAMILY (2026-09-19, "should be a different color so i
+    // can see them") — like Evolve's `.v2-evorow`: a class here, the colour
+    // in one place (`--salt`, bloops.css).
+    const stamp = (h) => h.replace('class="ambient-ctrl', 'class="ambient-ctrl v2-saltrow');
     return (deep
-      ? gsel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w) +
-        gsl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w)
-      : tgSel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w) +
-        sl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w));
+      ? stamp(gsel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w)) +
+        stamp(gsl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w))
+      : stamp(tgSel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w)) +
+        stamp(sl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w)));
   }
   const tgLenOf = (L) => {
     const tg = (L && L.tg) || {}, steps = clamp((tg.steps | 0) || 16, 2, 64);
@@ -11934,7 +11938,7 @@
               // OWN class: the Voicing sheet's `.v2-salttoggle` sits later in
               // the DOM, and a shared class hands `querySelector` this hidden
               // copy first (the duplicate-class trap). One handler takes both.
-              '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
+              '<div class="ambient-ctrl v2-saltrow" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
                 '<button type="button" class="ambient-seg v2-gensalt' + (L.followSalt ? ' on' : '') + '">' +
                   (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
                 '<span class="ambient-hint">re-voice inside a chord as Salt recolours it</span></div>' +
@@ -12711,7 +12715,7 @@
           // (Feel moved to ✺ Playing — Stochastic re-picks per chord OCCURRENCE.)
           st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
              'kind:live;voice:synth;pitch:chord') +
-          '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
+          '<div class="ambient-ctrl v2-saltrow" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
             '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
               (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
             '<span class="ambient-hint v2-salthint"></span></div>' +

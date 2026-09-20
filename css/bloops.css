@@ -15768,6 +15768,11 @@
      not FROZEN's blue, and not the app's own purple accent (violet was, and
      read as more of the same — "use a different color"). */
   --evo: #b8f24a;
+  /* 🧂 SALT'S HUE (2026-09-19, "Salt layer controls should be a different color
+     so i can see them"). Orchid — not a take hue, not Evolve's lime, not the
+     app's violet accent, not FROZEN's blue. Worn by the three follow rows
+     (`.v2-saltrow`: Salt re-voice · Up to · How often). */
+  --salt: #e879f9;
 }
 .v2-gototab { color: var(--sec, #a0aec0); border-color: rgba(255, 255, 255, 0.14); }
 .v2-gototab:hover { border-color: var(--sec, #9f7aea); }
@@ -15838,6 +15843,10 @@
 .v2-layer .ambient-ctrl.v2-evorow { box-shadow: inset 3px 0 0 var(--evo, #b8f24a); padding-left: 8px; }
 .v2-layer .ambient-ctrl.v2-evorow > label { color: var(--evo, #b8f24a); }
 .v2-layer .ambient-ctrl.v2-evorow.v2-rowna { box-shadow: inset 3px 0 0 rgba(184, 242, 74, 0.35); }
+/* 🧂 the Salt follow rows — same shape as Evolve's, Salt's own hue */
+.v2-layer .ambient-ctrl.v2-saltrow { box-shadow: inset 3px 0 0 var(--salt, #e879f9); padding-left: 8px; }
+.v2-layer .ambient-ctrl.v2-saltrow > label { color: var(--salt, #e879f9); }
+.v2-layer .ambient-ctrl.v2-saltrow.v2-rowna { box-shadow: inset 3px 0 0 rgba(232, 121, 249, 0.35); }
 /* …on a phone the PAIR already takes the whole row, so the summary wraps below
    it and reads left, as it always did. Kept HERE rather than in the phone block
    near the top of the file: that block sits EARLIER, so an equal-specificity

@@ -4400,16 +4400,32 @@
   // normalize default would silence every layer that never stored one. This is
   // a fact about CREATION, not about the shape of a layer.
   // `spec` still wins, so `add(cfg, {part: …})` and every maker are untouched.
-  function addLayer(cfg, spec) {
-    if (!cfg) return null;
-    if (!Array.isArray(cfg.layers)) cfg.layers = [];
-    const id = cfg.layers.reduce((m, x) => Math.max(m, (x && x.id) | 0), 0) + 1;
-    const L = normLayer(Object.assign({ id }, spec || {}), cfg.layers.length);
+  // WHAT A NEW LAYER IS, in one place (2026-09-20). It was three lines inside
+  // `addLayer` that \u21ba Restore to default had to copy; now both call this, so
+  // a restored layer and a new one cannot drift.
+  // \u266a PIANO IS THE DEFAULT TONE (asked for). `''` means "whatever the engine
+  // picks", which is what every layer stored before today \u2014 so this is set on
+  // a NEW layer rather than coerced in the normalizer: changing `''` there
+  // would re-voice every layer in every saved project, which is not what
+  // "default" should mean.
+  const DEFAULT_TONE = 'sample:piano';
+  function newLayerDefaults(L, spec) {
+    if (!L) return L;
     if (!(spec && spec.part)) {
       L.part.kind = 'recorded';
       L.part.notes = [];
       L.part.made = 'compose';        // the notes are yours, from the first one
     }
+    if (!(spec && spec.instrument && spec.instrument.tone) && L.instrument && !L.instrument.tone) {
+      L.instrument.tone = DEFAULT_TONE;
+    }
+    return L;
+  }
+  function addLayer(cfg, spec) {
+    if (!cfg) return null;
+    if (!Array.isArray(cfg.layers)) cfg.layers = [];
+    const id = cfg.layers.reduce((m, x) => Math.max(m, (x && x.id) | 0), 0) + 1;
+    const L = newLayerDefaults(normLayer(Object.assign({ id }, spec || {}), cfg.layers.length), spec);
     cfg.layers.push(L);
     return L;
   }
@@ -4432,11 +4448,10 @@
     const keep = { id: L.id | 0, name: L.name };
     const fresh = normLayer({ id: keep.id }, i);
     if (!fresh) return false;
-    // A NEW LAYER ARRIVES EMPTY AND YOURS \u2014 the same three lines `addLayer`
-    // states, so a restored layer and a new one are the same thing.
-    fresh.part.kind = 'recorded';
-    fresh.part.notes = [];
-    fresh.part.made = 'compose';
+    // A NEW LAYER ARRIVES EMPTY, YOURS, AND ON THE DEFAULT TONE — the same
+    // `newLayerDefaults` the factory uses, so a restored layer and a new one
+    // are the same thing.
+    newLayerDefaults(fresh, null);
     fresh.name = keep.name;
     // REPLACE IN PLACE. Every open surface holds THIS object (the card's ctx,
     // the staged copy, a drag), so swapping the array entry would leave them
@@ -6103,7 +6118,7 @@
     // …and what those defaults ARE, for anything that needs to ask (the
     // \u2699 Deep panel's "Changed" line compares against this). One source, so a
     // new field is covered the moment it is normalized.
-    defaultLayer: () => { try { return normLayer({ id: 1 }, 0); } catch (e) { return null; } },
+    defaultLayer: () => { try { return newLayerDefaults(normLayer({ id: 1 }, 0), null); } catch (e) { return null; } },
     transform: transformFn,        // commands over the notes you already have
     // …and over every take a GENERATED part makes (`xfStage`)
     xfAdd: (E, L, op, bars) => {

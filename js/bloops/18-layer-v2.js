@@ -6559,7 +6559,11 @@
             '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Later">+</button>' +
           '</span>' +
         '</span>' +
-        '<span class="ambient-hint">motion \u00b7 series \u00b7 every k-th note \u00b7 canon (notes behind the line; 0 = with it)</span></div>';
+        // FOUR WORDS FOR FOUR CONTROLS, left to right — each carries its own
+        // title with the full sentence, so one shared line spelling them all
+        // out again was what pushed this row's `auto` column wide enough to
+        // crush the controls into a column ("these controls are unwieldy").
+        '<span class="ambient-hint">motion \u00b7 series \u00b7 every \u00b7 canon</span></div>';
     }).join('');
     return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
       '<label>Harmony voices</label><span class="ambient-seg-row">' +

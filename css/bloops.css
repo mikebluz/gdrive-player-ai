@@ -15898,9 +15898,38 @@
    `.ambient-select` is width:100% and declared late — compound selector, an
    explicit width and flex 0 0 auto, or it swallows the stepper (the documented
    five-victims trap). */
-.v2-layer .v2-harmrow { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
-.v2-layer .v2-harmrow select.ambient-select.v2-harmmo, .v2-layer .v2-harmrow select.ambient-select.v2-harmser { width: auto; flex: 0 0 auto; min-width: 7.5em; }
-.v2-layer .v2-harmrow .ambient-stepper { flex: 0 0 auto; }
+/* A HARMONY VOICE'S ROW — four controls for ONE voice (2026-09-19, cleaned up
+   2026-09-20: "these controls are unwieldy"). Two things went wrong and both
+   are documented traps:
+   (1) `.ambient-ctrl` is `84px 1fr auto`, and this row's hint was a sentence
+       naming all four controls — a wordy third column eats the control column
+       (the same cause as the crushed-stepper case above), so all four wrapped
+       onto lines of their own. The controls take the 2/-1 band now and the
+       hint drops to its own full-width line, which is the fix this file
+       already uses for the harmony CHIPS two rows down.
+   (2) The steppers here are hand-built markup, and `.ambient-stepper` is only
+       given `display: inline-flex` by `.ambient-ctrl-step .ambient-stepper` —
+       a class `_ambStep` adds and this row does not carry. With no display
+       rule at all the span laid out inline and its children stacked: − over
+       the number over +, three rows per stepper. They are styled here rather
+       than by borrowing `.ambient-ctrl-step`, whose `width: 100%` would put
+       two full-width steppers on two more lines. */
+.v2-layer .ambient-ctrl.v2-harmopt { align-items: center; row-gap: 5px; }
+.v2-layer .ambient-ctrl.v2-harmopt > .v2-harmrow { grid-column: 2 / -1; }
+.v2-layer .ambient-ctrl.v2-harmopt > .ambient-hint { grid-column: 1 / -1; }
+.v2-layer .v2-harmrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+/* the two pickers share the line and shrink together; a compound selector
+   because `.ambient-select` is `width: 100%` and declared late */
+.v2-layer .v2-harmrow select.ambient-select.v2-harmmo,
+.v2-layer .v2-harmrow select.ambient-select.v2-harmser {
+  width: auto; flex: 1 1 8.5em; min-width: 0; max-width: 13em;
+}
+.v2-layer .v2-harmrow .ambient-stepper {
+  display: inline-flex; align-items: stretch; flex: 0 0 auto;
+  width: auto; min-width: 100px;
+  border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
+}
+.v2-layer .v2-harmrow .ambient-step-inp { min-width: 0; text-align: center; }
 /* 🧂 the Salt follow rows — same shape as Evolve's, Salt's own hue */
 .v2-layer .ambient-ctrl.v2-saltrow { box-shadow: inset 3px 0 0 var(--salt, #e879f9); padding-left: 8px; }
 .v2-layer .ambient-ctrl.v2-saltrow > label { color: var(--salt, #e879f9); }

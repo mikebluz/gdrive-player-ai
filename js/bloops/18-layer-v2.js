@@ -2137,6 +2137,15 @@
       for (let i = 0; i < vN; i++) {
         if (i > 0) cur += ord[i - 1];
         let note = cur;
+        // THE BOTTOM NOTE IS THE CHORD'S ROOT AND IS NEVER BENT (2026-09-20,
+        // "many of the material options don't obey part changes" — measured
+        // across all ten materials, this was the one that genuinely did not).
+        // The mid rung of the `ladder` snaps every note to the nearest KEY
+        // tone, and over a chord OUTSIDE the key that dragged the root back
+        // with it: an F#m in C came out rooted on C, which reads as the layer
+        // ignoring the changes. Measured before: part A 0,4,7 → part B 0,7
+        // (should be 6,9,1). The root already followed; the snap undid it.
+        if (i === 0) { out.push(clamp(note, 12, 120)); continue; }
         if (mode === 'ladder') {
           if (strict >= 67) note = snap(note, chordPcs);
           else if (strict >= 34) note = snap(note, keyPcs);

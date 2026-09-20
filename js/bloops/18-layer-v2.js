@@ -13819,7 +13819,15 @@
         const w = Math.max(2, ((n.durMs / 1000) / cyc) * wCss);
         const y = TOP + (hi - mid[i]) * rowH;
         const ww = Math.min(w, wCss - x), hh = Math.max(2, rowH - 1);
-        g.fillRect(x, y, ww, hh);
+        // A GAP BETWEEN NOTES, so ONSETS ARE VISIBLE (2026-09-20). This filled
+        // each note edge to edge with no stroke, so at Length 100% consecutive
+        // notes butt together and paint one continuous bar: turning Strike on
+        // doubled the onsets (measured 3 → 6 on a 3-bar Groundwork part) and the
+        // picture did not change a pixel. Reported twice as "Comp does nothing"
+        // — the engine, the panel and the Changed line were all correct and
+        // this drawing was the only thing saying otherwise. The card's own roll
+        // strokes its notes, which is why the same take reads correctly there.
+        g.fillRect(x, y, Math.max(1, ww - 1), hh);
         cv._hits.push({ x, y, w: ww, h: hh, midi: Math.round(mid[i]), t: (n.at - cs0) / cyc });
       });
     });

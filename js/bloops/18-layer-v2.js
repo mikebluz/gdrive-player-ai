@@ -832,6 +832,16 @@
     // Absent = a chord layer holds what it struck, which is every layer's
     // behaviour today — so this is stored only when switched on.
     if (L.followSalt) L.followSalt = 1; else delete L.followSalt;
+    // …and HOW it follows (2026-09-19): which colours it may voice, and how
+    // often it takes a coloured segment. `saltShare` is the FACE of the
+    // existing per-layer `saltMask` (one value for every chord; the v1 mask
+    // can still hold one per chord) — absent = everything, always.
+    if (L.saltUpTo !== 'sevenths' && L.saltUpTo !== 'ninths') delete L.saltUpTo;
+    if (Number.isFinite(L.saltShare)) {
+      const p = clamp(L.saltShare | 0, 0, 100);
+      if (p < 100) L.saltMask = { steps: [p] }; else delete L.saltMask;
+      delete L.saltShare;
+    }
     // ARTICULATION — absent or 0 spends no draw and emits nothing extra, so an
     // untouched layer is byte-identical and stores neither.
     // ── HOW OFTEN THE NOTES CHANGE (2026-09-17) ─────────────────────────
@@ -2534,7 +2544,15 @@
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
-  function notesFor(L, ctx) { return tightClip(L, xfStage(L, ctx, notesForRaw(L, ctx))); }
+  function notesFor(L, ctx) {
+    // THE LAYER NAMES ITSELF TO THE HARMONY while it asks (17-ambient's
+    // `_ambSaltLayerNow`): the per-layer Salt follow rules — Up to, How often
+    // — read it, and audio, drawing and outlines all come through here, so
+    // the three cannot disagree. Saved and restored: `notesFor` nests.
+    let sv = null; try { sv = window._ambSaltLayer; window._ambSaltLayer = L; } catch (e) {}
+    try { return tightClip(L, xfStage(L, ctx, notesForRaw(L, ctx))); }
+    finally { try { window._ambSaltLayer = sv; } catch (e) {} }
+  }
   function notesForRaw(L, ctx) {
     // PER-PART CONTENT. `L.part` is always the record being EDITED; `L.partFor`
     // names which arrangement part it belongs to and `L.parts` files the
@@ -11354,6 +11372,26 @@
     ? _AMB_SPAT_MODES.map(m => [m[0], m[1]])
     : [['fan', 'Fan out'], ['alt', 'Alternate'], ['sine', 'Sine'], ['sweep', 'Sweep'], ['random', 'Random']];
   const tgOn = (L) => !!(L.tg && L.tg.on);
+  // ── HOW THIS LAYER FOLLOWS SALT (2026-09-19) ────────────────────────────
+  // Salt stays on the changes — one shared, coloured harmony — and each
+  // layer decides how it follows: which colours it may voice, and how often
+  // it takes a coloured segment. Two surfaces (the Voicing sheet and ⚙ Deep)
+  // carry the same rows; `deep` gives them the panel's own ids (the
+  // duplicate-id trap) and the `.v2-f` commit mirrors the two.
+  const saltShareOf = (L) => (L.saltMask && Array.isArray(L.saltMask.steps) && L.saltMask.steps.length)
+    ? clamp(L.saltMask.steps[0] | 0, 0, 100) : 100;
+  const SALT_UPTO = [['', 'Everything'], ['ninths', 'Up to 9ths'], ['sevenths', 'Up to 7ths']];
+  function saltRows(L, when, deep) {
+    const up = (L.saltUpTo === 'sevenths' || L.saltUpTo === 'ninths') ? L.saltUpTo : '';
+    const w = when + ';salt:on';
+    const hintUp = 'which colours this layer may voice on the shared chord \u2014 a colour beyond it holds the written chord';
+    const hintSh = '% of coloured segments this layer takes \u2014 the rest it holds the written chord';
+    return (deep
+      ? gsel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w) +
+        gsl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w)
+      : tgSel(L, 'saltUpTo', 'Up to', up, SALT_UPTO, hintUp, w) +
+        sl(L, 'saltShare', 'How often', saltShareOf(L), 0, 100, hintSh, w));
+  }
   const tgLenOf = (L) => {
     const tg = (L && L.tg) || {}, steps = clamp((tg.steps | 0) || 16, 2, 64);
     if (tg.span !== 'pass') return steps;
@@ -11900,6 +11938,7 @@
                 '<button type="button" class="ambient-seg v2-gensalt' + (L.followSalt ? ' on' : '') + '">' +
                   (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
                 '<span class="ambient-hint">re-voice inside a chord as Salt recolours it</span></div>' +
+              saltRows(L, 'kind:live;voice:synth;pitch:chord', true) +
               ((typeof harmRowHtml === 'function')
                 ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
                     'data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed,walk,chance"')
@@ -12675,7 +12714,8 @@
           '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
             '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
               (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
-            '<span class="ambient-hint v2-salthint"></span></div>') +
+            '<span class="ambient-hint v2-salthint"></span></div>' +
+          saltRows(L, 'kind:live;voice:synth;pitch:chord', false)) +
           st(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
           // What a RECORDED part does when the chords move under it. Inert on a
           // live part, which re-resolves its pitches every cycle by definition —
@@ -13154,6 +13194,7 @@
         : ((p.kind === 'recorded' && p.made === 'take') ? ['live', 'recorded'] : p.kind),
       voice: (L.instrument && L.instrument.voice) || 'synth',
       tg: (L.tg && L.tg.on) ? 'on' : 'off',   // the gate's own rows follow it
+      salt: L.followSalt ? 'on' : 'off',        // Up to / How often mean nothing while it holds the chord
       spat: (L.spat && L.spat.on) ? 'on' : 'off',
       rhythm: (p.rhythm && p.rhythm.kind) || '',
       // THE MATERIAL'S FORM. What it scopes is deliberately small — the grid's
@@ -16299,7 +16340,7 @@
           } catch (e) {}
           try { applyGate(ctx.card, ctx.L); } catch (e) {}
         }
-        if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead')) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
+        if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead' || path === 'saltUpTo' || path === 'saltShare')) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
       });
 
       // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild

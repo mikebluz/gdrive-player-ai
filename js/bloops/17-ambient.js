@@ -4750,6 +4750,7 @@
       if (!vocab.length) return ret;
       const rndC = _ambSeededRand((((step + 1) * 2654435761) ^ ((segIdx + 1) * 40503) ^ ((seedS * 131) >>> 0) ^ _ambSaltNudgeNow(step) ^ 0x51CE) >>> 0);
       const cand = vocab[Math.floor(rndC() * vocab.length) % vocab.length];
+      if (!_ambSaltCandOK(cand, ret.intervals)) return ret;   // this layer may not voice that colour: it holds the written chord
       return Object.assign({}, ret, { intervals: cand });
     }
     // ---- Progression SALT --------------------------------------------------
@@ -4852,10 +4853,37 @@
     // prunes back to absent, and `[0]` (length 1, indexed modulo) is the compact
     // "this layer never salts". Gated with a DEDICATED hash, never the shared
     // `_ambRand()` stream, so a masked layer shifts no other draw.
+    // WHICH LAYER IS ASKING FOR THE CHORD (2026-09-19). v1's emitter names
+    // itself in `_ambEmitLayerKey`; a v2 layer pins itself on
+    // `window._ambSaltLayer` for the length of its own `notesFor` — audio,
+    // drawing and outlines all pass through it, so the per-layer follow rules
+    // answer the same for all three. Before this a v2 layer had no name here
+    // and its salt mask was inert.
+    function _ambSaltLayerNow() {
+      try { if (_ambEmitLayerKey && _E) { const L = _ambLayerByKey(_E, _ambEmitLayerKey); if (L) return L; } } catch (e) {}
+      try { return (typeof window !== 'undefined' && window._ambSaltLayer) || null; } catch (e) { return null; }
+    }
+    // UP TO — which colours THIS layer will voice, on the SHARED coloured
+    // chord ("distribute Salt out to the layers", without losing the one
+    // harmony: the changes stay one truth, and a layer that may not voice a
+    // colour holds the written chord for that segment). Classified by what
+    // the colour ADDS to the written pitch classes: 7ths (and the 6th) ·
+    // 9ths · everything. sus and the open fifth REPLACE a tone, so they
+    // count as everything.
+    function _ambSaltCandOK(cand, written) {
+      const L = _ambSaltLayerNow();
+      const up = (L && (L.saltUpTo === 'sevenths' || L.saltUpTo === 'ninths')) ? L.saltUpTo : '';
+      if (!up) return true;
+      const w = new Set((written || []).map(x => ((x | 0) % 12 + 12) % 12));
+      const c = (cand || []).map(x => ((x | 0) % 12 + 12) % 12);
+      for (const x of w) if (c.indexOf(x) < 0) return false;
+      const ok = (up === 'sevenths') ? [9, 10, 11] : [2, 9, 10, 11];
+      return c.every(x => w.has(x) || ok.indexOf(x) >= 0);
+    }
     function _ambSaltFollowOK(step, segIdx, N) {
       try {
-        if (!_ambEmitLayerKey || !_E) return true;
-        const L = _ambLayerByKey(_E, _ambEmitLayerKey);
+        if (!_E) return true;
+        const L = _ambSaltLayerNow();
         const m = L && L.saltMask; if (!m) return true;
         const steps = Array.isArray(m.steps) ? m.steps : null;
         if (!steps || !steps.length) return true;

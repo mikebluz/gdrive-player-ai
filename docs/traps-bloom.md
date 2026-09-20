@@ -232,6 +232,16 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **SALT STAYS ON THE CHANGES; A LAYER DECIDES HOW IT FOLLOWS (2026-09-19).** Per-layer *salting* was
+  asked for and refused: the colouring is central (`_ambProgSoundAt`, seeded from the project) so every
+  following layer hears ONE coloured chord — per-layer seeds would cost that harmony, the chord band's
+  honesty and the arch-parity contract. The follow side is per layer: `followSalt` (on/off), `saltUpTo`
+  (`sevenths` · `ninths` · absent = everything — a colour beyond it HOLDS the written chord for that
+  segment, judged by what the colour ADDS; sus/open-fifth replace a tone and count as everything) and
+  `saltShare`, the face of the existing `saltMask` (one value for every chord). The harmony learns WHICH
+  layer is asking through `_ambSaltLayerNow()`: v1's `_ambEmitLayerKey`, or the v2 layer's own pin on
+  `window._ambSaltLayer` set for the length of its `notesFor` — before that a v2 layer had no name there
+  and its mask was inert. Any new per-layer harmony rule resolves the layer THROUGH that helper.
   **TRANSFORMS ARE A STAGE OVER THE RULES' OUTPUT (2026-09-19).** On a GENERATED part ✨ Transform
   appends to `part.xf` (additive, absent = none, validated in the normalizer beside `part.tf`), and
   `notesFor` = `tightClip(xfStage(notesForRaw))` — ONE seam every caller passes through (emitter,

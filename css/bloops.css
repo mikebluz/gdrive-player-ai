@@ -11471,7 +11471,7 @@
          rows of four — Instrument · Generate · Live · Shape, then Time · Mix ·
          FX · Bank. It was three per row, which split the pairs across lines. */
       .v2-pop-head .v2-gototab, .v2-secpop-head .v2-gototab {
-        flex: 1 1 calc(25% - 5px); min-width: 0; padding: 6px 1px; font-size: 0.68rem;
+        flex: 1 1 calc(33.333% - 4px); min-width: 0; padding: 6px 3px; font-size: 0.72rem;
       }
       .v2-pop-head .v2-pop-xtra, .v2-secpop-head .v2-pop-xtra { flex: 0 1 auto; margin-left: auto; gap: 5px; }
       /* the per-part trio and the summary keep their own full-width lines below */
@@ -15710,9 +15710,10 @@
 .v2-gototab {
   /* EQUAL WIDTHS that fill the row — `flex: 1 1 0` (basis ZERO, not auto) or
      the chips size to their text and "Instrument" takes three times "FX". */
-  /* FOUR PER ROW — eight sections, two rows (basis 25%, not a px width, or
-     "Instrument" sizes to its text and the rows come out 3 + 3 + 2). */
-  flex: 1 1 calc(25% - 4px); min-width: 0;
+  /* THREE PER ROW — six sections, two rows (2026-09-19: Instrument · Generate ·
+     Tweaks, then Mix · FX · Bank). A basis, not a px width, or "Instrument"
+     sizes to its text and the rows come out 2 + 2 + 2. */
+  flex: 1 1 calc(33.333% - 4px); min-width: 0;
   padding: 6px 8px; min-height: 44px;
   border: 1px solid #2d2d3f; border-radius: 8px;
   background: #0a0a14; color: #a0aec0; cursor: pointer;
@@ -15735,6 +15736,7 @@
 .v2-pop-pane[data-sec="Generate"], .v2-gototab[data-goto="Generate"]   { --sec: #90cdf4; }   /* blue — what the notes are */
 .v2-pop-pane[data-sec="Playing"], .v2-gototab[data-goto="Playing"]    { --sec: #f6ad55; }   /* amber — the VARIES badge's own */
 .v2-pop-pane[data-sec="Shape"], .v2-gototab[data-goto="Shape"]      { --sec: #d6bcfa; }   /* lavender — how a note is struck */
+.v2-pop-pane[data-sec="Tweaks"], .v2-gototab[data-goto="Tweaks"]     { --sec: #d6bcfa; }   /* lavender — Shape + Time + Playing, 2026-09-19 */
 .v2-pop-pane[data-sec="Time"], .v2-gototab[data-goto="Time"]       { --sec: #9ae6b4; }   /* green — the clock */
 .v2-pop-pane[data-sec="Mix"], .v2-gototab[data-goto="Mix"]        { --sec: #f687b3; }   /* pink — level and placement */
 .v2-pop-pane[data-sec="FX"], .v2-gototab[data-goto="FX"]         { --sec: #fc8181; }   /* red — the treatments */

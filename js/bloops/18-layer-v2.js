@@ -11739,7 +11739,15 @@
   // then how each pass differs, then how a note is struck — and the second row
   // is the frame around all of it. Eight sections, four per row: ✦ Pitch folded
   // into Instrument, which is why it divides evenly now.
-  const SECS = ['Instrument', 'Generate', 'Playing', 'Shape', 'Time', 'Mix', 'FX', 'Bank'];
+  // SIX SECTIONS, TWO ROWS OF THREE (2026-09-19, "SHape and Time still feel
+  // like outliers, combine them into one tab called Tweaks; top row should be
+  // Instrument, Generate, Tweak, next row should be Mix, FX, Bank").
+  // \u266f TWEAKS absorbs three chips: Shape (how a note is struck), Time (the
+  // clock) and \u273a Playing (what differs per pass). Playing was already a
+  // SECTION OVER THE SHAPE GROUP carved out by one tab (`SEC_EXCL`), so
+  // merging Shape in re-absorbs it \u2014 which is why the user's list of six is
+  // exactly what falls out, with nothing left unreachable.
+  const SECS = ['Instrument', 'Generate', 'Tweaks', 'Mix', 'FX', 'Bank'];
   // ── WHAT AN EFFECT IS CALLED ───────────────────────────────────
   // The DATA KEYS are `dist`, `autopan`, `pecho` — kept forever for save-compat
   // — and the card's words are Drive, Auto-pan, Pitch echo. The FX summary
@@ -11763,22 +11771,38 @@
   // re-run the RULES on a schedule (Re-roll every cycle, Voicing feel) moved to
   // ⚙ Deep, where authoring lives. VARIES/FIXED is not a fourth axis: it REPORTS
   // whether stage 1 re-runs, the arrangement moves, or stage 3 rolls.
-  const SEC_GRP = { Generate: 'Content', Time: 'Content', Bank: 'Content', Playing: 'Shape' };
-  const SEC_EXCL = { Shape: ['Every pass'] };
+  const SEC_GRP = { Generate: 'Content', Bank: 'Content', Tweaks: 'Shape' };
+  const SEC_EXCL = {};
+  // ── A SECTION MAY SPAN TWO GROUPS ───────────────────────────────────────
+  // Every other section is one group seen whole or filtered by tab, and that
+  // could not express \u266f Tweaks: Shape's rows and Time's rows live in DIFFERENT
+  // group bodies (Shape, and Content). So a span says, per group, which tabs
+  // this section claims \u2014 `'*'` for all of them. The pane takes each group's
+  // body in turn and `syncSheet` filters the rows by the group each one is
+  // stamped with (`data-v2g`), so a NEW Shape tab appears here automatically
+  // while a new Content tab cannot leak in. `secGrp` still answers with the
+  // section's PRIMARY group (the summary and the pane's hue read it).
+  const SEC_SPAN = { Tweaks: { Shape: '*', Content: ['Cycle', 'Bars', 'Every', 'Speed'] } };
   const SEC_TABS = {
-    Playing: ['Every pass'],
     // Transpose and Pitch quantize ride with Generate: they are what a STATIC
     // part does with the notes it has, which is part of what it is made of.
     Generate: ['Method', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing',
                'Transpose', 'Pitch quantize'],
-    Time: ['Cycle', 'Bars', 'Every', 'Speed'],
     Bank: ['Bank'],
   };
   const secGrp = (sec) => SEC_GRP[sec] || sec;
+  // …and every group a section shows, in the order the pane stacks them
+  const secGroupsOf = (sec) => (SEC_SPAN[sec] ? Object.keys(SEC_SPAN[sec]) : [secGrp(sec)]);
   // …and the other way: which SECTION holds a given group's tab. Content's
   // rows are split across three, so a navigator handed (group, tab) has to ask
   // rather than assume — this is what 🔍 Find a control uses.
   const secForTab = (grp, tab) => {
+    // a SPANNING section claims its tabs first — Shape's and Time's are
+    // \u266f Tweaks', and neither name is a section any more
+    for (const k of Object.keys(SEC_SPAN)) {
+      const a = SEC_SPAN[k][grp];
+      if (a && (a === '*' || a.indexOf(tab) >= 0)) return k;
+    }
     for (const k of Object.keys(SEC_TABS)) {
       if (secGrp(k) === grp && SEC_TABS[k].indexOf(tab) >= 0) return k;
     }
@@ -15584,9 +15608,13 @@
     const st0 = secStOf(card);
     if (wrap) previewStopFor(card, 'sec');
     if (wrap) {
-      const body = wrap.querySelector('.ambient-grp-body');
-      const g = st0 && card.querySelector('.ambient-grp[data-v2grp="' + secGrp(st0.grp) + '"]');
-      if (body && g) g.appendChild(body);
+      // each body back to the group it was stamped with (a section may have
+      // taken two — see `SEC_SPAN`); the stamp is the answer, not the section
+      wrap.querySelectorAll('.v2-pop-pane > .ambient-grp-body').forEach((b) => {
+        const gn = (b.dataset && b.dataset.v2gbody) || (st0 && secGrp(st0.grp));
+        const g = gn && card.querySelector('.ambient-grp[data-v2grp="' + gn + '"]');
+        if (g) g.appendChild(b);
+      });
       wrap.remove();
     }
     OVLS.delete(popIdOf(card));
@@ -15601,8 +15629,15 @@
   function secOpen(card, L, grp, tab) {
     if (grp === 'Content') { secClose(card); return; }
     secClose(card);
-    const g = card.querySelector('.ambient-grp[data-v2grp="' + secGrp(grp) + '"]');
-    const body = g && g.querySelector('.ambient-grp-body'); if (!body) return;
+    // EVERY GROUP THIS SECTION SPANS, in order; each body is STAMPED with the
+    // group it came from so `secClose` can put it back without a lookup table.
+    const bodies = [];
+    secGroupsOf(grp).forEach((gn) => {
+      const gEl = card.querySelector('.ambient-grp[data-v2grp="' + gn + '"]');
+      const b = gEl && gEl.querySelector(':scope > .ambient-grp-body');
+      if (b) { try { b.dataset.v2gbody = gn; } catch (e) {} bodies.push(b); }
+    });
+    if (!bodies.length) return;
     const wrap = document.createElement('div');
     wrap.className = 'v2-secpop-wrap';
     wrap.innerHTML =
@@ -15637,7 +15672,8 @@
           '\u25b6 Preview</button></div>' +
       '</div>';
     card.appendChild(wrap);
-    wrap.querySelector('.v2-pop-pane').appendChild(body);
+    const pane0 = wrap.querySelector('.v2-pop-pane');
+    bodies.forEach((b) => pane0.appendChild(b));
     // MEASURE AND CORRECT. Some ancestor carries `backdrop-filter`, which makes
     // it a CONTAINING BLOCK for `position: fixed` — so 0,0 is not the viewport's
     // corner and the panel drifts (and slides with the scroll). Pin at 0,0,
@@ -15663,9 +15699,14 @@
   // Voice to speech with Tone open), so this re-runs on every applyGate.
   function popTabbables(pane) {
     // The pane holds the MOVED `.ambient-grp-body`; the rows are its children.
-    const body = pane.querySelector(':scope > .ambient-grp-body') || pane;
-    return [...body.children].filter(n => n.classList &&
-      (n.classList.contains('ambient-ctrl') || n.classList.contains('ambient-mod-target')));
+    const bodies = [...pane.querySelectorAll(':scope > .ambient-grp-body')];
+    const out = [];
+    (bodies.length ? bodies : [pane]).forEach((body) => {
+      [...body.children].forEach((n) => {
+        if (n.classList && (n.classList.contains('ambient-ctrl') || n.classList.contains('ambient-mod-target'))) out.push(n);
+      });
+    });
+    return out;
   }
   // WHICH GROUP A ROW BELONGS TO, kept ON the row. `popOpen` MOVES a group's
   // whole `.ambient-grp-body` into the sheet, so `row.closest('.ambient-grp')`
@@ -15822,7 +15863,15 @@
       }
     } catch (e) {}
     if (!pane || !tabsEl) return;
-    const rows = popTabbables(pane);
+    let rows = popTabbables(pane);
+    // A SPAN CLAIMS PART OF A GROUP: the row's own `data-v2g` stamp says which
+    // group it came from, so Content's Cycle/Bars/Every/Speed come through and
+    // its Method/Pitch/Harmony do not — while Shape arrives whole (`'*'`).
+    const span = (POP && SEC_SPAN[POP.grp]) || null;
+    if (span) rows = rows.filter((r) => {
+      const a = span[(r.dataset && r.dataset.v2g) || ''];
+      return !!a && (a === '*' || a.indexOf(popTabName(r)) >= 0);
+    });
     const tabs = [], byName = {};
     rows.forEach(row => {
       const name = popTabName(row);

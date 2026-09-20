@@ -232,6 +232,14 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **A SECTION CHIP IS ONE GROUP UNLESS IT SPANS (2026-09-19).** `SECS` is six now \u2014 Instrument \u00b7
+  Generate \u00b7 \u266f Tweaks, then Mix \u00b7 FX \u00b7 Bank \u2014 and Tweaks is the first section to span TWO group
+  bodies (`SEC_SPAN = { Tweaks: { Shape: '*', Content: ['Cycle','Bars','Every','Speed'] } }`). The pane
+  takes each body in turn, each STAMPED with its group (`dataset.v2gbody`) so `secClose` puts it back
+  without a lookup, `popTabbables` walks them all, and `syncSheet` filters rows by their `data-v2g`
+  stamp \u2014 so a new Shape tab appears in Tweaks automatically while a new Content tab cannot leak in.
+  \u273a Playing was a section over the SHAPE group carved out by one tab (`SEC_EXCL`, now empty), so
+  merging Shape re-absorbed it. `secForTab` asks the spans FIRST: neither Shape nor Time is a section.
   **\u266b ConFUGUED IS A PITCH KIND, NOT A ONE-OFF (2026-09-19, built to order).** `pitch.kind:
   'confug'` \u2014 N notes (2\u20135) at every onset, stacked by N\u22121 STATED semitone intervals (1\u201324), the
   order permuted per onset (up \u00b7 down \u00b7 alternate \u00b7 rotate \u00b7 random, seeded), each note bent toward the

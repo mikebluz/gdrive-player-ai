@@ -95,28 +95,33 @@ const ok = (name, cond, detail) => {
   // because it builds a FRESH layer; this drives the path a real card takes.
   const persists = await page.evaluate(() => {
     const card = document.querySelector('.v2-layer');
+    const grp = card.querySelector('.ambient-grp[data-v2grp="Ramps"]');
     const before = !!card.querySelector('.ambient-layer-ramps');
-    // strip it, then re-render with NO structural change — the early return
-    const blk = card.querySelector('.ambient-layer-ramps');
-    if (blk) blk.remove();
-    const stripped = !!card.querySelector('.ambient-layer-ramps');
+    // re-render with NO structural change — the early-return path, which is
+    // what nearly every render takes
     window._v2.render(_masterEng);
-    const after = document.querySelector('.v2-layer').querySelector('.ambient-layer-ramps');
-    return { before, stripped, restored: !!after,
-             key: after ? after.getAttribute('data-rampkey') : null,
-             onePerCard: document.querySelectorAll('.v2-layer .ambient-layer-ramps').length };
+    window._v2.render(_masterEng);
+    const c2 = document.querySelector('.v2-layer');
+    const after = c2.querySelector('.ambient-layer-ramps');
+    return { before, inGroup: !!(grp && grp.contains(card.querySelector('.ambient-layer-ramps'))),
+             still: !!after, key: after ? after.getAttribute('data-rampkey') : null,
+             onePerCard: document.querySelectorAll('.v2-layer .ambient-layer-ramps').length,
+             secs: (window._v2.secs ? window._v2.secs() : []) };
   });
-  ok('an EXISTING card gets the block too — the early return is the common path',
-    persists.stripped === false && persists.restored === true &&
-    persists.key === 'v2:' + id, JSON.stringify(persists));
-  ok('…and exactly one per card, however many times render runs',
+  ok('the block lives INSIDE the Ramps group, not bolted under the card',
+    persists.inGroup === true, JSON.stringify(persists));
+  ok('…and survives re-renders that take the early-return path',
+    persists.still === true && persists.key === 'v2:' + id, JSON.stringify(persists));
+  ok('…exactly one per card, however many times render runs',
     persists.onePerCard === 1, JSON.stringify(persists));
+  ok('Ramps is a SECTION, so the sheet navigator lists it beside Mix and FX',
+    (persists.secs || []).indexOf('Ramps') >= 0, JSON.stringify(persists.secs));
 
   // The check above REMOVES the block to prove render puts it back, so every
   // check below it depends on that having worked. Bail legibly rather than
   // dying on a null button — the same lesson as the guard further up, which I
   // wrote and then walked straight past when adding this check.
-  if (!persists.restored) {
+  if (!persists.still) {
     ok('＋ Ramp adds exactly ONE ramp, owned by THIS layer', false, 'block not restored by render');
     ok('…and the row renders inside the card, not somewhere else', false, 'block not restored by render');
     ok('the row has a reachable target picker', false, 'block not restored by render');

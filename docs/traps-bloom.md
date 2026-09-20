@@ -422,6 +422,16 @@
   a second listener on the v2 host made one press add **two** ramps — the double-wiring trap, in the
   add direction. **Before broadening a sweep for v2, check whether the v2 host is already inside
   the one being swept.**
+- **\u21d7 RAMPS IS A GROUP AND A SECTION, NOT AN APPENDED STRIP.** First cut appended
+  `_ambLayerRampsHtml` under `.ambient-layer-body`: v1 chrome (a 0.72rem label, a small pill at 0.8
+  opacity) under a card built from big section buttons \u2014 the bolted-on control this file's own
+  rule forbids, and unfindable ("where"). It is `grpOpen('Ramps', \u2026)` in `cardHtml` with 'Ramps'
+  in BOTH `GRPS` and `SECS`, so the existing machinery renders its chip in the sheet navigator
+  beside Mix and FX and opens it like any other section; `secGrp` falls through to the group of the
+  same name, so no `SEC_GRP` entry is needed. Being in the markup also removes the two-path problem
+  below outright \u2014 there is nothing to append on either path.
+  **DO NOT WRAP IT IN `.ambient-ctrl`.** That class is a GRID (see the Odds lane), and it put the
+  ramp row's target picker in an 18px column. The block is its own layout, exactly as on a v1 card.
 - **`V2.render` HAS TWO PATHS, AND THE EARLY RETURN IS THE COMMON ONE.** The structure-signature
   guard (`h._sig === sig`) fires for every value edit on an unchanged set of cards — i.e. nearly
   every render — re-applies the gate and RETURNS. Anything that decorates a card must run on BOTH

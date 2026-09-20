@@ -232,6 +232,12 @@
   copy. On a FROZEN take the button is dimmed (`.v2-clockfrozen`), never `disabled` — the press
   releases (`V2.release`, silent, keeps the notes) and turns Evolve on. A new surface on this axis
   goes on this button, not beside it.
+  **THE OUTLINES ARE NAMED WHERE EVOLVE IS SET (2026-09-19).** Seven coloured sets of hollow notes
+  appeared the moment Evolve came on, and the only line saying what they were sat at the tail of the
+  drawing's readout — "totally opaque to the user why there are 7 unshaded sets of notes". The face
+  carries `⟳ Show ahead` (`L.ahead`, additive, absent = 7; ONE reader, `aheadOf`), the sampler takes
+  `1 + ahead` passes and carries `ahead` in its cache signature, and the legend names the control. A
+  mark on the picture that no control near its cause explains is the drum-solo rule again.
   **A "PASS" IS THE ARRANGEMENT PART'S, NOT THE LAYER'S CYCLE (2026-09-19).** `chgAt` ticks on
   `_ambPartPassAt(...).pass` — passes of the part sounding at that moment (chord-rounds of "the
   changes" when there are no parts), rounds under Against = round — and only falls back to the

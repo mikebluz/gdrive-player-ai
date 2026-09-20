@@ -296,6 +296,10 @@ const ok = (name, cond, detail) => {
       everyShown: !!(evr && evr.offsetParent && getComputedStyle(evr).display !== 'none' && er.height > 0),
       everyVal: evr ? +(evr.querySelector('.v2-f[data-f="chg.ev"]')?.value) : null,
       everyHint: (evr?.querySelector('.ambient-hint')?.textContent || '').trim(),
+      aheadShown: (() => { const a = card?.querySelector('.v2-evoahead'); const r = a?.getBoundingClientRect();
+        return !!(a && a.offsetParent && getComputedStyle(a).display !== 'none' && r.height > 0); })(),
+      aheadVal: +(card?.querySelector('.v2-evoahead .v2-f[data-f="ahead"]')?.value),
+      ghostN: (card?.querySelector('.v2-vizcv')?._ghostN | 0),
       deepEv: +(card?.querySelector('.v2-genwrap .v2-f[data-f="chg.ev"]')?.value),
       chip: !!card?.querySelector('.v2-vizcv')?._evoChip,
       summary: (card?.querySelector('.v2-grpsum[data-grp="Content"]')?.textContent || '').trim() };
@@ -315,6 +319,20 @@ const ok = (name, cond, detail) => {
      s2.badge === 'EVOLVES' && /^EVOLVES every 4 passes/.test(s2.summary) && !s2.chip && s2.everyShown && s2.everyVal === 4 && s2.deepEv === 4, JSON.stringify(s2));
   // no progression in this run, so a pass IS the layer's cycle — and the row says so
   ok('the Every row says what a pass is (no changes here: the cycle)', /1 = every cycle/.test(s2.everyHint), s2.everyHint);
+  // ⟳ SHOW AHEAD names the outlines where Evolve is set, reads the default 7,
+  // and drives the count: at 0 the picture has no outlines and the legend goes
+  ok('⟳ Show ahead is on the face, reachable, reading 7', s2.aheadShown && s2.aheadVal === 7, JSON.stringify({ a: s2.aheadShown, v: s2.aheadVal }));
+  await page.evaluate(() => { const i = document.querySelector('.v2-layer .v2-evoahead .v2-f[data-f="ahead"]');
+    i.value = '0'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); });
+  await zz(900); await open();
+  const a0 = await readSw();
+  const a0txt = await page.evaluate(() => (document.querySelector('.v2-layer .v2-vizlab')?.textContent || ''));
+  ok('at 0 there are no outlines and no legend', a0.ghostN === 0 && !a0txt.includes('outlines:'), JSON.stringify({ g: a0.ghostN, t: a0txt.slice(0, 120) }));
+  await page.evaluate(() => { const i = document.querySelector('.v2-layer .v2-evoahead .v2-f[data-f="ahead"]');
+    i.value = '7'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); });
+  await zz(900); await open();
+  const a7 = await readSw();
+  ok('back at 7 the outlines return', a7.ghostN > 0, JSON.stringify({ g: a7.ghostN }));
   // ⚙ Deep's legacy Each cycle (`part.vary`) reads on the face as Every 1 —
   // and the badge and the summary agree, or amber VARIES would sit over a
   // lime button saying the opposite

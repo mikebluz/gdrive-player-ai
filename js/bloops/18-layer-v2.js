@@ -7201,6 +7201,18 @@
     }
     return unit + ratio + TAIL;
   }
+  // ⟳ SHOW AHEAD — how many coming takes the drawing outlines behind the one
+  // you are on (2026-09-19, "totally opaque to the user why there are 7
+  // unshaded sets of notes in the visualizer when Evolve is turned on").
+  // Seven coloured sets of hollow notes appeared the moment Evolve came on
+  // and nothing near the control said what they were; the one line that did
+  // sat at the tail of the drawing's readout. This names them where Evolve
+  // is set and makes the count a setting. `L.ahead` is a VIEW setting on the
+  // layer — additive, absent = 7 (the display's old constant, so every saved
+  // project draws exactly as before) — and every reader comes here. 0 hides
+  // them. The take SEQUENCE is untouched: a take is a function of its index,
+  // this only decides how many of the coming ones are drawn.
+  const aheadOf = (L) => (L && Number.isFinite(L.ahead)) ? clamp(L.ahead | 0, 0, 7) : 7;
   function clockSwHtml(L) {
     const frozen = L.part.kind === 'recorded';
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
@@ -7214,7 +7226,12 @@
       // beside ⚙ Deep's, and the `.v2-f` commit mirrors the two (the Level
       // rule). Present only while it is on (`evo:on` counts `vary` too).
       st(L, 'chg.ev', 'Every', n || ((L.chg || {}).ev | 0) || 4, 1, 64, evoUnitTxt(L, cfg), 'kind:live;evo:on')
-        .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoevery');
+        .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoevery') +
+      // …and the coming takes, NAMED where Evolve is set (see `aheadOf`)
+      st(L, 'ahead', 'Show ahead', aheadOf(L), 0, 7,
+         'coming takes, drawn as outlines behind this one in a colour each \u2014 what Evolve will play next, soonest first. 0 hides them',
+         'kind:live;evo:on')
+        .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-evorow v2-evoahead');
   }
   // THE SECOND WRITER. Every route that moves this axis — ⚙ Deep's rows and
   // ✓ Done, ⚡ Release, a tap that freezes, a Material door — ends in a
@@ -8251,7 +8268,11 @@
     // one take eight times, so every note is solid and there are no ghosts: no
     // branch for it. Cached per (part, take, window), so a playing drawing
     // recomputes once a pass, not once a frame.
-    const PASSES = 8;
+    // …AS MANY AS ⟳ SHOW AHEAD ASKS FOR (2026-09-19): the drawn take plus
+    // `ahead` coming ones. 0 samples the drawn take alone — no outlines, and
+    // every note solid.
+    const AHEAD = aheadOf(L);
+    const PASSES = 1 + AHEAD;
     let stab = null, ghosts = [];
     // Evolve's cadence, carried out of the sampling block so the readout can
     // say WHEN the coming takes arrive — under `vary` it is every cycle and
@@ -8302,7 +8323,7 @@
         // either changes what the coming takes are. A cached drawing with no
         // second writer is the frozen-readout trap.
         const sig = JSON.stringify([L.part.rhythm, L.part.pitch, L.part.shape, L.part.bars, base,
-          L.part.vary ? 1 : 0, evo ? [evo.ev, evo.am, evo.cfg.clock] : 0,
+          L.part.vary ? 1 : 0, evo ? [evo.ev, evo.am, evo.cfg.clock] : 0, AHEAD,
           Math.round(cs * 1000), Math.round(cyc * 1000), wpi]);
         if (!cv._stab || cv._stab.sig !== sig) {
           const key = 'v2:' + (L.id | 0);
@@ -8527,7 +8548,7 @@
       // owns that word for "% quiet extra hits", which SOUND and draw SOLID.
       // One word for two mechanisms reads as one mechanism.
       const ghostTxt = ghosts.length
-        ? tapTxt(L, ' · outlines: the next 7 takes, a colour each' +
+        ? tapTxt(L, ' · outlines: the next ' + AHEAD + ' take' + (AHEAD === 1 ? '' : 's') + ', a colour each (⟳ Show ahead)' +
             (evoEv > 0 ? ' \u2014 one every ' + evoEv + ' pass' + (evoEv === 1 ? '' : 'es') : ''))
         : '';
       // WHY THE OUTLINES WENT, AND HOW TO GET THEM BACK. Tapping a note on a
@@ -16152,7 +16173,7 @@
           } catch (e) {}
           try { applyGate(ctx.card, ctx.L); } catch (e) {}
         }
-        if (!staged0 && path.indexOf('chg.') === 0) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
+        if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead')) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
       });
 
       // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild

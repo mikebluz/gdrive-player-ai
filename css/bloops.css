@@ -11735,9 +11735,17 @@
     .v2-vnav .v2-nav { min-width: 30px; min-height: 26px; padding: 0 6px;
       font-size: 0.72rem; line-height: 1; flex: 0 0 auto; }
     .v2-vnav .v2-navx { margin-left: 0; }
-    .v2-vnav .v2-navlab { flex: 0 1 auto; min-width: 0; white-space: normal;
+    /* THE READOUT SITS LEFT OF THE BUTTONS (2026-09-20, "move this note readout
+       to the left side of the controls so it doesn't cause the controls to move
+       when updating/resizing"). The row is right-aligned (`margin-left: auto`)
+       and the label was LAST, so every time its text changed width — a new
+       pitch range, "3 outside", a bar span — the whole button group slid. With
+       the label FIRST the row still ends at the same right edge, so the label
+       grows leftward into empty space and the buttons never move. `order`, not
+       a markup move: the DOM keeps reading buttons-then-readout. */
+    .v2-vnav .v2-navlab { order: -1; flex: 0 1 auto; min-width: 0; white-space: normal;
       overflow-wrap: anywhere; font-size: 0.66rem; color: #6b6b8a; text-align: right;
-      padding-left: 2px; }
+      padding-right: 4px; padding-left: 0; }
     .v2-split-modal .v2-split-prev { display: flex; gap: 2px; margin: 12px 0 2px;
       height: 30px; border-radius: 6px; overflow: hidden; background: #12121f; }
     .v2-split-modal .v2-split-seg { display: flex; align-items: center; justify-content: center;

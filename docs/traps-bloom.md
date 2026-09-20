@@ -422,6 +422,27 @@
   a second listener on the v2 host made one press add **two** ramps — the double-wiring trap, in the
   add direction. **Before broadening a sweep for v2, check whether the v2 host is already inside
   the one being swept.**
+- **THE STAGED DRAWING NEEDS THE PREVIEW'S CLOCKS TOO (2026-09-20).** `drawPartViz` was fixed to
+  draw in the clock its notes were made in; `stageVizDraw` \u2014 \u2699 Deep's own picture \u2014 took
+  `cs0 = pv.at` and NOT `pv.pa/ps/bg`, so it resolved preview-time onsets against the RESTORED
+  global progression origin. Measured with a draft open: a 3-voice chord part drew 21 and played 21
+  with 14 of them DIFFERENT, and Groundwork drew 27 against 18 heard. Reported as generation not
+  being deterministic. **Two drawings, one rule: whoever takes `PV_VIZ.at` must take its anchors.**
+- **WHAT A GENERATED LAYER GUARANTEES, MEASURED (`test/probe-gensync.js`).** Determinism is solid:
+  13/13 materials give the identical `notesFor` answer on three calls with the take pinned. Sync is
+  exact for every material and for Accent, Slide, Wobble, Strum, Swing and Tight \u2014 they act BEFORE
+  or INSIDE the seam. **Two break it by design and are pinned as known:** Humanize writes
+  `params._humanSec`, applied downstream of the `at` the emitter schedules (\u00b17 ms at 40, unseeded,
+  so it can never be drawn), and Ornament ADDS grace notes in the emit loop the picture knows
+  nothing about. A harness reading only the `at` argument reports Humanize as "in sync" \u2014 capture
+  `params._humanSec`, or the blind spot is yours rather than the engine's.
+- **A GATE THAT RE-DERIVES THE PICTURE PROVES NOTHING \u2014 AND TWO SELECTOR TRAPS AROUND IT.** The
+  staged half of `probe-gensync` first reproduced `stageVizDraw`'s own logic and compared THAT to
+  the audio, so poisoning the fix left it green. Read the canvas's published `_hits`. Then:
+  `.v2-stagecv` matches TWICE (\u2728 Quick's canvas and \u2699 Deep's) and an unscoped query finds Quick's,
+  which is shut and zero-width \u2014 scope to `.v2-genwrap`. And the card must be expanded BY ITS
+  HANDLER, because `stageVizDraw` returns early on a zero-width canvas (`if (!(wCss > 0)) return`),
+  so a `classList.remove('collapsed')` poke means it never draws at all.
 - **\u21d7 RAMPS IS A TAB OF MIX, IN THE CARD'S MARKUP.** It went through three homes in one day and
   the two dead ends are the lesson. (1) APPENDED under `.ambient-layer-body`: v1 chrome under a card
   built from big section buttons \u2014 the bolted-on control this file's own rule forbids, and

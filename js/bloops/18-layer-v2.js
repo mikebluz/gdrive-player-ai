@@ -9158,7 +9158,7 @@
     // but not the TAKE, so that much travels with the pointer. Live parts only
     // — a written part's notes are a list, and there is nothing to re-roll.
     const takeTail = (p.kind === 'recorded') ? ''
-      : ' \u00b7 dice in \u273a Playing';
+      : ' \u00b7 dice in \u266f Tweaks \u25b8 Every pass';
     // NO STAMP IS NOT NO MATERIAL. A part made before provenance existed — or
     // assembled by hand on the knobs — still IS one of these materials, and
     // the rules say which: `series` is what an arpeggiator does, one pulse
@@ -12350,7 +12350,7 @@
                 '<button type="button" class="v2-ftnabtn" aria-expanded="false"></button>' +
                 '<span class="ambient-hint v2-ftnalist" hidden></span></div>' +
               '<div class="v2-ftlinks ambient-hint" data-v2when="kind:live">Also shapes the notes, where it lives: ' +
-                'Pitch ▸ Notes source · Pitch ▸ Key · ✺ Playing ▸ Every pass</div>' +
+                'Pitch ▸ Notes source · Pitch ▸ Key · ♯ Tweaks ▸ Every pass</div>' +
               // ── ⚠ ADVANCED: RECIPE — Rhythm × Pitch, out of the tabs. A shape
               // IS a recipe, so changing either one leaves the shape; the warning
               // says so and ↺ Back puts the shape's recipe back.

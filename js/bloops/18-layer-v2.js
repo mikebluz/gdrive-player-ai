@@ -4982,6 +4982,11 @@
   function previewKillKey(E, key) {
     const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
     if (PV && PV.key === key) PV = null;
+    // …AND THE DRAWING'S MEMORY OF IT. `PV` is what is SOUNDING and `PV_VIZ` is
+    // what was DRAWN, and clearing only the first left the picture anchored to
+    // a finished preview's wall clock for ever (see `drawPartViz`). A stop, and
+    // the unconditional kill before every start, drop both together.
+    try { if (PV_VIZ && ('v2:' + (PV_VIZ.id | 0)) === key) PV_VIZ = null; } catch (x) {}
     const e = E.mod && E.mod[key];
     // BACK TO THE SIMPLE DIP, deliberately. This grew a remembered pre-dip
     // value, a clearing timer and a reopen time computed from the preview's
@@ -8004,9 +8009,25 @@
     // from — change a knob and it falls back to a representative cycle, which
     // is honest rather than stale.
     let cs = 0, fromPv = false, csPv = false, pvClk = null;
+    // …ONLY WHILE IT IS STILL SOUNDING (2026-09-20). `PV_VIZ` is a wall clock
+    // (`Tone.now() + 0.12`), and it used to govern EVERY later repaint of this
+    // layer — `previewKill` clears `PV`, the audio tracker, and left this one
+    // standing, so one press moved the picture's anchor for the rest of the
+    // session, through a full panel rebuild, and every further press moved it
+    // again. Measured: cs 0 → 9.38 → 16.19 → 24.96, note widths 124px → 40px,
+    // pitches 57·69·68·69 → 60·64·64·72, none of it ever coming back.
+    // Reported as "an extra chord just shows up and sticks around" and "some
+    // notes in the visualizer shorten".
+    // `previewing()` is the module's own answer to "is there still sound" (it
+    // knows when the last note ends), so the picture follows the preview for
+    // exactly as long as there IS one and then returns to the stopped drawing.
+    // `stageVizDraw` has always asked this — the card's drawing is the half
+    // that did not, which is how the two could disagree. `V2.previewing`, not
+    // the bare name: this is the UI IIFE (the documented two-IIFE trap).
     try {
       const pv = V2.previewCycle && V2.previewCycle();
-      if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at)) {
+      if (pv && pv.id === (L.id | 0) && pv.sig === V2.partSig(L) && Number.isFinite(pv.at) &&
+          V2.previewing(L)) {
         // The anchor is still the right one to draw against (it is what decides
         // WHICH CHORD the take was rolled over), but the badge may not be: a
         // take rolled since that preview has not been previewed, and saying it
@@ -8210,15 +8231,26 @@
     // choke finds for it is the same one it will find at play — which is the
     // difference from the stale-anchor case its own comment warns about (an
     // audition asking with `Tone.now()`).
+    // …IN THE CLOCK THE NOTES WERE MADE IN (2026-09-20). The choke resolves the
+    // next CHANGE after each onset, which is a question about the progression's
+    // origin — so asking it outside `withPvClocks` while `cs` is the preview's
+    // anchor compares a preview-time onset against the RESTORED global clocks.
+    // Measured on a held-chord layer: every note drawn 124px on one press and
+    // 40px on the next, from nothing but which wall-clock second the press
+    // landed on. The paragraph above says this branch is safe because "`cs` is
+    // a resolved CHORD ANCHOR, not a wall clock" — which is exactly what it is
+    // NOT during a preview, so the stale-anchor case its own comment warns
+    // about was the one being hit. Same wrapper the notes and the chord band
+    // already use: one clock for all three, or the picture contradicts itself.
     if (typeof window._ambNoteChoke === 'function') {
-      notes = notes.map((n) => {
+      notes = withPvClocks(() => notes.map((n) => {
         if (!n || !(n.durMs > 0)) return n;
         try {
           const ms = window._ambNoteChoke('v2:' + (L.id | 0), cs + n.at, n.durMs,
             Object.assign({}, n.antic > 0 ? { _chokeLead: n.antic } : {}, n.line ? { _chokeSkip: 1 } : {}));
           return (ms > 0 && ms < n.durMs) ? { at: n.at, freq: n.freq, durMs: ms, nidx: n.nidx } : n;
         } catch (e) { return n; }
-      });
+      }));
     }
     const played = notes.filter(n => n && n.freq > 0 && n.at >= -1e-6 && n.at < cyc);
     // QUANTIZED to 1/1024 semitone: these come out of log2(freq) and an

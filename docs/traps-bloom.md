@@ -344,20 +344,42 @@
   `chgAt`'s job and needs a ctx. The badge therefore answers "does this EVER decide again", taking
   the largest `ev` any part override offers — deliberately, and noted here so it is not later
   "fixed" into a per-part answer this function cannot compute.
-- **"PLAY IS EDITING MY NOTES" IS FIXED LYING, NOT A WRITE (2026-09-20).** Measured first, and the
-  store is innocent: `L.part.notes` is byte-identical across Preview, Play and Stop in every
-  configuration — Everywhere, per-part, `barsMode:'fill'`, a free clock, a `lenSync` binding — and
-  30 × `getCfg` moves nothing (`test/probe-content-state.js`, both halves). What moves is a
-  GENERATED part whose cycle does not DIVIDE the changes: a 2-bar cycle under a 3-bar part sits over
-  different chords every pass, so the pitch rules re-resolve and **every note changes, for ever** —
-  measured through `notesFor`, so it SOUNDS, and the frozen pitch window then clips the strays so
-  notes also vanish from the picture and come back ("new notes that weren't there"). `liveness()`
-  counts three ways the changes can move (salt · `prog.vary` · alternates) and NOT this one, so the
-  badge reads **FIXED with no tags** beside the one thing that is moving. Setting `part.bars` to a
-  divisor collapses it to one note set — that is the proof of cause, and ⇄ Sync is the door. Before
-  hunting a writer for "the notes changed", pin the clocks (`E._progAnchor/_playStartAt/_barGridAnchor
-  = 0`, the `partseq` idiom) and diff `notesFor` pass to pass; an unpinned anchor re-orders the
-  chords under the walk and inverts the answer.
+- **"PREVIEW IS EDITING MY NOTES" IS `PV_VIZ` NEVER BEING CLEARED (2026-09-20).** Reported as
+  "some notes in the visualizer shorten … an extra chord just shows up and sticks around". The
+  STORE IS INNOCENT and that is worth knowing first: `L.part.notes` is byte-identical across
+  Preview, Play and Stop in every configuration — Everywhere, per-part, `barsMode:'fill'`, a free
+  clock, a `lenSync` binding — and 30 × `getCfg` moves nothing (`test/probe-content-state.js`).
+  **`PV_VIZ` is the drawing's memory of the cycle a preview played, and it is a WALL CLOCK**
+  (`Tone.now() + 0.12`). `previewKill` clears `PV` — the AUDIO tracker — and left `PV_VIZ` standing,
+  so `drawPartViz` anchored EVERY later repaint of that layer to a finished preview: through a full
+  panel rebuild, for the rest of the session, moving again on every press (measured: `cs` 0 → 9.38 →
+  16.19 → 24.96; pitches 57·69·68·69 → 60·64·64·72, never coming back). **Two clocks, two clears** —
+  `PV` is what SOUNDS, `PV_VIZ` is what was DRAWN, and the drawing now honours it only while
+  `V2.previewing(L)` says there is still sound. `stageVizDraw` had always asked that; the card's
+  drawing was the half that did not, and that asymmetry IS the bug — grep both when either changes.
+- **THE CHOKE MUST BE ASKED IN THE CLOCK THE NOTES WERE MADE IN.** `drawPartViz` resolved
+  `_ambNoteChoke` OUTSIDE `withPvClocks`, so a preview-time onset (`cs + n.at`) was compared against
+  the RESTORED global anchors — the drawn length then tracked the wall clock, not the music.
+  Measured on a held chord: 124px stopped, 71px the instant Preview was pressed, 27px on another
+  press, same note. The comment above that branch licenses it with "`cs` is a resolved CHORD ANCHOR,
+  not a wall clock", which is exactly what it is NOT during a preview — **a precondition stated in a
+  comment is not a precondition enforced**. The notes and the chord band were already wrapped; the
+  choke is a third reader of the same clock and must be wrapped with them.
+- **A "FIXED" PART STILL RE-PITCHES IF ITS CYCLE DOES NOT DIVIDE THE CHANGES (2026-09-20).**
+  Separate from the two above and still true: a 2-bar cycle under a 3-bar part sits over different
+  chords every pass, so a GENERATED part's pitch rules re-resolve and every note changes for ever
+  (measured through `notesFor`, so it SOUNDS). `liveness()` counts three ways the changes can move
+  (salt · `prog.vary` · alternates) and NOT this one, so the badge reads **FIXED with no tags**
+  beside the one thing moving; the readout names the cause one line away ("repeats 1.5× over the
+  3-bar part — ⇄ Sync to fit it") without connecting it to the state word. Setting `part.bars` to a
+  divisor collapses it to one note set — that is the proof of cause.
+- **DIFFING A PICTURE? DO NOT REDRAW WITH `_ambRebuildMaster()`.** It builds a FRESH canvas and
+  drops exactly the module state a preview/playback bug lives in — it hid `PV_VIZ` from three
+  probes in a row and sent the first diagnosis after the wrong quarry. Drive the real button (the
+  handler repaints the card itself) and read the SAME canvas's published geometry. Likewise pin the
+  clocks (`E._progAnchor/_playStartAt/_barGridAnchor = 0`, the `partseq` idiom) before diffing
+  `notesFor` pass to pass; an unpinned anchor re-orders the chords under the walk and inverts the
+  answer.
 
 - **THERE IS NO "\u2699 Generate" DOOR. The way back from a frozen take is `\u22ef \u25b8 \u26a1 Release`.** The
   freeze toast named \u2699 Generate for months and it has never existed — and the Transform refusal named

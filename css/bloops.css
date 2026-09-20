@@ -15918,15 +15918,19 @@
 .v2-layer .ambient-ctrl.v2-harmopt > .v2-harmrow { grid-column: 2 / -1; }
 .v2-layer .ambient-ctrl.v2-harmopt > .ambient-hint { grid-column: 1 / -1; }
 .v2-layer .v2-harmrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
-/* the two pickers share the line and shrink together; a compound selector
-   because `.ambient-select` is `width: 100%` and declared late */
+/* TWO PER LINE, DELIBERATELY. Four controls in a ~400px band wrap 3 + 1 on
+   their own — measured: two 142px selects and two 100px steppers against 400px
+   of room, so the last stepper dropped to a line by itself and the row read as
+   ragged. A 50% basis makes it a 2x2 at every width (pickers above, steppers
+   below), which is the same reasoning as the Salt dials' auto-fit: an even
+   grid beats a wrap that happens to land. */
+.v2-layer .v2-harmrow > * { flex: 1 1 calc(50% - 3px); min-width: 0; }
+/* a compound selector because `.ambient-select` is `width: 100%` and declared
+   late — it would otherwise demand the whole line and crush its siblings */
 .v2-layer .v2-harmrow select.ambient-select.v2-harmmo,
-.v2-layer .v2-harmrow select.ambient-select.v2-harmser {
-  width: auto; flex: 1 1 8.5em; min-width: 0; max-width: 13em;
-}
+.v2-layer .v2-harmrow select.ambient-select.v2-harmser { width: 100%; min-width: 0; }
 .v2-layer .v2-harmrow .ambient-stepper {
-  display: inline-flex; align-items: stretch; flex: 0 0 auto;
-  width: auto; min-width: 100px;
+  display: inline-flex; align-items: stretch; width: 100%; min-width: 92px;
   border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
 }
 .v2-layer .v2-harmrow .ambient-step-inp { min-width: 0; text-align: center; }

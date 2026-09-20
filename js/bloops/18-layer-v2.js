@@ -4414,6 +4414,41 @@
     return L;
   }
 
+  // ── \u21ba RESTORE TO DEFAULT (2026-09-20) ────────────────────────────────
+  // Everything about a layer back to how a NEW one arrives. Built from the
+  // same `normLayer` the factory uses rather than a hand-kept list of fields:
+  // a list would go stale the first time a field is added (this file's own
+  // repeated lesson), while normalize is total by construction \u2014 it coerces
+  // every field a layer can have and drops what it does not recognise.
+  // WHAT SURVIVES IS IDENTITY, not settings: the id (everything keys off it \u2014
+  // the phase store, the mod chain, the strip) and the NAME, which is the
+  // user's own label rather than a setting. Everything else goes, content
+  // included, which is what "restore everything" has to mean to be worth
+  // pressing.
+  function resetLayerFn(E, L) {
+    if (!E || !L) return false;
+    const cfg = E.getCfg && E.getCfg(); if (!cfg) return false;
+    const i = (cfg.layers || []).indexOf(L); if (i < 0) return false;
+    const keep = { id: L.id | 0, name: L.name };
+    const fresh = normLayer({ id: keep.id }, i);
+    if (!fresh) return false;
+    // A NEW LAYER ARRIVES EMPTY AND YOURS \u2014 the same three lines `addLayer`
+    // states, so a restored layer and a new one are the same thing.
+    fresh.part.kind = 'recorded';
+    fresh.part.notes = [];
+    fresh.part.made = 'compose';
+    fresh.name = keep.name;
+    // REPLACE IN PLACE. Every open surface holds THIS object (the card's ctx,
+    // the staged copy, a drag), so swapping the array entry would leave them
+    // editing an orphan \u2014 the documented re-resolve trap. Delete every own
+    // key, then take the fresh one's.
+    Object.keys(L).forEach((k) => { delete L[k]; });
+    Object.assign(L, fresh);
+    try { if (E._v2Phase) delete E._v2Phase['v2:' + keep.id]; } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    return true;
+  }
+
   // Render every line that is not already in the bank. Awaited by the caller so
   // it can report progress; RENDERING HAPPENS WHILE STOPPED by convention — the
   // card's button is the only caller and it says so.
@@ -6064,6 +6099,7 @@
     chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
     notesFor,                      // the interface, callable directly
     onsetsOf,
+    resetLayer: resetLayerFn,      // \u21ba everything back to a new layer's defaults
     transform: transformFn,        // commands over the notes you already have
     // …and over every take a GENERATED part makes (`xfStage`)
     xfAdd: (E, L, op, bars) => {
@@ -19272,6 +19308,20 @@
                   h._sig = '';
                   try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
                   V2.render(E);
+                }, 0) },
+              // \u21ba RESTORE \u2014 above Remove, and asking first: it destroys every
+              // setting and the notes, which is exactly the press people mean
+              // to make deliberately and never by accident.
+              { label: '\u21ba Restore to default\u2026', fn: () => setTimeout(() => {
+                  if (typeof confirm === 'function' &&
+                      !confirm('Restore "' + ctx.L.name + '" to default?\n\n' +
+                        'Every setting goes back to a new layer\u2019s \u2014 instrument, content, ' +
+                        'shape, mix, FX \u2014 and its notes are cleared. The name stays. ' +
+                        'This cannot be undone.')) return;
+                  if (!V2.resetLayer(E, ctx.L)) return;
+                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                  try { if (typeof showToast === 'function') showToast('\u21ba "' + ctx.L.name + '" restored to default.'); } catch (e) {}
+                  h._sig = ''; V2.render(E);
                 }, 0) },
               { label: '\u2715 Remove layer', danger: true, fn: () => setTimeout(() => {
                   if (typeof confirm === 'function' && !confirm('Remove "' + ctx.L.name + '"?')) return;

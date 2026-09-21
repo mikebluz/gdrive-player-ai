@@ -170,6 +170,18 @@ const ok = (name, cond, detail) => {
       window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     });
     await zz(1300);
+    // ✦ GENERATE'S ZONES ARE FOLDED WHEN IT OPENS (2026-09-21). Arrive is a
+    // FINE-TUNE ▸ Rhythm row — zone 3, not Main knobs — so without pressing
+    // that bar its select measures 0 wide and the "does not squeeze the
+    // select" check fails on a shut zone rather than on a squeezed control.
+    // (It did, against zone 2: the check stayed red and the detail still read
+    // `select 0px`, which is the tell that the row was never laid out.)
+    await page.evaluate(() => {
+      const card = document.querySelector('.v2-layer');
+      const z = card.querySelector('.v2-gzbar[data-gz="3"]');
+      if (z && !card.classList.contains('v2-gz-3')) { z.scrollIntoView({ block: 'center' }); z.click(); }
+    });
+    await zz(700);
     const h = await page.evaluate(() => {
       const card = document.querySelector('.v2-layer');
       const el = [...card.querySelectorAll('.v2-genwrap .v2-f[data-f="part.rhythm.antic"]')][0];

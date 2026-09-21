@@ -131,9 +131,25 @@ const ANCHOR = 3.37;   // anything but 0 — see the note above
   console.log('   after ▶      ' + after.n + ' notes   ' + after.sig.slice(0, 84) + '…\n');
 
   ok('▶ Preview is offered in the panel', heard.found === true);
+  // ±2ms, NOT a string match. A hit's time comes back as a FRACTION of the
+  // cycle, and after ▶ Preview that fraction is taken against a wall-clock
+  // origin instead of 0 — so a note can round to 1501 where it rounded to
+  // 1500, with the same pitch. That is float rounding, not the picture
+  // changing. The bug this guards against moved notes by HUNDREDS of ms and
+  // changed their pitches (one chord repeated in every bar), so a 2ms window
+  // still catches it outright.
+  const near2 = (a, b) => {
+    const A = a.split(' ').filter(Boolean), B = b.split(' ').filter(Boolean);
+    if (A.length !== B.length) return false;
+    return A.every((k, i) => {
+      const [t1, m1] = k.split(':'), [t2, m2] = B[i].split(':');
+      return m1 === m2 && Math.abs((+t1) - (+t2)) <= 2;
+    });
+  };
   ok('the picture on OPEN is the picture after ▶ Preview',
-    before.sig === after.sig,
-    'they differ — the one you see first is drawn against a different clock');
+    near2(before.sig, after.sig),
+    'they differ — the one you see first is drawn against a different clock\n      ' +
+    'open  ' + before.sig.slice(0, 80) + '\n      after ' + after.sig.slice(0, 80));
   ok('…and it follows the changes rather than repeating one chord',
     before.chords >= 3, before.chords + ' distinct chord stacks drawn');
 

@@ -87,6 +87,14 @@ const ok = (name, cond, detail) => {
   // …and onto Fine-tune ▸ Notes. ⚙ Deep opens on Rhythm (`v2-ftt-rhythm`) and
   // CSS shows one tab, so the harmony row is laid out but hidden — a control
   // behind a tab reads as MISSING, which is exactly what this file warns of.
+  // …and ✦ Generate's three zones are FOLDED when it opens (2026-09-21), so
+  // Fine-tune's bar has to be pressed before its tabs are laid out at all.
+  await page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const z = card.querySelector('.v2-gzbar[data-gz="3"]');
+    if (z && !card.classList.contains('v2-gz-3')) { z.scrollIntoView({ block: 'center' }); z.click(); }
+  });
+  await zz(700);
   await page.evaluate(() => {
     const b = document.querySelector('.v2-layer .v2-fttab[data-ft="notes"]');
     if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }

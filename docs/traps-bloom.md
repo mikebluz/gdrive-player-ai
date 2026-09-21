@@ -806,6 +806,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **✦ GENERATE'S THREE ZONES ARE FOLDED WHEN IT OPENS (2026-09-21, user: "the Generate menu is
+  feeling totally unwieldy, the 3 subsections should be collapsed by default").** 848px → 433px. A
+  class on the CARD per zone (`v2-gz-1|2|3`), the same shape as the fine-tune tabs and the ▸
+  subsections, so nothing re-renders under the finger and `gateRow`'s own hiding still wins on top.
+  The state rides the rebuild alongside `v2-so-*` and `v2-ftt-*`.
+  - **THE DRAWING IS IN NO ZONE.** It sits between zone 1's bar and `.v2-genrows`, so it stays on
+    screen with everything folded — which is the point, since it is the thing you are looking at.
+  - **Every bar says what it holds while shut**, zone 1 naming the material: a collapsed bar reading
+    only "MATERIAL" makes you open it to learn the one thing it was chosen for.
+  - **A PROBE MUST NOW OPEN THE ZONE IT REACHES INTO.** A control in a shut zone measures 0×0, which
+    reads as missing — and the tell is a detail line like `select 0px`. Arrive is a FINE-TUNE row,
+    not a Main-knobs one; opening the wrong zone leaves the same 0px and looks like the fix failed.
 - **OPENING A PANEL IS A FUNCTION, NOT A BUTTON (2026-09-21, user: "now remove the hidden Quick and
   Deep buttons and rewire the handlers").** Both generated panels opened from INSIDE a click branch
   keyed on a button, so the only way to open one was to have that node in the DOM and synthesise a

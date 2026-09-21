@@ -10366,6 +10366,14 @@
       // bare `querySelector` answers with whichever comes first in the DOM —
       // the duplicate-class trap this file keeps paying for. It happens to be
       // zone 2's today; naming the zone means it still will be tomorrow.
+      // ZONE 1 SAYS WHAT IT HOLDS WHILE IT IS SHUT — the material's name. A
+      // collapsed bar reading only "MATERIAL" makes you open it to learn the
+      // one thing it was chosen for.
+      const z1 = pop.querySelector('.v2-zone1for');
+      if (z1) {
+        const nm1 = MAT_NAME[matProv(L).key] ? ('\u2014 ' + MAT_NAME[matProv(L).key]) : '';
+        if (z1.textContent !== nm1) z1.textContent = nm1;
+      }
       const zf = pop.querySelector('.v2-genzone2 .v2-zonefor');
       if (zf) {
         // NAMES THE SHAPE, and ✨ Quick's Melody IS a Roll a line (same recipe,
@@ -13158,7 +13166,8 @@
             // Size and Feel did NOT move here instead: \u2699 Deep is what \ud83c\udfb2 New take
             // re-rolls, and Hold, Note length, Swing and Tight are deterministic
             // \u2014 filing them here would claim they are rolled.
-            '<div class="ambient-mod-sub v2-genzone"><b class="v2-zonen">1</b>Material</div>' +
+            '<div class="ambient-mod-sub v2-genzone v2-gzbar" data-gz="1" role="button" tabindex="0"><b class="v2-zonen">1</b>Material<span class="v2-zonefor v2-zone1for"></span><i class="v2-zcar">▸</i></div>' +
+            '<div class="v2-gzbody" data-gz="1">' +
             // ONE DROPDOWN, NOT FIVE BUTTONS (2026-09-17, user: "these can be
             // moved into a styled dropdown to conserve space"). Five doors took
             // two rows and a third of the panel. The BUTTONS STAY in the DOM,
@@ -13180,6 +13189,7 @@
             '</span>' +
 
             '<span class="ambient-hint v2-gensays"></span>' +
+            '</div>' +
             // WHAT ✓ DONE WILL WRITE — the staged part, drawn. Read-only: the
             // layer's own drawing is the one you edit notes on.
             '<div class="v2-stageviz"><span class="v2-stagelab">\u2713 Done writes</span>' +
@@ -13219,7 +13229,8 @@
               // Voicing to a chord, Chords land to Mixed), so the zone is the
               // handful of knobs THIS material reads. The caption says that,
               // and "Main knobs" now pairs with "Fine-tune" as coarse to fine.
-              '<div class="ambient-mod-sub v2-genzone v2-genzone2"><b class="v2-zonen">2</b>Main knobs<span class="v2-zonefor"></span></div>' +
+              '<div class="ambient-mod-sub v2-genzone v2-genzone2 v2-gzbar" data-gz="2" role="button" tabindex="0"><b class="v2-zonen">2</b>Main knobs<span class="v2-zonefor"></span><i class="v2-zcar">▸</i></div>' +
+              '<div class="v2-gzbody" data-gz="2">' +
               // THESE KNOBS ARE DEFERRED ON A WRITTEN PART, AND MUST SAY SO
               // (2026-09-20, "not resizing when i change length"). `gateNowOf`
               // deliberately counts a written take as BOTH live and recorded,
@@ -13350,8 +13361,10 @@
               // …and step 3 says what it holds, for the same reason step 2
               // now does: "Fine-tune" against "Main knobs" is a pairing only
               // if you already know the rest is here.
-              '<div class="ambient-mod-sub v2-genzone" data-v2when="kind:live"><b class="v2-zonen">3</b>Fine-tune' +
-                '<span class="v2-zonefor">— everything else, in four groups</span></div>' +
+              '</div>' +
+              '<div class="ambient-mod-sub v2-genzone v2-gzbar" data-gz="3" data-v2when="kind:live" role="button" tabindex="0"><b class="v2-zonen">3</b>Fine-tune' +
+                '<span class="v2-zonefor">— everything else, in four groups</span><i class="v2-zcar">▸</i></div>' +
+              '<div class="v2-gzbody" data-gz="3">' +
               '<div class="v2-fttabs" data-v2when="kind:live" role="tablist">' +
                 [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'], ['take', '🎲 Take']].map(([k, lab]) =>
                   '<button type="button" class="ambient-seg v2-fttab" role="tab" data-ft="' + k + '">' +
@@ -13571,7 +13584,7 @@
                      'where the notes land', 'kind:live;voice:synth') +
                 gsel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS,
                      'which notes they are', 'kind:live;voice:synth')) +
-            '</div>' +
+            '</div></div>' +
             '<div class="v2-genacts">' +
               // DISTINCT CLASSES. Reusing `.v2-newtake` put a SECOND element with
               // that class on the card, hidden inside the closed panel and
@@ -17627,7 +17640,8 @@
     // finger read as the knob vanishing.
     const openFolds = new Map();
     h.querySelectorAll('.v2-layer').forEach(c => {
-      openFolds.set(c.getAttribute('data-v2id'), [...c.classList].filter((k) => k.indexOf('v2-so-') === 0 || k.indexOf('v2-ftt-') === 0));
+      openFolds.set(c.getAttribute('data-v2id'), [...c.classList].filter((k) =>
+        k.indexOf('v2-so-') === 0 || k.indexOf('v2-ftt-') === 0 || k.indexOf('v2-gz-') === 0));
     });
     h.querySelectorAll('.v2-layer').forEach(c => {
       openGrps.set(c.getAttribute('data-v2id'),
@@ -20338,6 +20352,23 @@
         // ✨ Quick raises the panel it always had; Key and Notes raise a
         // popover built inside `.v2-genwrap`, so their controls still resolve
         // to the STAGED copy and v1's delegated wiring still finds its host.
+        // ── ✦ GENERATE'S THREE ZONES FOLD (2026-09-21, user: "the Generate
+        // menu is feeling totally unwieldy, the 3 subsections should be
+        // collapsed by default"). A CLASS ON THE CARD per zone, exactly as
+        // ⚙ Deep's fine-tune tabs and the ▸ subsections already work — so the
+        // rows stay where they are, nothing is rebuilt under the finger, and
+        // `gateRow`'s own hiding still wins on top of it.
+        const gzb = t.closest('.v2-gzbar');
+        if (gzb) {
+          const ctx = layerOf(gzb); if (!ctx) return;
+          const n = (gzb.getAttribute('data-gz') || '') | 0;
+          if (!n) return;
+          ctx.card.classList.toggle('v2-gz-' + n);
+          // the staged drawing sizes its canvas from a laid-out panel, and
+          // opening a zone changes how much room it has
+          requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
+          return;
+        }
         const ghq = t.closest('.v2-ghb-quick');
         if (ghq) {
           const ctx = layerOf(ghq); if (!ctx) return;

@@ -72,6 +72,15 @@ const ok = (name, cond, detail) => {
     window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
   });
   await zz(1400);
+  // ✦ GENERATE'S THREE ZONES ARE FOLDED WHEN IT OPENS (2026-09-21), so
+  // Fine-tune's tabs are not laid out until its bar is pressed — a control
+  // inside a shut zone measures 0×0, which reads as missing.
+  await page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const b = card.querySelector('.v2-gzbar[data-gz="3"]');
+    if (b && !card.classList.contains('v2-gz-3')) { b.scrollIntoView({ block: 'center' }); b.click(); }
+  });
+  await zz(700);
   await page.evaluate(() => {
     const t = document.querySelector('.v2-layer .v2-fttab[data-ft="form"]');
     if (t) { t.scrollIntoView({ block: 'center' }); t.click(); }

@@ -16758,6 +16758,25 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 /* WRAPS. The step caption says what the step holds now ("— the ones Roll a
    line uses"), which is longer than the bare title it replaced, and a
    non-wrapping flex row would push it off the edge at 390px. */
+/* ── ✦ GENERATE'S THREE ZONES FOLD, SHUT BY DEFAULT (2026-09-21, user: "the
+   Generate menu is feeling totally unwieldy, the 3 subsections should be
+   collapsed by default"). A body is hidden until the CARD carries its zone's
+   class — the same shape as `v2-ftt-*` and `v2-so-*`, so a rebuild keeps the
+   state and nothing re-renders under the finger.
+   THE DRAWING IS NOT IN ANY OF THEM: it sits between zone 1's bar and
+   `.v2-genrows`, so it stays on screen with everything folded — which is the
+   point, since it is the thing you are looking at. */
+.v2-layer .v2-gzbody { display: none; }
+.v2-layer.v2-gz-1 .v2-gzbody[data-gz="1"],
+.v2-layer.v2-gz-2 .v2-gzbody[data-gz="2"],
+.v2-layer.v2-gz-3 .v2-gzbody[data-gz="3"] { display: block; }
+/* the bar is a control now, and says which way it goes */
+.v2-layer .v2-gzbar { cursor: pointer; user-select: none; }
+.v2-layer .v2-zcar { margin-left: auto; flex: 0 0 auto; font-style: normal; color: #6b6b8a;
+  transition: transform 0.12s ease; }
+.v2-layer.v2-gz-1 .v2-gzbar[data-gz="1"] .v2-zcar,
+.v2-layer.v2-gz-2 .v2-gzbar[data-gz="2"] .v2-zcar,
+.v2-layer.v2-gz-3 .v2-gzbar[data-gz="3"] .v2-zcar { transform: rotate(90deg); }
 .v2-layer .v2-genzone {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
   text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.66rem; color: #e2e8f0;

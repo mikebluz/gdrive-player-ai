@@ -828,6 +828,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     rows need Salt re-voice on, Evolve needs a material with dice, and **`sustain · Voicing` looks
     like an ENGINE fault** — `_ambPickVoicing` returns a voicing for that layer when called directly
     and the notes still come out as the plain thirds stack. Greying that one would hide a bug.
+- **THE STAGED DRAWING MUST SET THE CLOCKS IN BOTH BRANCHES (2026-09-21, user: "when I first open
+  it, it shows one way, then when i press Preview, it changes to this").** Asking for the draft at
+  `cycleStart: 0` is not enough: the GLOBAL progression anchors sit wherever the transport last left
+  them, so the draft is resolved against a progression starting somewhere in its middle. ▶ Preview
+  supplies its own clocks, so the picture jumps the moment it runs — and **the one you see first is
+  the wrong one**. The previewing branch was fixed a day earlier and the idle branch was not; it now
+  anchors to the cycle's own origin, which is what ▶ Preview plays and ✓ Done writes.
+  **A test for this MUST set a non-zero anchor** — at 0 the two branches agree by accident, which is
+  exactly how the earlier pass missed it. And judge the picture by distinct CHORD STACKS, not
+  distinct pitches: a part on the wrong origin repeats one chord per bar while its line still
+  wanders, so a pitch count finds plenty and proves nothing (measured — that check passed under
+  poison until it counted stacks).
 - **⚙ DEEP'S STAGED PICTURE IS A PIANO ROLL (2026-09-20, user: "this visualizer also needs grid
   lines and a piano roll on the left and note readouts").** It drew a bar grid and purple bars with
   no pitch reference, so a semitone and an octave looked alike. It is the card's roll at a smaller

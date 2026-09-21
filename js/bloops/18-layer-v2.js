@@ -14733,7 +14733,25 @@
           try { notes = askS() || []; }
           finally { E._progAnchor = sv2.pa; E._playStartAt = sv2.ps; E._barGridAnchor = sv2.bg; }
         } else {
-          notes = askS() || [];
+          // NOT PREVIEWING: THE DRAFT AGAINST ITS OWN CYCLE (2026-09-21,
+          // user: "when I first open it, it shows one way, then when i press
+          // Preview, it changes to this"). This asked at `cycleStart: 0` but
+          // left the GLOBAL progression anchors alone — and they sit wherever
+          // the transport last left them, so a part was drawn against a
+          // progression that started somewhere in its middle. Measured with
+          // the clock at 3.37 s: ⛰ Comp drew the same chord in all three bars
+          // with onsets at 2000 · 4000, and the moment ▶ Preview supplied its
+          // own clocks it redrew as the real comp figure over three DIFFERENT
+          // chords. The idle picture was the wrong one, and it is the one you
+          // see first.
+          // The fix is the same shape as the preview branch above, with the
+          // cycle's own origin: a draft is 3 bars FOR PART 1, so it is drawn
+          // from that part's beginning — which is what ▶ Preview plays and
+          // what ✓ Done writes.
+          const sv3 = { pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+          E._progAnchor = cs0; E._playStartAt = cs0; E._barGridAnchor = cs0;
+          try { notes = askS() || []; }
+          finally { E._progAnchor = sv3.pa; E._playStartAt = sv3.ps; E._barGridAnchor = sv3.bg; }
         }
       } catch (e) { notes = []; }
       const bars = Math.max(1, Math.round(+(S.part && S.part.bars) || 1));

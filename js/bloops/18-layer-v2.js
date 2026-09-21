@@ -9680,6 +9680,25 @@
         ? tapTxt(L, ' · outlines: the next ' + AHEAD + ' take' + (AHEAD === 1 ? '' : 's') + ', a colour each (⟳ Show ahead)' +
             (evoEv > 0 ? ' \u2014 one every ' + evoEv + ' pass' + (evoEv === 1 ? '' : 'es') : ''))
         : '';
+      // …AND WHEN THERE IS NOTHING AHEAD TO SHOW (2026-09-20, user: "Evolve is
+      // not rerolling this content … also Show ahead doesn't seem to be
+      // working anymore"). Both reports are ONE fact, and it is this: the
+      // outlines are the notes that DIFFER between takes, so a part with no
+      // dice in it produces none — and the line said nothing at all, which
+      // reads as a broken control rather than as an empty answer.
+      // MEASURED on Play the changes: every take is byte-identical (takes
+      // 0-3, 9 notes, one signature). Its chord tones come from the changes
+      // and its strike pattern is fixed, so the only rolled ingredient it has
+      // is a ♪ Line set to Walk — with the default `series` line, a sweep, it
+      // is deterministic end to end. Which is also why Evolve there looks like
+      // it only works with Salt on: Salt is the one thing varying the part,
+      // and Evolve was never the thing changing it.
+      const sameTxt = (!ghosts.length && AHEAD > 0 && wouldVary && L.part.kind !== 'recorded')
+        ? ' · ⚠ every coming take is IDENTICAL — nothing in this content is rolled, ' +
+          'so ⟳ Evolve has nothing to change' +
+          ((L.part.rhythm || {}).kind === 'ground'
+            ? ' (a ♪ Line set to Walk is what gives Play the changes its dice)' : '')
+        : '';
       // WHY THE OUTLINES WENT, AND HOW TO GET THEM BACK. Tapping a note on a
       // live part FREEZES it so there is something to edit (captureShown, with
       // a toast) — and a frozen part is FIXED, so by construction it has no
@@ -9747,7 +9766,7 @@
                 (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
                 (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
                            : tapTxt(L, ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it')) +
-                (fromPv ? ' · as previewed' : '')) + thawTxt + xfTxt + ghostTxt + overTxt + otherTxt;
+                (fromPv ? ' · as previewed' : '')) + thawTxt + xfTxt + ghostTxt + sameTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
     try { vizChrome(card, L, E); } catch (e) {}

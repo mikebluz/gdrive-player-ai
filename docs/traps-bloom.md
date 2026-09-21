@@ -774,6 +774,20 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **PLAY THE CHANGES HAS NO DICE OF ITS OWN (2026-09-20, user: "Evolve is not rerollling this
+  content … also Show ahead doesn't seem to be working anymore").** Both reports and "Evolve only
+  works when I turn Salt on" are ONE fact: a Groundwork part is deterministic — its chord tones come
+  from the changes, its strike pattern is fixed — so every take is byte-identical (measured, takes
+  0-3). ⟳ Evolve advances the take and nothing moves; ⟳ Show ahead draws the notes that DIFFER
+  between takes, so it draws nothing; and Salt, which recolours per pass, was the only thing varying
+  the part at all. **Its one rolled ingredient is a ♪ Line set to `walk`** — and the ♪ Line button
+  defaults to `series`, a deterministic sweep, so the obvious path leaves it still frozen.
+  The readout now says so outright when outlines are asked for and none exist. **An empty answer and
+  a broken control look identical on screen; say which it is.**
+- **`part.pitch.chordMode` STOPS A PART FOLLOWING THE CHANGES** (measured 2026-09-20, not yet
+  fixed): with a voicing mode set and no `feel`, a Groundwork part plays the same four pitches over
+  D, F♯m and G, where the same part with no chordMode follows each chord. `feel: 'stochastic'` does
+  follow them. This is also why `sustain · Voicing` measures dead — one onset cannot show it.
 - **A KNOB THAT MOVES NOTHING IS MEASURABLE — `test/probe-deepdead.js` (2026-09-20, user: "if the
   param creates no change for whatever reason, it should be disabled for that Material").** It sweeps
   every row ⚙ Deep SHOWS, per material, and asks the seam whether the notes moved: 32 of 132 are

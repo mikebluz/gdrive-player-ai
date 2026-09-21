@@ -774,15 +774,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
-- **A NOTE'S LENGTH IS `lenRatio` OF ITS OWN SLOT IN THE GRID, NOT OF THE GAP YOU SEE (2026-09-21,
-  user: "why are chords different lengths").** ⛰ Comp's grid is uneven — 750 and 1250 spans — so its
-  lengths alternate whatever else is set (300 · 500 at 40%). **Arrive then trades an 8th between
-  neighbours**: the anticipated chord gains it (it rings through the bar line it arrived before) and
-  the chord ahead of it gives it up, giving 250 · 550. Both halves are one mechanism, and the Arrive
-  row's hint was EMPTY — the only control on the card that does this said nothing about it. Note the
-  lengths are still measured against the PRE-anticipation spans, so after the wrap fix the onsets are
-  evenly spaced while the lengths are not; that is coherent comping, not a bug, but it is the reason
-  the two look unrelated.
+- **`gapAt` MEASURES WHERE ONSETS SOUND, NOT WHERE THE GRID PUTS THEM (2026-09-21, user: "why are
+  chords different lengths" → "still differing lengths on reroll").** A note's length is `lenRatio`
+  of `gapAt(k)`, and that read the GRID — which Arrive moves onsets off without moving. So an
+  anticipated part whose onsets were EVENLY spaced still had lengths alternating 250 · 550, and the
+  loop traded an 8th between neighbours (`dm0 += anticK`, and the one ahead giving it up) to paper
+  over exactly that. `gapAt` returns the real sounding gap now and **both adjustments are gone** —
+  keeping either would count it twice. ⛰ Comp comes out 400 × 6, which is 40% of the 1000ms each
+  note actually has. With Arrive OFF the comp grid is genuinely uneven (750 · 1250) so 300 · 500
+  is correct there; even lengths would be the bug.
+  - **`gapAt` is called at BUILD time** (`const durMs = durAt(0)`), long before the onset loop, so
+    anything it reads must be declared above it — the anticipation block moved up for this, and a
+    `const` read early is a TDZ error the surrounding `catch` swallows into a silent no-draw.
 - **AN ANTICIPATION WRAPS TO THE END OF THE CYCLE (2026-09-20, user: "changes to Character seem to
   introduce onset timing irregularities, like they hit too early after the very first one").** Arrive
   (`rhythm.antic`) pulls each change an 8th early, and the cycle's own top used to be filtered out of

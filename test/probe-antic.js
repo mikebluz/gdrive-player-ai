@@ -142,17 +142,22 @@ const ok = (name, cond, detail) => {
   console.log('  chord lengths on ⛰ Comp:\n');
   console.log('   Arrive on    ' + r.durs.on.join(' · '));
   console.log('   Arrive off   ' + r.durs.off.join(' · ') + '\n');
-  // THE COMP GRID IS ALREADY UNEVEN — 750 and 1250 spans — so lengths
-  // alternate with Arrive OFF too (300 · 500). What Arrive does is trade an
-  // 8th between the two, which is a different claim and the one to check.
-  ok('a comp figure alternates two lengths, Arrive or not',
-    new Set(r.durs.on).size === 2 && new Set(r.durs.off).size === 2,
-    'on ' + JSON.stringify(r.durs.on) + '  off ' + JSON.stringify(r.durs.off));
-  ok('…and Arrive trades an 8th between them — the long one gains it, the short gives it',
-    Math.max.apply(null, r.durs.on) - Math.max.apply(null, r.durs.off) === 50 + 0 ||
-    (Math.max.apply(null, r.durs.on) > Math.max.apply(null, r.durs.off) &&
-     Math.min.apply(null, r.durs.on) < Math.min.apply(null, r.durs.off)),
-    'on ' + JSON.stringify(r.durs.on) + '  off ' + JSON.stringify(r.durs.off));
+  // A NOTE FILLS THE SPACE IT ACTUALLY HAS. Under Arrive every change is
+  // anticipated, so the onsets come out evenly spaced — and the lengths must
+  // follow them. They did not: `gapAt` measured the GRID, which Arrive does
+  // not move, so a part with even onsets had lengths alternating 250 · 550
+  // ("still differing lengths on reroll").
+  ok('with Arrive on, every chord is the same length',
+    new Set(r.durs.on).size === 1,
+    JSON.stringify(r.durs.on));
+  ok('…and that length is Note length % of the space it has (40% of 1000ms)',
+    r.durs.on[0] === 400, r.durs.on[0] + 'ms of a 1000ms gap at 40%');
+  // …and with Arrive OFF the comp grid is genuinely uneven — 750 and 1250 —
+  // so its lengths SHOULD differ. Even lengths there would be the bug.
+  ok('with Arrive off, the comp figure\u2019s own unevenness still shows',
+    new Set(r.durs.off).size === 2 &&
+    r.durs.off[0] === 300 && r.durs.off[1] === 500,
+    JSON.stringify(r.durs.off));
 
   {
     const c = await page.evaluate(() => {
@@ -184,8 +189,8 @@ const ok = (name, cond, detail) => {
     });
     console.log('   Arrive hint: “' + (h.text || h.err) + '”');
     console.log('   select ' + h.selW + 'px, hint full-width=' + h.wide + '\n');
-    ok('the Arrive control explains the trade it makes',
-      !!h.text && /8th/.test(h.text) && /alternate|gives/.test(h.text),
+    ok('the Arrive control explains what it does',
+      !!h.text && /8th/.test(h.text) && /share of the space/.test(h.text),
       JSON.stringify(h.text || h.err));
     ok('…and its sentence does not squeeze the select beside it',
       h.wide === true && h.fits === true && h.selW > 80,

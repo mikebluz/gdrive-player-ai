@@ -3498,11 +3498,48 @@
     // below has always claimed "Length stretches with the gaps"; it did not.
     // The last onset's slot runs to the top of the NEXT cycle, which is where
     // its own next hit would fall.
+    // ── ANTICIPATION ──────────────────────────────────────────────────────
+    // Every change arrives an 8th early, the cycle's own top INCLUDED
+    // (2026-09-20) — it wraps to the end of the cycle, where it sounds an 8th
+    // before the downbeat the next pass opens on, so every bar plays the same
+    // figure. DECLARED HERE, ABOVE `gapAt`, because `gapAt` now asks where an
+    // onset actually SOUNDS: a `const` read before its declaration is a TDZ
+    // ReferenceError, and `durAt(0)` runs at build time, long before the
+    // onset loop. (This block used to sit beside the loop.)
+    const anticLead = (p.rhythm.kind === 'ground' && p.rhythm.antic)
+      ? (cyc / Math.max(0.125, +p.bars || 1)) / 8 : 0;
+    const anticAt = anticLead ? new Set(groundSpans(ctx, cs, cyc, p)
+      .map((s2) => snapT(s2.t0, p)).map((x) => Math.round(x * 1e6))) : null;
+    const isAntic = (k) => !!(anticAt && k < ons.length && anticAt.has(Math.round(ons[k] * 1e6)));
+    let anticWrapped = false;
+    // WHERE EACH ONSET ACTUALLY SOUNDS, as a cycle fraction — the grid time
+    // with the anticipation taken off, wrapped when that falls before the top.
+    const anFrac = anticLead ? (anticLead / Math.max(1e-9, cyc)) : 0;
+    const actF = anticLead
+      ? ons.map((f, k) => { const v = f - (isAntic(k) ? anFrac : 0); return v < -1e-9 ? v + 1 : v; })
+      : null;
+    // …and the same list in TIME order, so "the next onset" is the next one
+    // HEARD rather than the next one indexed — the wrapped one is index 0 and
+    // sounds last.
+    const actSorted = actF ? actF.slice().sort((a2, b2) => a2 - b2) : null;
     const gapAt = (k) => {
       // AN EMPTY PATTERN IS A REST, and `durMs` below asks for gap 0 whatever
       // the onsets are — without this guard `ons[0]` is undefined, the gap is
       // NaN, and a NaN duration reaches playNote. Which is silence, everywhere.
       if (!ons.length) return 1;
+      // A NOTE FILLS THE SPACE IT ACTUALLY HAS (2026-09-21, user: "still
+      // differing lengths on reroll"). This measured the GRID, so under
+      // Arrive — which moves the onsets but not the grid — a part whose
+      // onsets were evenly spaced still had lengths alternating 250 · 550,
+      // and the ±8th the loop traded to paper over it was compensating for
+      // this very reading. Measure where the notes SOUND and both go away.
+      if (actF) {
+        const a2 = actF[k];
+        const i2 = actSorted.indexOf(a2);
+        const n2 = (i2 >= 0 && i2 + 1 < actSorted.length) ? actSorted[i2 + 1] : (actSorted[0] + 1);
+        const d2 = n2 - a2;
+        return Number.isFinite(d2) ? Math.max(1e-4, d2) : 1;
+      }
       const a = ons[k] || 0;
       const b2 = (k + 1 < ons.length) ? ons[k + 1] : (ons[0] + 1);
       const d = b2 - a;
@@ -3681,24 +3718,6 @@
     let chgPrev = null, chgBase = 0, chgPending = false;
     // the walk memory as it stood before each FIGURE onset, for its repeats
     const motMem = MOT.seed ? {} : null;
-    // ANTICIPATION — every change arrives an 8th early, the cycle's own top
-    // INCLUDED (2026-09-20, user: "changes to Character seem to introduce
-    // onset timing irregularities, like they hit too early after the very
-    // first one"). The top used to be filtered out here, on the reasoning
-    // that nothing precedes it to arrive early from. Within one cycle that is
-    // true; across a LOOP it is not, and the result was a part whose first
-    // bar played one figure and whose every later bar played another —
-    // measured on ⛰ Comp over 3 bars: 0 · 750 · 1750 · 2750 · 3750 · 4750,
-    // a 750 gap once and 1000 for ever after. Its anticipation is WRAPPED to
-    // the end of the cycle instead (see `anticK` below), where it sounds an
-    // 8th before the downbeat the next pass opens on — which is what an
-    // anticipation IS, and makes every bar play the same figure.
-    const anticLead = (p.rhythm.kind === 'ground' && p.rhythm.antic)
-      ? (cyc / Math.max(0.125, +p.bars || 1)) / 8 : 0;
-    const anticAt = anticLead ? new Set(groundSpans(ctx, cs, cyc, p)
-      .map((s2) => snapT(s2.t0, p)).map((x) => Math.round(x * 1e6))) : null;
-    let anticWrapped = false;
-    const isAntic = (k) => !!(anticAt && k < ons.length && anticAt.has(Math.round(ons[k] * 1e6)));
     for (let i = 0; i < ons.length; i++) {
       const si = MOT.seed ? MOT.seed[i] : i;          // the onset's draws (rests, lengths, push)
       const pi = MOT.pitch ? MOT.pitch[i] : i;        // the onset's NOTE draws
@@ -3818,7 +3837,11 @@
         (chgOf2 ? (stageSeed('pit', slotK) ^ (slotK * 2654435761)) : (seedBase ^ (pi * 2654435761))),
         stepIdx, mem, L));
       // ANTICIPATED: the chord is resolved AT its change (above) and SOUNDS an
-      // 8th before it, holding through; the onset before it gives the 8th up.
+      // 8th before it. It used to be LENGTHENED by that 8th here, and the
+      // onset ahead of it shortened by the same, to compensate for `gapAt`
+      // measuring the grid instead of the sounding times. `gapAt` measures
+      // the sounding times now, so both adjustments would be counted twice —
+      // they are gone, and the lengths come out even because the onsets are.
       const anticK = isAntic(i) ? anticLead : 0;
       if (anticK) {
         at -= anticK;
@@ -3833,12 +3856,6 @@
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
       let dm0 = durAt(i);
-      if (anticK) dm0 += Math.round(anticK * 1000);
-      // …and the LAST onset gives it up to a wrapped anticipation, which is
-      // the same rule reaching round the loop rather than a second one.
-      if (isAntic(i + 1) || (anticLead && i === ons.length - 1 && isAntic(0))) {
-        dm0 = Math.max(20, dm0 - Math.round(anticLead * 1000));
-      }
       // HOLD is per-change under Groundwork — `durAt` reads the layer's own
       // lenRatio, so the resolved one is applied as a ratio of it rather than
       // by threading a second argument through every caller.
@@ -13180,20 +13197,19 @@
               gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
                   'nudge each note late by a random hair — a strum', 'kind:live;rhythm:ground') +
               // ARRIVE SAYS WHAT IT DOES (2026-09-21, user: "why are chords
-              // different lengths"). Its hint was EMPTY, and it is the only
-              // thing on the card that alternates them: an anticipated chord
-              // is held an 8th longer (it rings through the bar line it
-              // arrived before) and the chord ahead of it gives that 8th up
-              // to make room. Measured on ⛰ Comp: 550 · 250 · 550 · 250 …
-              // against a flat 400 with Arrive off. Both halves of one trade,
-              // and neither was written down anywhere.
+              // different lengths"). Its hint was EMPTY. It described a trade
+              // of an 8th between neighbours until the day after, when the
+              // trade itself went: `gapAt` measures where onsets SOUND now,
+              // so an anticipated part comes out evenly spaced AND evenly
+              // long (measured on ⛰ Comp: 400 × 6). What is left to say is
+              // the timing, which is the whole of what Arrive now does.
               // FULL-WIDTH HINT (`v2-wideh`): `.ambient-ctrl`'s third column
               // is `auto`, so a sentence left in it squeezes the select next
               // to it — the same reason the harmony row's caption moved.
               gsel(L, 'part.rhythm.antic', 'Arrive', (L.part.rhythm || {}).antic ? '1' : '',
                    [['', 'On the change'], ['1', 'An 8th early']],
-                   'an anticipated chord lands an 8th before its bar line and rings through it \u2014 ' +
-                   'so the chord ahead of it gives that 8th up, and the two lengths alternate',
+                   'each change lands an 8th before its bar line and rings through it \u2014 ' +
+                   'every note still fills the same share of the space it has',
                    'kind:live;rhythm:ground')
                 .replace('class="ambient-ctrl"', 'class="ambient-ctrl v2-wideh"') +
               gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,

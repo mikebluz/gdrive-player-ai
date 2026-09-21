@@ -806,6 +806,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **⌫ CLEAR MAKES A PART RECORDED, SO ✦ GENERATE MUST OPEN FOR A RECORDED ONE (2026-09-21, user:
+  "i cleared the part and now Generate menu is empty").** The section handler opened ⚙ Deep only
+  when `part.kind !== 'recorded'` — and Clear is precisely what makes a part recorded, so a cleared
+  part fell through to a sheet holding two recorded-only rows and no material picker. Clear's own
+  tooltip promises "the generated settings are kept, so ⚙ Deep brings them back", and it could not.
+  **A door gated on a state that another control PRODUCES is a trap door**: check what each button
+  leaves behind before gating on the state it leaves. Transpose and Pitch quantize now live in the
+  panel too, so there is one door and it always leads somewhere.
+  - Zone 3 (Fine-tune) is `kind:live`, so a recorded part correctly shows TWO bars, not three —
+    those are generation knobs and a stored note list ignores them.
 - **✦ GENERATE'S THREE ZONES ARE FOLDED WHEN IT OPENS (2026-09-21, user: "the Generate menu is
   feeling totally unwieldy, the 3 subsections should be collapsed by default").** 848px → 433px. A
   class on the CARD per zone (`v2-gz-1|2|3`), the same shape as the fine-tune tabs and the ▸

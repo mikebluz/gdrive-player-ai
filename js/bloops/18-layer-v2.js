@@ -12884,7 +12884,9 @@
     // rather than a sheet, so the only tabs left here are what a RECORDED part
     // does with pitches it already has. Method held two buttons, one of which
     // opened Deep; Key and Notes are popovers in Deep's own head now.
-    Generate: ['Transpose', 'Pitch quantize'],
+    // NOTHING: ✦ Generate opens ⚙ Deep for every part now, so this sheet is
+    // never built. Transpose and Pitch quantize went into that panel with it.
+    Generate: [],
     Bank: ['Bank'],
   };
   const secGrp = (sec) => SEC_GRP[sec] || sec;
@@ -13340,6 +13342,33 @@
               // …and typed here too, for the same reason as the Euclid one above.
               gst(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 64,
                   'onsets in the cycle', 'kind:live;rhythm:pulse;pitch:series,walk,mixed,fixed,anchor,drawn') +
+              // ── WHAT A RECORDED PART DOES WITH THE PITCHES IT HAS ────────
+              // (2026-09-21, user: "i cleared the part and now Generate menu is
+              // empty".) ⌫ Clear leaves the part RECORDED with no notes, and
+              // ✦ Generate was opening this panel only for a LIVE one — so a
+              // cleared part fell through to a sheet holding just these two rows,
+              // with no way back to the material picker at all. Clear's own
+              // tooltip promises "the generated settings are kept, so ⚙ Deep
+              // brings them back", and it could not.
+              // They live here now and the section opens this panel for every
+              // part, so there is ONE door and it always leads somewhere.
+              gst(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
+              // What a RECORDED part does when the chords move under it. Inert on a
+              // live part, which re-resolves its pitches every cycle by definition —
+              // the same reason v1 marks it inert while a layer is generating.
+              // "Pitch quantize", not "Harmony": `L.harmony` is how a STATIC part
+              // tracks the chords, while `part.pitch.harm` is interval doubling —
+              // two mechanisms, and they were both called Harmony on the same card.
+              // THE HINT IS THE POINT OF THIS ROW. It had none — `sel` emits an
+              // empty hint span — and its label was hidden as a duplicate of the
+              // tab name, so it read as a bare dropdown of three phrases with
+              // nothing saying what question they answered ("what is Follows
+              // changes for"). It also states the exemption, which is invisible
+              // everywhere else: a note you dragged or pencilled carries `hx` and
+              // keeps its drawn pitch under all three settings.
+              gsel(L, 'harmony', 'Pitch quantize', L.harmony || 'fixed',
+                   FOLLOW_OPTS,
+                   'what stored pitches snap to \u2014 notes you edited by hand keep theirs', 'kind:recorded') +
               // ── TUNED — what differs from the Character (2026-09-17) ────
               // Replaces Fine-tune's summary line. One chip per knob moved away
               // from the Character in force (or from its default when the
@@ -14196,23 +14225,10 @@
           // Notes) and what a RECORDED one does with the pitches it already
           // has (Transpose, Pitch quantize) — a live part re-resolves those
           // every cycle, so they are a different question from the rules.
-          st(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
-          // What a RECORDED part does when the chords move under it. Inert on a
-          // live part, which re-resolves its pitches every cycle by definition —
-          // the same reason v1 marks it inert while a layer is generating.
-          // "Pitch quantize", not "Harmony": `L.harmony` is how a STATIC part
-          // tracks the chords, while `part.pitch.harm` is interval doubling —
-          // two mechanisms, and they were both called Harmony on the same card.
-          // THE HINT IS THE POINT OF THIS ROW. It had none — `sel` emits an
-          // empty hint span — and its label was hidden as a duplicate of the
-          // tab name, so it read as a bare dropdown of three phrases with
-          // nothing saying what question they answered ("what is Follows
-          // changes for"). It also states the exemption, which is invisible
-          // everywhere else: a note you dragged or pencilled carries `hx` and
-          // keeps its drawn pitch under all three settings.
-          sel(L, 'harmony', 'Pitch quantize', L.harmony || 'fixed',
-              FOLLOW_OPTS, 'kind:recorded',
-              'what stored pitches snap to \u2014 notes you edited by hand keep theirs') +
+          // (TRANSPOSE AND PITCH QUANTIZE MOVED into ✦ Generate's own panel,
+          // 2026-09-21. ✦ Generate opens that panel for EVERY part now — see
+          // the section handler — so a sheet holding these two was a surface
+          // nothing could reach.)
           // SPEED IS NOT YOURS ON A PER-PART RECORD — the same situation as Bars
           // directly above, and it was the same dead control. `cycleWindowAt`
           // takes the PASS SPAN for a per-part layer and returns it untouched:
@@ -18826,7 +18842,10 @@
           // section opens the panel itself — one door, not two. A RECORDED
           // part still gets the sheet: Transpose and Pitch quantize are what
           // it has to offer, and Deep generates rules a stored list ignores.
-          if (want === 'Generate' && ctx.L.part && ctx.L.part.kind !== 'recorded') {
+          // EVERY PART, recorded included (2026-09-21). Excluding a recorded one
+          // left ⌫ Clear with no way back to the material picker, because Clear
+          // is what makes a part recorded.
+          if (want === 'Generate') {
             secClose(ctx.card);
             if (genPanelOpen(E, ctx)) return;
           }

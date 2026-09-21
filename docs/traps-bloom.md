@@ -774,6 +774,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **AN ANTICIPATION WRAPS TO THE END OF THE CYCLE (2026-09-20, user: "changes to Character seem to
+  introduce onset timing irregularities, like they hit too early after the very first one").** Arrive
+  (`rhythm.antic`) pulls each change an 8th early, and the cycle's own top used to be filtered out of
+  `anticAt` — nothing precedes it to arrive early from. True within one cycle, false across a LOOP:
+  ⛰ Comp came out `0 · 750 · 1750 · 2750 · 3750 · 4750`, one 750 gap and an even 1000 pulse for
+  ever, so bar 1 played the comp figure and no other bar did. The first change's anticipation is
+  wrapped to `cyc − anticLead` now. Three things had to move together, and missing any one is a
+  silent fault: the wrap itself, the LAST onset giving up its 8th (the `isAntic(i+1)` rule reaching
+  round the loop), and a **sort** — a wrapped onset is generated first and sounds last, and nothing
+  downstream re-sorts that path. An anticipated note is MEANT to overhang the downbeat it
+  anticipates (`dm0 += anticK`), so across the seam it ends past the cycle; that is correct, and the
+  invariant is only that it must not cover the next pass's first hit.
 - **PLAY THE CHANGES HAS NO DICE OF ITS OWN (2026-09-20, user: "Evolve is not rerollling this
   content … also Show ahead doesn't seem to be working anymore").** Both reports and "Evolve only
   works when I turn Salt on" are ONE fact: a Groundwork part is deterministic — its chord tones come

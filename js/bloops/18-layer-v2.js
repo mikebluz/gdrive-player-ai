@@ -3681,11 +3681,23 @@
     let chgPrev = null, chgBase = 0, chgPending = false;
     // the walk memory as it stood before each FIGURE onset, for its repeats
     const motMem = MOT.seed ? {} : null;
-    // ANTICIPATION — the changes (not the cycle's own top) arrive an 8th early.
+    // ANTICIPATION — every change arrives an 8th early, the cycle's own top
+    // INCLUDED (2026-09-20, user: "changes to Character seem to introduce
+    // onset timing irregularities, like they hit too early after the very
+    // first one"). The top used to be filtered out here, on the reasoning
+    // that nothing precedes it to arrive early from. Within one cycle that is
+    // true; across a LOOP it is not, and the result was a part whose first
+    // bar played one figure and whose every later bar played another —
+    // measured on ⛰ Comp over 3 bars: 0 · 750 · 1750 · 2750 · 3750 · 4750,
+    // a 750 gap once and 1000 for ever after. Its anticipation is WRAPPED to
+    // the end of the cycle instead (see `anticK` below), where it sounds an
+    // 8th before the downbeat the next pass opens on — which is what an
+    // anticipation IS, and makes every bar play the same figure.
     const anticLead = (p.rhythm.kind === 'ground' && p.rhythm.antic)
       ? (cyc / Math.max(0.125, +p.bars || 1)) / 8 : 0;
     const anticAt = anticLead ? new Set(groundSpans(ctx, cs, cyc, p)
-      .map((s2) => snapT(s2.t0, p)).filter((x) => x > 1e-6).map((x) => Math.round(x * 1e6))) : null;
+      .map((s2) => snapT(s2.t0, p)).map((x) => Math.round(x * 1e6))) : null;
+    let anticWrapped = false;
     const isAntic = (k) => !!(anticAt && k < ons.length && anticAt.has(Math.round(ons[k] * 1e6)));
     for (let i = 0; i < ons.length; i++) {
       const si = MOT.seed ? MOT.seed[i] : i;          // the onset's draws (rests, lengths, push)
@@ -3808,14 +3820,25 @@
       // ANTICIPATED: the chord is resolved AT its change (above) and SOUNDS an
       // 8th before it, holding through; the onset before it gives the 8th up.
       const anticK = isAntic(i) ? anticLead : 0;
-      if (anticK) at -= anticK;
+      if (anticK) {
+        at -= anticK;
+        // …AND WRAPPED when that lands before the cycle opens. The part
+        // repeats, so this onset belongs an 8th before the NEXT pass's
+        // downbeat — the end of this one. `out` is built in onset order, so
+        // a wrapped note is out of order and the path is sorted below.
+        if (at < cs - 1e-9) { at += cyc; anticWrapped = true; }
+      }
       const outFrom = out.length;
       if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; if (pAt._mixWasLine != null) p._mixWasLine = pAt._mixWasLine; }
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
       let dm0 = durAt(i);
       if (anticK) dm0 += Math.round(anticK * 1000);
-      if (isAntic(i + 1)) dm0 = Math.max(20, dm0 - Math.round(anticLead * 1000));
+      // …and the LAST onset gives it up to a wrapped anticipation, which is
+      // the same rule reaching round the loop rather than a second one.
+      if (isAntic(i + 1) || (anticLead && i === ons.length - 1 && isAntic(0))) {
+        dm0 = Math.max(20, dm0 - Math.round(anticLead * 1000));
+      }
       // HOLD is per-change under Groundwork — `durAt` reads the layer's own
       // lenRatio, so the resolved one is applied as a ratio of it rather than
       // by threading a second argument through every caller.
@@ -4089,6 +4112,11 @@
         }
       } catch (e) {}
     }
+    // A WRAPPED ANTICIPATION IS OUT OF ORDER — it is generated first (it is
+    // onset 0) and sounds last. Nothing downstream re-sorts this path, and a
+    // list whose times run backwards is read by the drawing, the clipper and
+    // every probe that compares signatures, so it is put right once here.
+    if (anticWrapped) out.sort((a3, b3) => a3.at - b3.at);
     // The phrase's START shifts the WHOLE cycle, so it is applied once here
     // rather than at each push, before anything downstream reads the times.
     if (startOff > 0) for (let z = 0; z < out.length; z++) out[z].at += startOff;

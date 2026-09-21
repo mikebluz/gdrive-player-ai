@@ -142,6 +142,81 @@ const ok = (name, cond, detail) => {
   });
   await zz(700);
 
+  // ── 1b. A PART BLOCK IS TWO TABS, ON ONE COLUMN GRID ────────────────────
+  // user: "still messy, too much assymmetry and misalignment, plus it
+  // shouldn't show both 'All of it' and 'The lines', they should be tabbed".
+  const blockShape = () => page.evaluate(() => {
+    const blk = document.querySelector('.v2-layer .v2-gwpart');
+    if (!blk) return { err: 'no block' };
+    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !!e.offsetParent; };
+    const br = blk.getBoundingClientRect();
+    // EVERY control that sits directly on the block's grid — the settings
+    // steppers and the change cells. Their LEFT EDGES are the whole claim:
+    // controls on different rows must share columns, which a wrapping flex row
+    // (what this was) cannot do because its second line starts at the row's
+    // own left edge rather than at a column.
+    const top = [...blk.querySelectorAll('.v2-gwglob > .v2-mini, .v2-gwmelrow:not(.v2-gwclrow) > .v2-mini, .v2-gwchords > .v2-gwcell')]
+      .filter(vis).map((e) => { const r = e.getBoundingClientRect();
+        return { l: Math.round(r.left - br.left), w: Math.round(r.width) }; });
+    const tabs = [...blk.querySelectorAll('.v2-gwptab')].map((t) => {
+      const r = t.getBoundingClientRect();
+      return { k: t.getAttribute('data-gwt'), on: t.classList.contains('on'),
+               w: Math.round(r.width), h: Math.round(r.height), off: !!t.offsetParent };
+    });
+    const bodies = [...blk.querySelectorAll('.v2-gwbody')].map((b) => ({
+      k: b.getAttribute('data-gwt'), shown: vis(b) }));
+    return {
+      n: top.length,
+      lefts: [...new Set(top.map((i) => i.l))].sort((a, b) => a - b),
+      widths: [...new Set(top.map((i) => i.w))].sort((a, b) => a - b),
+      tabs, bodies,
+      h: Math.round(br.height),
+    };
+  });
+
+  const bs0 = await blockShape();
+  console.log('\n  part block: ' + bs0.n + ' controls on left edges ' + JSON.stringify(bs0.lefts) +
+              ', widths ' + JSON.stringify(bs0.widths));
+  console.log('  tabs: ' + JSON.stringify(bs0.tabs));
+  console.log('  bodies shown: ' + JSON.stringify(bs0.bodies) + '\n');
+
+  ok('a part block offers Chords and ♪ Line as tabs',
+    bs0.tabs.length === 2 && bs0.tabs.some((t) => t.k === 'chords') && bs0.tabs.some((t) => t.k === 'line'),
+    JSON.stringify(bs0.tabs));
+  ok('…both are real targets', bs0.tabs.every((t) => t.off && t.w >= 44 && t.h >= 28),
+    JSON.stringify(bs0.tabs));
+  // THE ASK ITSELF: one at a time, not both stacked.
+  ok('…and exactly one of the two bodies is on screen',
+    bs0.bodies.filter((b) => b.shown).length === 1, JSON.stringify(bs0.bodies));
+  // COLUMNS, NOT A WRAPPING ROW. Three tracks at this width, so three left
+  // edges — every stepper and every change cell begins at one of them.
+  ok('…and every control on the block shares a small set of columns',
+    bs0.n >= 5 && bs0.lefts.length <= 3, JSON.stringify({ n: bs0.n, lefts: bs0.lefts }));
+  ok('…each one track wide', bs0.widths.length === 1, JSON.stringify(bs0.widths));
+
+  // THE OTHER TAB IS THE SAME GRID — an alignment that holds on one tab and
+  // not the other is the asymmetry this is here to prevent.
+  {
+    const box = await page.evaluate(() => {
+      const x = document.querySelector('.v2-layer .v2-gwptab[data-gwt="line"]');
+      if (!x) return null;
+      x.scrollIntoView({ block: 'center' });
+      const r = x.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width };
+    });
+    if (box && box.w > 0) await page.touchscreen.tap(box.x, box.y);
+    await zz(700);
+  }
+  const bs1 = await blockShape();
+  console.log('  ♪ Line tab: ' + bs1.n + ' controls on left edges ' + JSON.stringify(bs1.lefts) +
+              ', widths ' + JSON.stringify(bs1.widths) + '\n');
+  ok('the ♪ Line tab swaps which body shows, not how many',
+    bs1.bodies.filter((b) => b.shown).length === 1 &&
+    bs1.bodies.find((b) => b.k === 'line').shown === true, JSON.stringify(bs1.bodies));
+  ok('…and it lands on the very same columns',
+    bs1.lefts.length <= 3 && JSON.stringify(bs1.lefts) === JSON.stringify(bs0.lefts),
+    JSON.stringify({ line: bs1.lefts, chords: bs0.lefts }));
+
   // ── 2. A CHANGE'S OWN LINE IS EDITABLE ──────────────────────────────────
   // Lit under a real finger: the press is what seeds the part's kind, and a
   // test that writes the store instead steps over the thing it is checking.

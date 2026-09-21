@@ -139,6 +139,15 @@
   grey caption on the row — a two-class reset outranks the one-class rule that paints every other
   one. A door must never be dimmer than the plain labels beside it.
 
+- **A wrapping flex row cannot hold a column.** Its second line starts at the ROW's left edge, not
+  under the first line's first control, so a `label + controls` row that wraps puts every later
+  control somewhere new — measured in one Groundwork block: ten distinct left edges across four rows.
+  Use a grid with explicit tracks and let the label span (`grid-column: 1 / -1`). Two further
+  conditions, both measured, for grids that must agree with each other: they need **the same track
+  size** (one `minmax()` shared by both, not merely a regular one each) and **the same gap** (a 6px
+  column-gap against a 5px put the third column 1px out). And the control inside a track must be
+  told to fill it, or you have aligned cells with unaligned contents.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

@@ -139,6 +139,21 @@ const ok = (name, cond, detail) => {
     if (box && box.w > 0) await page.touchscreen.tap(box.x, box.y);
     await zz(1200);
   }
+  // THE PART'S LINE SETTINGS LIVE ON THE ♪ Line TAB since 2026-09-21 — a part
+  // block is two tabs (Chords · ♪ Line) rather than both stacked. Pressed as a
+  // person would, so this also proves the tab is a real target and not a 0×0.
+  {
+    const box = await page.evaluate(() => {
+      const x = document.querySelector('.v2-layer .v2-gwptab[data-gwt="line"]'); if (!x) return null;
+      x.scrollIntoView({ block: 'center' });
+      const r = x.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+    });
+    if (!box || !(box.w > 0 && box.h > 0)) ok('the ♪ Line tab is a real target', false, JSON.stringify(box));
+    else { ok('the ♪ Line tab is a real target', box.w >= 44 && box.h >= 28, JSON.stringify(box));
+           await page.touchscreen.tap(box.x, box.y); }
+    await zz(700);
+  }
   const perChange = await look();
   console.log('\n  a ♪ Line lit on ONE change:\n');
   console.log('   settings row shown: ' + perChange.shown);

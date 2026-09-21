@@ -10589,6 +10589,16 @@
   // business in the layer.
   // A CHANGE THAT DIFFERS IS ALWAYS SHOWN: a fold that hides the fact that this
   // change is not following its part would hide the only reason the row exists.
+  // ── A PART BLOCK IS TWO TABS (2026-09-21) ───────────────────────────────
+  // user: "it shouldn't show both 'All of it' and 'The lines', they should be
+  // tabbed". They are two different questions about the same part — how many
+  // notes each change STATES, and what the line that moves OVER them does —
+  // and showing both stacked nine knobs where you ever need three or six.
+  // Keyed layer:part, module state for the same reason `GWLOPEN` is: it is a
+  // view preference, and it has to survive the card being rebuilt.
+  const GWTAB = new Map();
+  const gwTabKey = (id, pi) => (id | 0) + ':' + (pi | 0);
+  const gwTabOf = (id, pi) => (GWTAB.get(gwTabKey(id, pi)) === 'line' ? 'line' : 'chords');
   const GWLOPEN = new Map();
   function gwlOpen(id) {
     let s = GWLOPEN.get(id | 0);
@@ -10818,19 +10828,39 @@
     // GLOBAL — this part speaking for every change in it. A value equal to the
     // layer's own is still stored here, because it is the floor its own changes
     // inherit and deleting it would silently hand them back to the layer.
-    const glob = '<div class="v2-gwrow v2-gwglob">' +
-      '<span class="v2-gwrowlab">All of it</span>' +
+    // THE TAB STRIP REPLACES THE TWO ROW LABELS. "All of it" and "The line"
+    // were captions in a 58px gutter that pushed each row's controls to a
+    // different left edge; as tabs they name the same two things and the
+    // controls below them all start in the same column.
+    const tabNow = gwTabOf(L.id, pi);
+    const lineLit = melOn || anyChangeLine;
+    const tabs = '<div class="v2-gwptabs" role="tablist">' +
+      [['chords', 'Chords', 'How many notes each change states, and how they sit'],
+       ['line', '\u266a Line', 'The line that moves over the changes']].map(([k, lab, tip]) =>
+        '<button type="button" class="ambient-seg v2-gwptab' + (tabNow === k ? ' on' : '') +
+          '" role="tab" aria-selected="' + (tabNow === k ? 'true' : 'false') +
+          '" data-gwt="' + k + '" data-gwpi="' + pi + '" title="' + tip + '">' + lab +
+          (k === 'line' && lineLit ? '<i class="v2-gwtdot">\u25cf</i>' : '') + '</button>').join('') +
+      '</div>';
+    const glob = tabs +
+      '<div class="v2-gwbody" data-gwt="chords">' +
+      '<div class="v2-gwrow v2-gwglob">' +
       mini(L, gp + 'voices', 'Notes', ps.voices, 0, 9, 1) +
       mini(L, gp + 'hold', 'Hold %', ps.hold, 5, 200, 5) +
       mini(L, gp + 'slip', 'Slip', ps.slip, 0, 100, 5) +
+      '</div></div>' +
+      '<div class="v2-gwbody" data-gwt="line">' +
+      // THE \u266a Line SWITCH LEADS ITS OWN TAB. It used to sit at the end of the
+      // chord row, which is the one place you would not look for it.
+      '<div class="v2-gwrow v2-gwlinetop">' +
       '<button type="button" class="ambient-seg v2-gwpmel' + (melOn ? ' on' : '') +
         '" data-gwpi="' + pi + '" title="' + (melOn
           ? 'A line moves over every change in this part \u2014 tap to stop it'
           : 'Add a line that moves over the chord \u2014 the chord holds underneath') +
         '">\u266a Line' + (melOn ? ' on' : '') + '</button>' +
+      (showMel ? '' : '<span class="ambient-hint">the chord holds and a second voice moves over it</span>') +
       '</div>' +
       (showMel ? '<div class="v2-gwrow v2-gwmelrow">' +
-        '<span class="v2-gwrowlab">' + (melOn ? 'The line' : 'The lines') + '</span>' +
         mini(L, gp + 'mel.rate', 'Notes', clamp(num(mel.rate, 4) | 0, 1, 16), 1, 16, 1) +
         '<span class="v2-mini v2-gwkind"><span class="v2-mini-lab">Moves</span>' +
           '<select class="ambient-select v2-f" data-f="' + gp + 'mel.kind">' +
@@ -10847,7 +10877,8 @@
         // following the part instead of silently pinning itself the first
         // time the panel is opened.
         mini(L, gp + 'mel.span', 'Range', clamp(num(mel.span, gwMelSpan(L)) | 0, 1, 12), 1, 12, 1) +
-        '</div>' : '');
+        '</div>' : '') +
+      '</div>';
     // THE CHANGES — one cell each, marked when it speaks for itself.
     const cells = [];
     for (let i = r.from; i < r.from + r.len; i++) {
@@ -10911,7 +10942,7 @@
           '" data-gwci="' + i + '">↺ Follow</button>' +
         '</div>';
     }).join('');
-    return '<div class="v2-gwpart" data-gwpi="' + pi + '">' +
+    return '<div class="v2-gwpart v2-gwt-' + tabNow + '" data-gwpi="' + pi + '">' +
       '<div class="v2-gwphead"><span class="v2-gwpname">' + esc(nm || ('Part ' + (pi + 1))) + '</span>' +
         '<span class="v2-gwpsum"></span></div>' +
       glob +
@@ -20120,6 +20151,25 @@
         // finger (the documented re-render-under-the-finger trap, which this
         // panel has already been caught by once). The module Set is updated so
         // a LATER rebuild — one caused by something else — remembers.
+        // A PART BLOCK'S TAB. Class swap on the block, not a rebuild — nothing
+        // about the music changes, and re-rendering here would detach the tab
+        // under the finger. The Map is updated so a later rebuild remembers.
+        const gpt = t.closest && t.closest('.v2-gwptab');
+        if (gpt) {
+          const ctx = layerOf(gpt); if (!ctx) return;
+          const pi2 = gpt.getAttribute('data-gwpi') | 0;
+          const want = gpt.getAttribute('data-gwt') === 'line' ? 'line' : 'chords';
+          const blk2 = gpt.closest('.v2-gwpart'); if (!blk2) return;
+          GWTAB.set(gwTabKey(ctx.L.id, pi2), want);
+          blk2.classList.toggle('v2-gwt-chords', want === 'chords');
+          blk2.classList.toggle('v2-gwt-line', want === 'line');
+          blk2.querySelectorAll('.v2-gwptab').forEach((b2) => {
+            const on2 = b2.getAttribute('data-gwt') === want;
+            b2.classList.toggle('on', on2);
+            b2.setAttribute('aria-selected', on2 ? 'true' : 'false');
+          });
+          return;
+        }
         const gcn = t.closest && t.closest('.v2-gwcname');
         if (gcn) {
           const ctx = layerOf(gcn); if (!ctx) return;

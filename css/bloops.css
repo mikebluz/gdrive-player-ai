@@ -15504,7 +15504,62 @@
   font: 600 0.66rem 'Segoe UI', sans-serif; letter-spacing: .04em;
   text-transform: uppercase; color: #7a7a9c; flex: 0 0 auto; min-width: 58px;
 }
-.v2-gwmelrow { padding-left: 10px; border-left: 2px solid rgba(159, 122, 234, 0.45); }
+/* ── ONE COLUMN GRID FOR EVERY ROW (2026-09-21) ───────────────────
+   user: "still messy, too much assymmetry and misalignment". `.v2-gwrow` was
+   `flex-wrap`, so each row began after a label of its own width and, when it
+   wrapped, the SECOND line began at the row's left edge instead — four
+   different left edges in one block, none of them shared. These rows are the
+   same grid `.v2-gwchords` already used: equal tracks, so a stepper lines up
+   with the stepper above it whatever row or line it is on, and a label spans.
+   The pill FILLS its track (see below) or the alignment would only be of the
+   cells, not of what is drawn in them. */
+.v2-gwrow.v2-gwglob, .v2-gwrow.v2-gwmelrow, .v2-gwrow.v2-gwlinetop {
+  /* the SAME gap as `.v2-gwchords` too — matching track sizes still give
+     different column positions if the gutters between them differ (measured:
+     a 6px column-gap against its 5px put the third column 1px out) */
+  display: grid; gap: 5px; align-items: end;
+  /* THE SAME TRACK AS `.v2-gwchords` BELOW, not merely a regular one of its
+     own: two grids with different track sizes still give two sets of columns,
+     which is the misalignment one level up. One number, both grids. */
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.v2-gwrow.v2-gwlinetop { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+.v2-gwrow.v2-gwmelrow > .v2-gwrowlab, .v2-gwrow.v2-gwglob > .v2-gwrowlab { grid-column: 1 / -1; }
+/* …and the stepper stretches to its track, so every pill is one column wide.
+   `.v2-genpop .v2-mini .ambient-step-inp` pins the field at 40px and
+   `flex: 0 0 auto`; four classes, so this needs four to outrank it. */
+.v2-layer .v2-gwpart .v2-mini { min-width: 0; }
+.v2-layer .v2-gwpart .v2-mini .ambient-stepper { width: 100%; min-width: 0; }
+.v2-layer .v2-gwpart .v2-mini .ambient-step-inp { flex: 1 1 auto; width: auto; min-width: 0; }
+.v2-layer .v2-gwpart .v2-gwkind select.ambient-select { width: 100%; min-width: 0; }
+/* `.v2-gwkind` carries `align-items: center` from the days when its caption sat
+   BESIDE the select; stacked in a column that centres the caption instead, so
+   MOVES floated over the middle of its box while every other label on the grid
+   began at the left. */
+.v2-layer .v2-gwpart .v2-mini.v2-gwkind { align-items: stretch; }
+/* THE TAB STRIP IS THE TWO ROW LABELS. Same `.ambient-seg` chrome as every
+   other switch on this card — a new kind of button here would be a bolted-on
+   control, and the point of the change was to have LESS to look at. */
+.v2-gwptabs { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+.v2-gwptabs .ambient-seg.v2-gwptab {
+  flex: 0 0 auto; min-height: 30px; padding: 4px 11px; font-size: 0.74rem;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.v2-gwptabs .ambient-seg.v2-gwptab.on {
+  border-color: #9f7aea; background: rgba(159, 122, 234, 0.2); color: #d6bcfa;
+}
+/* a line is playing somewhere in this part — said on the tab, so the state is
+   legible from the tab you are NOT on */
+.v2-gwptabs .v2-gwtdot { font-style: normal; font-size: 0.5rem; color: #9f7aea; vertical-align: 2px; }
+.v2-gwpart .v2-gwbody { display: none; }
+.v2-gwpart.v2-gwt-chords .v2-gwbody[data-gwt="chords"] { display: block; }
+.v2-gwpart.v2-gwt-line .v2-gwbody[data-gwt="line"] { display: block; }
+/* THE PART'S LINE ROW IS NO LONGER INDENTED. The bar and its 12px marked
+   "these belong to the line" back when the chord row sat directly above it;
+   the tab says that now, and the indent only pushed this row's columns 12px
+   off every other row's. A change's own row keeps its indent — that one really
+   is nested, under the change strip it belongs to. */
+.v2-gwclrow { padding-left: 10px; border-left: 2px solid rgba(159, 122, 234, 0.45); }
 /* ONE CHANGE'S OWN LINE — the part's line row is the floor, so a change's sits
    further in and lighter, and its label is the chord it plays over. */
 .v2-gwclrow { margin-left: 8px; border-left-style: dashed; border-left-color: rgba(159, 122, 234, 0.3); }

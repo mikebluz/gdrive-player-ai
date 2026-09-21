@@ -15950,6 +15950,17 @@
    below), which is the same reasoning as the Salt dials' auto-fit: an even
    grid beats a wrap that happens to land. */
 .v2-layer .v2-harmrow > * { flex: 1 1 calc(50% - 3px); min-width: 0; }
+/* EACH CONTROL CARRIES ITS OWN CAPTION (2026-09-20, user: "these harmony
+   controls need better informational labels and tooltips"). The caption
+   stacks ABOVE its control inside the same flex cell, so it costs the row no
+   width — which is what lets the row be labelled at all: `.ambient-ctrl`'s
+   84px label column is already spent on the interval name, and widening it
+   was what crushed these four into a column last time.
+   It reuses `.v2-mini-lab`'s type (one caption style on this card, not two)
+   but NOT `.v2-mini` itself: that class also re-sizes steppers to a fixed
+   104px, which would leave each stepper short of its cell. */
+.v2-layer .v2-harmcell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.v2-layer .v2-harmcell > .v2-mini-lab { padding-left: 1px; }
 /* a compound selector because `.ambient-select` is `width: 100%` and declared
    late — it would otherwise demand the whole line and crush its siblings */
 .v2-layer .v2-harmrow select.ambient-select.v2-harmmo,

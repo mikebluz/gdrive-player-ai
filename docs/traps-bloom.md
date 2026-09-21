@@ -774,6 +774,21 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **A HARMONY VOICE'S FOUR CONTROLS ARE CAPTIONED INDIVIDUALLY (2026-09-20, user: "these harmony
+  controls need better informational labels and tooltips").** They were four unlabelled boxes with a
+  positional key underneath (`motion · series · every · canon`), so reading the row meant counting
+  along it. The caption goes ABOVE each control in its own flex cell (`.v2-harmcell`, reusing
+  `.v2-mini-lab`'s type but NOT `.v2-mini`, whose stepper sizing would leave each stepper short of
+  its cell) — that costs the grid no width, which is the only reason the row can be labelled at all:
+  `.ambient-ctrl`'s 84px label column is spent on the interval name, and widening it is what crushed
+  these four into a column once before.
+  - **The sentence under the row was a FROZEN READOUT.** The four controls are plain `.v2-f` fields
+    and that path does NOT rebuild the card (deliberately — a rebuild destroys the control under the
+    finger), so the summary kept whatever was true at build time: set Motion to Contrary and it still
+    read "oblique". Repainted in `genSync` now, from ONE definition (`harmSaysOf` / `harmSumOf`) used
+    at build time too — and swept with `querySelectorAll`, because ⚙ Deep builds harmony TWICE.
+  - **`harmRowHtml(...).replace('data-v2when="…"', …)` retargets the CHIPS row, not the voice rows** —
+    a string pattern replaces the FIRST match, and the chips row is returned first.
 - **PITCH · HARMONY · VOICING ARE ⚙ DEEP'S, AND ONLY DEEP'S (2026-09-20, user: "it seems like these
   3 param groups (Pitch/Harmony/Voicing) belong in Deep").** They already did — every field those ✦
   Generate tabs carried had a row in ⚙ Deep — so the sheet's tabs were a SECOND door and were

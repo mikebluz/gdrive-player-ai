@@ -7090,20 +7090,77 @@
   }
   const HARM_MOTIONS = [['', 'Parallel'], ['contrary', 'Contrary'], ['oblique', 'Oblique'], ['free', 'Free']];
   const HARM_SERIES_OPTS = [['', 'Fixed'], ['wave', 'Wave (+1 · 0 · \u22121)'], ['rise', 'Rise (+1 +2 +1)'], ['fall', 'Fall (\u22121 \u22122 \u22121)'], ['alt', 'Alternate (+2)'], ['wide', 'Wide (+3)']];
+  // ── WHAT A HARMONY VOICE IS DOING, IN WORDS ─────────────────────────────
+  // user: "these harmony controls need better informational labels and
+  // tooltips". ONE definition of each sentence, used BOTH at build time and by
+  // the repaint in `genSync` — two copies is how a readout starts disagreeing
+  // with the knobs it describes, which is the failure this file keeps naming.
+  const HARM_NAME = (d) => (HARM_OPTS.find((o) => o[0] === (d | 0)) || [d, String(d)])[1];
+  const HARM_MOTION_SAY = {
+    '': 'moving with the line',
+    contrary: 'moving against the line',
+    oblique: 'holding while the line moves',
+    free: 'taking the nearest tone on its own side',
+  };
+  const HARM_SERIES_SAY = {
+    wave: 'its interval waving wider and back',
+    rise: 'its interval widening',
+    fall: 'its interval narrowing',
+    alt: 'its interval alternating',
+    wide: 'its interval jumping wide',
+  };
+  const harmOrdinal = (n) => (n === 2) ? '2nd' : (n === 3) ? '3rd' : (n + 'th');
+  function harmSaysOf(h) {
+    if (!h || !(h.deg | 0)) return '';
+    const deg = h.deg | 0;
+    const mo = (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') ? h.motion : '';
+    const lag = Math.max(0, Math.min(8, h.lag | 0));
+    const every = Math.max(1, Math.min(4, (h.every | 0) || 1));
+    const bits = ['A ' + String(HARM_NAME(deg)).replace('−', '') +
+                  (deg < 0 ? ' below the line' : ' above the line'),
+                  HARM_MOTION_SAY[mo]];
+    if (HARM_SERIES_SAY[h.series]) bits.push(HARM_SERIES_SAY[h.series]);
+    if (every > 1) bits.push('sounding on every ' + harmOrdinal(every) + ' note');
+    if (lag > 0) bits.push(lag + ' note' + (lag === 1 ? '' : 's') + ' behind it, like a round');
+    return bits.join(', ') + '.';
+  }
+  // …and the line under the chips: how many voices, and what each one does.
+  // "IN KEY" MEANT NOTHING ON ITS OWN — the intervals are SOURCE TONES, so a
+  // 3rd is major or minor as the chord demands. That is the whole point of the
+  // row and it was two words long.
+  function harmSumOf(list) {
+    const on = (Array.isArray(list) ? list : []).filter((h) => h && (h.deg | 0));
+    if (!on.length) return 'Add a voice a stated interval from the line — it follows the line note for note.';
+    const said = on.filter((h) => h.motion || (h.lag | 0) || h.series || (h.every | 0) > 1)
+      .map((h) => HARM_NAME(h.deg | 0) + (h.motion ? ' ' + h.motion : '') +
+        (h.series ? ' ' + h.series : '') + ((h.lag | 0) ? ' canon +' + (h.lag | 0) : '') +
+        ((h.every | 0) > 1 ? ' every ' + (h.every | 0) : ''));
+    return on.length + ' harmony part' + (on.length === 1 ? '' : 's') +
+      ', counted in source tones — so a 3rd is major or minor as each chord demands' +
+      (said.length ? ' · ' + said.join(', ') : '');
+  }
   function harmRowHtml(L, t) {
     const list = Array.isArray(t.harm) ? t.harm : [];
     const on = new Set(list.map((h) => h && (h.deg | 0)).filter(Boolean));
-    const name = (d) => (HARM_OPTS.find((o) => o[0] === d) || [d, String(d)])[1];
-    // WHAT THE VOICES DO, in the line under the chips — the words the rows use
-    const said = list.filter((h) => h && (h.motion || (h.lag | 0) || h.series || (h.every | 0) > 1)).map((h) =>
-      name(h.deg | 0) + (h.motion ? ' ' + h.motion : '') + (h.series ? ' ' + h.series : '') +
-      ((h.lag | 0) ? ' canon +' + (h.lag | 0) : '') + ((h.every | 0) > 1 ? ' every ' + (h.every | 0) : ''));
     // ── A ROW PER LIT VOICE (2026-09-19): how it moves, and how far behind ──
     // Rows share the chips' `data-v2tab`, so they are the same Harmony tab.
     // Each control is a `.v2-f` over its entry BY POSITION in `harm` — the
     // list is stored in the order it is drawn, so the index is stable; the
     // stepper is the document-delegated one (add nothing), the select commits
     // like any field. Absent = parallel, now — the voice as it always was.
+    //
+    // EVERY CONTROL CARRIES ITS OWN CAPTION (2026-09-20). The four words used
+    // to sit in ONE hint line beneath the row, left to right, so reading the
+    // row meant counting along it to find which word went with which control
+    // — four unlabelled boxes reading "Oblique / Rise (+1 +2 +1) / 2 / 0".
+    // The caption rides ABOVE each control inside its own flex cell, so it
+    // costs the grid no width: the original reason for the shared line was
+    // that a wide label column crushed the controls into a column, and
+    // `.v2-harmopt > .ambient-hint { grid-column: 1/-1 }` had already fixed
+    // that from the other side. The freed line now says what the voice DOES.
+    const cell = (lab, tip, inner) =>
+      '<span class="v2-harmcell" title="' + esc(tip) + '">' +
+        '<span class="v2-mini-lab">' + esc(lab) + '</span>' + inner + '</span>';
     const rows = list.map((h, j) => {
       if (!h || !(h.deg | 0)) return '';
       const mo = (h.motion === 'contrary' || h.motion === 'oblique' || h.motion === 'free') ? h.motion : '';
@@ -7111,43 +7168,54 @@
       const ser = HARM_SERIES_OPTS.some((o) => o[0] === h.series) ? h.series : '';
       const every = Math.max(1, clamp(h.every | 0, 0, 4));
       return '<div data-v2tab="Harmony" class="ambient-ctrl v2-harmopt" data-v2when="kind:live;voice:synth">' +
-        '<label>' + esc(name(h.deg | 0)) + '</label>' +
+        '<label>' + esc(HARM_NAME(h.deg | 0)) + '</label>' +
         '<span class="ambient-seg-row v2-harmrow">' +
-          '<select class="ambient-select v2-f v2-harmmo" data-f="part.pitch.harm.' + j + '.motion" ' +
-            'title="How this voice moves against the line \u2014 parallel: with it · contrary: against it · oblique: holds while the line moves · free: the nearest tone on its own side, never a unison">' +
-            HARM_MOTIONS.map((o) => '<option value="' + o[0] + '"' + (mo === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-          '</select>' +
-          '<select class="ambient-select v2-f v2-harmser" data-f="part.pitch.harm.' + j + '.series" ' +
-            'title="A series of intervals around this one, one per note of the line \u2014 the harmony itself moves">' +
-            HARM_SERIES_OPTS.map((o) => '<option value="' + o[0] + '"' + (ser === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-          '</select>' +
-          '<span class="ambient-stepper v2-harmevwrap" title="This voice sounds on every k-th note of the line only \u2014 its own rhythm">' +
-            '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="More often">\u2212</button>' +
-            '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.every" ' +
-              'min="1" max="4" step="1" value="' + every + '" aria-label="Every k-th note">' +
-            '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Less often">+</button>' +
-          '</span>' +
-          '<span class="ambient-stepper v2-harmlagwrap" title="Canon \u2014 this voice plays the line this many notes later, at its interval">' +
-            '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Sooner">\u2212</button>' +
-            '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.lag" ' +
-              'min="0" max="8" step="1" value="' + lag + '" aria-label="Lag, notes behind the line">' +
-            '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Later">+</button>' +
-          '</span>' +
+          cell('Motion', 'How this voice moves against the line. Parallel — with it, the same distance away. ' +
+               'Contrary — the opposite way. Oblique — it holds while the line moves. ' +
+               'Free — the nearest tone on its own side, never landing on the line’s own note.',
+            '<select class="ambient-select v2-f v2-harmmo" data-f="part.pitch.harm.' + j + '.motion">' +
+              HARM_MOTIONS.map((o) => '<option value="' + o[0] + '"' + (mo === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+            '</select>') +
+          cell('Interval', 'Whether the gap to the line STAYS this interval or walks. Fixed holds it. ' +
+               'The others step the interval a source tone at a time, one step per note of the line, ' +
+               'and repeat — so the harmony moves as well as the melody.',
+            '<select class="ambient-select v2-f v2-harmser" data-f="part.pitch.harm.' + j + '.series">' +
+              HARM_SERIES_OPTS.map((o) => '<option value="' + o[0] + '"' + (ser === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+            '</select>') +
+          cell('Every', 'How often this voice sounds: 1 is every note of the line, 2 is every other one, ' +
+               'and so on — a rhythm of its own against the melody.',
+            '<span class="ambient-stepper v2-harmevwrap">' +
+              '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="More often">−</button>' +
+              '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.every" ' +
+                'min="1" max="4" step="1" value="' + every + '" aria-label="Sounds on every k-th note">' +
+              '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Less often">+</button>' +
+            '</span>') +
+          cell('Canon', 'A round: this voice plays the line this many notes LATE, at its interval. ' +
+               '0 is no canon — it sounds together with the line.',
+            '<span class="ambient-stepper v2-harmlagwrap">' +
+              '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Sooner">−</button>' +
+              '<input type="number" inputmode="numeric" class="ambient-step-inp v2-f" data-f="part.pitch.harm.' + j + '.lag" ' +
+                'min="0" max="8" step="1" value="' + lag + '" aria-label="Notes behind the line">' +
+              '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Later">+</button>' +
+            '</span>') +
         '</span>' +
-        // FOUR WORDS FOR FOUR CONTROLS, left to right — each carries its own
-        // title with the full sentence, so one shared line spelling them all
-        // out again was what pushed this row's `auto` column wide enough to
-        // crush the controls into a column ("these controls are unwieldy").
-        '<span class="ambient-hint">motion \u00b7 series \u00b7 every \u00b7 canon</span></div>';
+        // WHAT THIS VOICE NOW DOES, in a sentence. A READOUT, so it carries a
+        // class and an index and `genSync` repaints it: the four controls
+        // commit through the plain `.v2-f` path, which does NOT rebuild the
+        // card, so a sentence written only at build time would keep saying
+        // whatever was true when the card was drawn.
+        '<span class="ambient-hint v2-harmsays" data-hj="' + j + '">' +
+          esc(harmSaysOf(h)) + '</span></div>';
     }).join('');
     return '<div data-v2tab="Harmony" class="ambient-ctrl" data-v2when="kind:live;voice:synth">' +
-      '<label>Harmony voices</label><span class="ambient-seg-row">' +
+      '<label title="Extra voices that shadow the line at a stated interval, in the key — not a chord under it.">Harmony voices</label>' +
+      '<span class="ambient-seg-row">' +
       HARM_OPTS.map(([d, lab]) =>
         '<button type="button" class="ambient-seg v2-harm' + (on.has(d) ? ' on' : '') +
-        '" data-harm="' + d + '">' + lab + '</button>').join('') +
-      '</span><span class="ambient-hint">' +
-      (on.size ? on.size + ' harmony part' + (on.size === 1 ? '' : 's') + ' \u2014 in key' + (said.length ? ' \u00b7 ' + said.join(', ') : '')
-               : 'add a voice a stated interval from the line') +
+        '" data-harm="' + d + '" title="' + esc('Add or remove a voice a ' +
+          String(lab).replace('−', '') + ' ' + (d < 0 ? 'below' : 'above') +
+          ' the line. Counted in SOURCE TONES, so it stays in the key.') + '">' + lab + '</button>').join('') +
+      '</span><span class="ambient-hint v2-harmsum">' + esc(harmSumOf(list)) +
       '</span></div>' + rows;
   }
   // ── THE PART, DRAWN ─────────────────────────────────────────────────────
@@ -9941,6 +10009,29 @@
   // the shape in force, so the row still answers "what is this" without being
   // opened — consolidating four buttons into one must not cost that.
   function genSync(card, L) {
+    // ── THE HARMONY SENTENCES ARE READOUTS ────────────────────────────────
+    // and nothing was rebuilding them. The four per-voice controls commit
+    // through the plain `.v2-f` path, which does not re-render the card
+    // (deliberately — a rebuild would destroy the control under the finger),
+    // so every sentence kept whatever was true when the card was drawn:
+    // change Motion to Contrary and the summary still read "oblique". A
+    // computed face with no second writer is the trap this file names, and
+    // this one had been wearing it since the summary was added.
+    // HARMONY LIVES TWICE IN ⚙ DEEP (complementary gates, exactly one shown),
+    // so both copies are swept — `querySelectorAll`, never `querySelector`.
+    try {
+      const hl = (L && L.part && Array.isArray(L.part.pitch && L.part.pitch.harm))
+        ? L.part.pitch.harm : [];
+      card.querySelectorAll('.v2-harmsum').forEach((el) => {
+        const s = harmSumOf(hl);
+        if (el.textContent !== s) el.textContent = s;
+      });
+      card.querySelectorAll('.v2-harmsays').forEach((el) => {
+        const j = el.getAttribute('data-hj') | 0;
+        const s = hl[j] ? harmSaysOf(hl[j]) : '';
+        if (el.textContent !== s) el.textContent = s;
+      });
+    } catch (e) {}
     const pv = matProv(L);
     const M = { sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate',
                 roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',

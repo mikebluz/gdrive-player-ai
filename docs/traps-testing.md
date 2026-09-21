@@ -96,6 +96,13 @@
   a layer captured once at the top and used after an edit is stale — and a stale layer makes two
   obviously different things measure as identical. Re-read it (`const Lat = () => cfg.layers[0]`)
   at every use. Measured 2026-09-20: two Characters an octave apart reported as the same notes.
+- **⚙ DEEP LIVES IN THE CARD BODY — EXPAND THE CARD BEFORE OPENING IT.** Pressing `.v2-genbtn` on a
+  collapsed card sets `v2-genopen` and lays the whole panel out at 0×0, so every row inside measures
+  as hidden and reads as "the control is missing". Then press the `.v2-fttab` you need: Deep opens on
+  Rhythm and CSS shows one tab at a time.
+- **A CONTROL INSIDE ⚙ DEEP WRITES THE STAGED COPY, NOT THE LAYER.** Reading the change back from
+  `getCfg().layers[…]` shows the OLD value and reads as "the knob did not write" — read
+  `V2.stagedOf(id)`, and assert the layer is untouched until ✓ Done (that is the panel's contract).
 - **THE SHEET'S TAB STRIP IS NOT INSIDE `.v2-pop-wrap`.** Scoping the query to the wrap returns an
   empty NodeList, which reads exactly like "the tabs were deleted" — scope tab queries to the CARD.
   More generally: an empty NodeList is never evidence a control is gone until the scope is checked.

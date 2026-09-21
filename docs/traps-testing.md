@@ -96,6 +96,14 @@
   a layer captured once at the top and used after an edit is stale — and a stale layer makes two
   obviously different things measure as identical. Re-read it (`const Lat = () => cfg.layers[0]`)
   at every use. Measured 2026-09-20: two Characters an octave apart reported as the same notes.
+- **THE SHEET'S TAB STRIP IS NOT INSIDE `.v2-pop-wrap`.** Scoping the query to the wrap returns an
+  empty NodeList, which reads exactly like "the tabs were deleted" — scope tab queries to the CARD.
+  More generally: an empty NodeList is never evidence a control is gone until the scope is checked.
+  Two other ways this same check lied, both worth knowing: **the sheet opens on the EXPAND
+  TRANSITION** (an already-expanded card has no `.v2-pop-wrap`, and the header press is a toggle, so
+  tap until the wrap exists); and **`popOpen` MOVES the group body's rows into the sheet**, so a card
+  re-rendered with a sheet open has none left to offer — read a tab strip BEFORE any loop that
+  re-renders, not after.
 - **THE v2 CARD'S CONTROLS ARE DELEGATED ON `input`, NOT `change`.** A probe that dispatches only
   `change` on a `<select>` reaches nothing and reads as "the handler was never wired" — the writer is
   never called and the config never moves. A real pick fires `input` THEN `change`; dispatch both.

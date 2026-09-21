@@ -774,6 +774,20 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **PITCH · HARMONY · VOICING ARE ⚙ DEEP'S, AND ONLY DEEP'S (2026-09-20, user: "it seems like these
+  3 param groups (Pitch/Harmony/Voicing) belong in Deep").** They already did — every field those ✦
+  Generate tabs carried had a row in ⚙ Deep — so the sheet's tabs were a SECOND door and were
+  deleted. **Before deleting a duplicate surface, measure per SHAPE which side offers what:** the
+  gates had drifted apart, and the sheet uniquely offered Proximity on every live shape although
+  only the `chance` branch of `pitchesBase` consumes it (measured: 0 vs 100 play identically on
+  Groundwork, Arpeggio, Sustain and Mixed). A duplicate with a wider gate is not a richer door, it
+  is a dead control. `test/probe-deepdup.js` is that measurement, kept as the guard that no field
+  regains two homes.
+  - **A deleted row takes its repaints with it.** `paint()` skips `.v2-genwrap` by design, so once
+    the sheet copy went, `paint('part.pitch.kind', …)` had no readout left and `matHint` was dead —
+    a writer with no reader, the inverse of the frozen-readout trap. Its sentence already had a
+    better home in Deep's `.v2-recipesays`. The `max` repaint beside it has NO genwrap skip and
+    still keeps Deep's Note ceiling honest — check each repaint separately.
 - **A CHARACTER OVER A STRETCH (2026-09-20, user: "assigning subsets of bars (including fractional)
   to different characters, so having a content move through characters within a content").** No new
   path: a Character is resolved into a `part.ruleb` overlay and `composite` already plays one, so

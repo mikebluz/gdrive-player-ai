@@ -11910,19 +11910,13 @@
   // material in force, this pitch IS the material's, or the recipe has been
   // departed from. REPAINTED from `applyGateCard` — it moves with the RHYTHM
   // kind and the material stamp, and neither rebuilds this row.
-  function matHint(L) {
-    const p = (L && L.part) || {};
-    const rec = MAT_RECIPE[p.mat];
-    const pk = (p.pitch || {}).kind || '';
-    if (!rec) return 'how the notes are chosen \u2014 with no material in force, this and Rhythm are the whole recipe';
-    const rk = ((p.rhythm || {}).kind === 'drawn') ? 'euclid' : ((p.rhythm || {}).kind || 'pulse');
-    if (rk !== rec[0] || pk !== rec[1]) {
-      return '\u26a0 no longer \u201c' + MAT_NAME[p.mat] + '\u201d \u2014 that material is ' +
-             rec[0] + ' rhythm \u00d7 ' + rec[1] + ' pitch';
-    }
-    return 'the pitch half of \u201c' + MAT_NAME[p.mat] + '\u201d \u2014 ' +
-           rec[0] + ' rhythm \u00d7 ' + rec[1] + ' pitch';
-  }
+  // (`matHint` lived here until 2026-09-20. It was the sheet Pitch row's
+  // sentence \u2014 "the pitch half of X", or a drift warning \u2014 and that row is
+  // gone: the Pitch kind's one home is \u2699 Deep's \u26a0 Advanced: recipe, where
+  // `.v2-recipesays` already says the same thing and more, naming the
+  // material, warning on drift, offering \u21ba Back and opening itself when the
+  // recipe has drifted. Two sentences for one fact is the duplication this
+  // pass removed, so the thinner one went with its row.)
   const PITCH_OPTS = [['drawn', 'Drawn — a note per step'], ['chord', 'Chord — the harmony'], ['stack', 'Stack — from a note'],
                       ['fixed', 'One note — the same degree every time'], ['series', 'Series — sweep the chord'],
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
@@ -12569,8 +12563,16 @@
   const SEC_TABS = {
     // Transpose and Pitch quantize ride with Generate: they are what a STATIC
     // part does with the notes it has, which is part of what it is made of.
-    Generate: ['Method', 'Key', 'Notes', 'Pitch', 'Harmony', 'Voicing',
-               'Transpose', 'Pitch quantize'],
+    // PITCH · HARMONY · VOICING ARE NOT HERE (2026-09-20, user: "it seems like
+    // these 3 param groups (Pitch/Harmony/Voicing) belong in Deep"). They
+    // already did: every field those three tabs carried has a row in ⚙ Deep,
+    // so they were a second door onto one set of knobs, and the sheet's copy
+    // was the worse one — Deep gates each row to the pitch kinds that READ it,
+    // while the sheet showed Proximity on every shape although only one branch
+    // of `pitchesBase` consumes it (measured: 0 and 100 play identically on
+    // Groundwork, Arpeggio, Sustain and Mixed). What is left here is what a
+    // part is made OF and what a RECORDED one does with stored pitches.
+    Generate: ['Method', 'Key', 'Notes', 'Transpose', 'Pitch quantize'],
     Bank: ['Bank'],
   };
   const secGrp = (sec) => SEC_GRP[sec] || sec;
@@ -13761,87 +13763,29 @@
             ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
                 '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
             : '') +
-          // ── EVERYTHING THAT DEPENDS ON THE PITCH CHOICE, UNDER IT ────────
-          // user: "move any params that are dependent on a Pitch selection into
-          // the Pitch tab". Each of these was an untabbed row, so each became a
-          // CHIP OF ITS OWN in the strip — and since they are gated per kind,
-          // the strip changed shape every time Pitch changed: a row of siblings
-          // that were really its children. They are its tab now, so the answer
-          // to "what else does this choice ask me" is in one place.
-          // NOT MOVED: Harmony and Length are gated `kind:live` only (they read
-          // every pitch kind), and ▸ Voicing is already one cluster rather than
-          // loose chips — folding its nine rows in here would trade a wall of
-          // chips for a wall of rows.
-          tb('Pitch',
-          sel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS, 'kind:live;voice:synth',
-              matHint(L)) +
-          st(L, 'part.pitch.voices', 'Voices', t.voices, 1, 9, 'notes per onset', 'kind:live;voice:synth;pitch:chord,stack,mixed') +
-          // THE BALANCE for Mixed — how often an onset is a chord rather than
-          // a single note. Its own tab so it is findable, gated to the one
-          // kind that reads it.
-          sl(L, 'part.pitch.mix', 'Mix', (Number.isFinite(t.mix) ? t.mix : 50), 0, 100,
-             'all single notes \u2192 all chords', 'kind:live;voice:synth;pitch:mixed') +
-          // LINES, not "Voices" — divergent behaviour, divergent label. Voices
-          // are notes of ONE chord struck together; lines are separate melodies
-          // that wander independently, which is the only way a Roll plays more
-          // than one note at a time under its own steam (Harmony duplicates the
-          // one line at a fixed interval — parallel, never independent). Its own
-          // FIELD too: `pitch.voices` is backfilled to 3 on every pitch object,
-          // so reading that here would thicken every rolled part ever saved.
-          st(L, 'part.pitch.lines', 'Lines', (t.lines | 0) || 1, 1, 6,
-             'independent melodies at once — 1 is a single line',
-             'kind:live;voice:synth;pitch:walk,chance') +
-
-          st(L, 'part.pitch.degree', 'Note', t.degree, 1, noteMax(L), noteHint(L),
-             'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
-          // (Roam, Stutter, Pitch vary and Scatter moved to ⚙ Deep, 2026-09-16:
-          // they are seeded on the TAKE — generation, re-rolled by 🎲 New take.)
-          sel(L, 'part.pitch.dir', 'Direction', t.dir || 'up',
-              [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'kind:live;voice:synth;pitch:series') +
-          st(L, 'part.pitch.span', 'Span', t.span, 1, 24, 'how far it wanders', 'kind:live;voice:synth;pitch:walk') +
-          sel(L, 'part.pitch.home', 'Home', t.home || 'floor',
-              [['floor', 'Floor — walk up from Register'], ['center', 'Centre — Register in the middle'],
-               ['ceiling', 'Ceiling — walk down from Register']], 'kind:live;voice:synth;pitch:walk') +
-          sl(L, 'part.pitch.contour', 'Contour', num(t.contour, 0), -100, 100, 'fall → rise',
-             'kind:live;voice:synth;pitch:walk')
-          ) +
-          // HARMONY PARTS — chips, because it is a SET, not a choice: a line can
-          // carry a 3rd and a 6th at once, which is what "multiple-part
-          // harmonies" means. Intervals are SOURCE TONES, so they stay in the
-          // key (verified: thirds across C major come out 4,3,3,4,4,3,3
-          // semitones — major on I/IV/V, minor on the rest). Applies to every
-          // live pitch kind, so it is gated on kind:live only.
-          harmRowHtml(L, t) +
-
-          tb('Pitch',
-            st(L, 'part.pitch.octaves', 'Octaves', num(t.octaves, 2), 1, 4, 'how far the sweep climbs',
-               'kind:live;voice:synth;pitch:series')) +
-          // VOICING IS A SUB-QUESTION OF PITCH — how the chosen notes are
-          // stacked and spread. And Proximity moved here from Motion: it
-          // pulls each pick toward the previous one, which is a PITCH rule.
-          tb('Voicing',
-            sl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100, 'how close notes stay', 'kind:live') +
-          sel(L, 'part.pitch.chordMode', 'Voicing', t.chordMode || '',
-              [['', 'Simple — stack the tones'], ['chaos', 'Chaos'], ['chords', 'Chords'],
-               ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.spread', 'Spread', num(t.spread, 0), 0, 3, '± octaves',
-             'kind:live;voice:synth;pitch:chord') +
-          sl(L, 'part.pitch.variety', 'Variety', num(t.variety, 0), 0, 100, 'plain → colourful',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.subdiv', 'Subdivide', num(t.subdiv, 1), 1, 16, 'voicings per chord',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.phraseLen', 'Phrase', num(t.phraseLen, 4), 1, 16, 'chords before it repeats',
-             'kind:live;voice:synth;pitch:chord') +
-          st(L, 'part.pitch.repeats', 'Repeats', num(t.repeats, 4), 1, 16, 'times before a fresh phrase',
-             'kind:live;voice:synth;pitch:chord') +
-          // (Feel moved to ✺ Playing — Stochastic re-picks per chord OCCURRENCE.)
-          st(L, 'part.pitch.voiceCap', 'Voice cap', num(t.voiceCap, 0), 0, 12, 'ceiling incl. colour tones (0 = Voices)',
-             'kind:live;voice:synth;pitch:chord') +
-          '<div class="ambient-ctrl v2-saltrow" data-v2when="kind:live;voice:synth;pitch:chord"><label>Salt re-voice</label>' +
-            '<button type="button" class="ambient-seg v2-salttoggle' + (L.followSalt ? ' on' : '') + '">' +
-              (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
-            '<span class="ambient-hint v2-salthint"></span></div>' +
-          saltRows(L, 'kind:live;voice:synth', false)) +
+          // ── PITCH · HARMONY · VOICING LIVE IN ⚙ DEEP (2026-09-20) ───────
+          // user: "it seems like these 3 param groups (Pitch/Harmony/Voicing)
+          // belong in Deep". Three tabs stood here — and every field in them
+          // already had a row in ⚙ Deep, so this was a SECOND door onto one
+          // set of knobs rather than a home of its own. Measured before the
+          // cut, per shape: every field the sheet offered, Deep offered too.
+          //
+          // Deep's copy is the better one, which is why this is the side that
+          // went. It gates each row to the pitch kinds that READ it, while
+          // these were gated by hand and had drifted: Proximity showed on
+          // EVERY live shape although only the `chance` branch of
+          // `pitchesBase` consumes it — measured, 0 and 100 play identically
+          // on Groundwork, Arpeggio, Sustain and Mixed. Deep also carries
+          // Harmony TWICE with complementary gates, the Pitch kind inside
+          // ⚠ Advanced: recipe (with the drift warning and ↺ Back that this
+          // sheet's `matHint` was a thinner version of), and its own Salt
+          // toggle under a distinct class — the duplicate-class workaround
+          // that block's comment describes exists BECAUSE of this copy.
+          //
+          // What stays on this sheet is what a part is made OF (Method, Key,
+          // Notes) and what a RECORDED one does with the pitches it already
+          // has (Transpose, Pitch quantize) — a live part re-resolves those
+          // every cycle, so they are a different question from the rules.
           st(L, 'part.transpose', 'Transpose', p.transpose || 0, -24, 24, 'semitones', 'kind:recorded') +
           // What a RECORDED part does when the chords move under it. Inert on a
           // live part, which re-resolves its pitches every cycle by definition —
@@ -14971,8 +14915,12 @@
           if (el.getAttribute('max') !== nmax) el.setAttribute('max', nmax);
         });
       } catch (e) {}
-      paint('part.pitch.kind', matHint(L));
-      paint('part.pitch.degree', noteHint(L));
+      // PITCH AND NOTE ARE ⚙ DEEP'S ROWS NOW, and `paint` deliberately does
+      // not write into a staged panel (see its own note) — so repainting them
+      // here would be a writer with no readout, which this file calls out as
+      // a bug in the other direction. Deep's build-time text stands, and a
+      // rebuild refreshes it. The `max` repaint above is NOT part of this: it
+      // has no genwrap skip and still keeps Deep's Note ceiling honest.
       paint('part.shape.holdSteps', holdHint(L));
       paint('part.shape.lenRatio', lenHint(L));
       if (L.lenSync) paint('lenSync.passes', lockHint(L));

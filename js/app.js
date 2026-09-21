@@ -487,6 +487,12 @@ document.addEventListener("DOMContentLoaded", () => {
       URL.revokeObjectURL(_artworkBlobUrl);
       _artworkBlobUrl = null;
     }
+    // …AND THE LOCK SCREEN GETS THE SAME SLEEVE. Routed through the one place
+    // artwork is already set rather than beside each of the four callers, so a
+    // fifth caller cannot arrive with a cover for the page and none for the
+    // phone. The player re-encodes it — a blob: URL is fine for the <img> and
+    // is not reliably fetched by iOS's Now Playing (see `setArtwork`).
+    try { if (typeof player !== 'undefined' && player && player.setArtwork) player.setArtwork(blobUrl); } catch (e) {}
     if (blobUrl && albumArtImg) {
       _artworkBlobUrl = blobUrl;
       albumArtImg.src = blobUrl;

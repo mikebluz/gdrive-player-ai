@@ -110,8 +110,138 @@ class MusicPlayer {
 
         this.resetProgress();
         this.enableControls();
+        // THE LOCK SCREEN IS THE SAME TRACK, so it is written from the same two
+        // strings the card just got rather than re-derived from `track` — two
+        // computations of one title is how a phone ends up disagreeing with the
+        // page it is playing from.
+        this.mediaSessionMeta();
 
         document.dispatchEvent(new CustomEvent('trackLoaded', { detail: { track } }));
+    }
+
+    // ── THE LOCK SCREEN / CONTROL CENTRE (2026-09-21) ──────────────────────
+    // user: "Properly wire Player up to phone lock screen controls" — the card
+    // showed "Player — Mike Luz" (the PAGE TITLE) over blank artwork, with
+    // →10s / 10s→ buttons instead of ⏮ / ⏭. All three are the same absence:
+    // nothing in the Player ever touched `navigator.mediaSession`, so iOS fell
+    // back to `document.title` for the name and, with no `previoustrack` /
+    // `nexttrack` handler registered, offered seek buttons because seeking is
+    // all an unaided <audio> element can promise.
+    // THE HANDLERS ARE THE UI. iOS decides which transport buttons to draw from
+    // which actions are REGISTERED, so this is not decoration — registering
+    // prev/next is what replaces the ±10s pair, and NOT registering
+    // seekbackward/seekforward is what keeps them replaced.
+    // ONE CARD, ONE OWNER. `bloops.html` loads this file AND Bloom's native
+    // audio, which drives the same Now Playing card for the generative mix —
+    // two writers, and the last one to speak would win whether or not it is
+    // the thing making the sound. So the Player CLAIMS the card when it starts
+    // playing (`onPlay`, which is the moment it becomes the audible one) and
+    // writes nothing while somebody else holds it. Bloom claims it the same
+    // way when the native mix arms.
+    mediaSessionClaim() {
+        try { window.__mediaSessionOwner = 'player'; } catch (e) {}
+        this.mediaSessionInit();
+    }
+
+    mediaSessionOwns() {
+        try { return !window.__mediaSessionOwner || window.__mediaSessionOwner === 'player'; }
+        catch (e) { return true; }
+    }
+
+    mediaSessionInit() {
+        const ms = ('mediaSession' in navigator) ? navigator.mediaSession : null;
+        if (!ms || !ms.setActionHandler) return;
+        const set = (name, fn) => { try { ms.setActionHandler(name, fn); } catch (e) {} };
+        set('play', () => { this.play(); });
+        set('pause', () => { this.pause(); });
+        set('previoustrack', () => { this.previousTrack(); });
+        set('nexttrack', () => { this.nextTrack(); });
+        // The scrubber. `seekto` is what makes the position bar draggable rather
+        // than a readout; `fastSeek` is the cheap path when the browser offers it.
+        set('seekto', (d) => {
+            if (!d || !isFinite(d.seekTime)) return;
+            const dur = this.audio.duration;
+            const t = Math.max(0, isFinite(dur) && dur > 0 ? Math.min(d.seekTime, dur) : d.seekTime);
+            if (d.fastSeek && this.audio.fastSeek) { try { this.audio.fastSeek(t); return; } catch (e) {} }
+            this.audio.currentTime = t;
+            this.mediaSessionPos();
+        });
+        set('stop', () => { this.stop(); });
+    }
+
+    // WHAT THE PHONE SHOWS. Title and artist are read back off the card so the
+    // two can never drift; the album is the playlist heading, which is the one
+    // place that name is kept.
+    mediaSessionMeta() {
+        const ms = ('mediaSession' in navigator) ? navigator.mediaSession : null;
+        if (!ms || typeof MediaMetadata === 'undefined') return;
+        if (!this.mediaSessionOwns()) return;
+        if (!this.currentTrack) { try { ms.metadata = null; } catch (e) {} return; }
+        let album = '';
+        try { album = (document.getElementById('playlist-heading-name') || {}).textContent || ''; } catch (e) {}
+        const art = [];
+        // A data: URL, NOT the blob: one the <img> uses — see `setArtwork`.
+        if (this._artData) art.push({ src: this._artData, sizes: '512x512', type: 'image/jpeg' });
+        try {
+            ms.metadata = new MediaMetadata({
+                title: (this.trackTitle && this.trackTitle.textContent) || this.currentTrack.name || 'Unknown Track',
+                artist: (this.trackArtist && this.trackArtist.textContent) || 'Unknown Artist',
+                album: album.trim(),
+                artwork: art,
+            });
+        } catch (e) {}
+    }
+
+    // THE ARTWORK HAS TO BE A data: URL. The card's <img> is fed a blob: URL and
+    // is happy with it; iOS's Now Playing artwork is not reliably fetched from
+    // one, and when it fails it fails SILENTLY — a blank square, which is
+    // exactly what was reported. Redrawn to a 512 square first, so what crosses
+    // into the string is a thumbnail rather than a multi-megabyte photo.
+    setArtwork(blobUrl) {
+        this._artData = null;
+        if (!blobUrl) { this.mediaSessionMeta(); return; }
+        try {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const S = 512;
+                    const cv = document.createElement('canvas');
+                    cv.width = S; cv.height = S;
+                    const g = cv.getContext('2d');
+                    // COVER, not stretch — a squashed sleeve is worse than a cropped one
+                    const k = Math.max(S / (img.width || S), S / (img.height || S));
+                    const w = (img.width || S) * k, h = (img.height || S) * k;
+                    g.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+                    this._artData = cv.toDataURL('image/jpeg', 0.85);
+                } catch (e) { this._artData = null; }
+                this.mediaSessionMeta();
+            };
+            img.onerror = () => { this._artData = null; this.mediaSessionMeta(); };
+            img.src = blobUrl;
+        } catch (e) { this.mediaSessionMeta(); }
+    }
+
+    // THE SCRUBBER'S NUMBERS. `setPositionState` THROWS on a position past the
+    // duration or on a non-finite duration (a stream still loading), and an
+    // exception here would take the caller — `timeupdate` — with it, so both
+    // are checked rather than caught.
+    mediaSessionPos() {
+        const ms = ('mediaSession' in navigator) ? navigator.mediaSession : null;
+        if (!ms || !ms.setPositionState) return;
+        if (!this.mediaSessionOwns()) return;
+        const dur = this.audio.duration;
+        if (!isFinite(dur) || dur <= 0) return;
+        const pos = Math.min(Math.max(0, this.audio.currentTime || 0), dur);
+        try {
+            ms.setPositionState({ duration: dur, playbackRate: this.audio.playbackRate || 1, position: pos });
+        } catch (e) {}
+    }
+
+    mediaSessionState(state) {
+        const ms = ('mediaSession' in navigator) ? navigator.mediaSession : null;
+        if (!ms) return;
+        if (!this.mediaSessionOwns()) return;
+        try { ms.playbackState = state; } catch (e) {}
     }
 
     extractArtistFromName(trackName) {
@@ -612,6 +742,8 @@ class MusicPlayer {
                 detail: { trackId: this.currentTrack.id, durationMs: Math.round(dur * 1000) }
             }));
         }
+        // the lock screen's bar cannot be drawn until the length is known
+        this.mediaSessionPos();
     }
 
     onTimeUpdate() {
@@ -620,22 +752,42 @@ class MusicPlayer {
         this.progressFill.style.width = `${percentage}%`;
         this.progressSlider.value = percentage;
         this.currentTimeEl.textContent = this.formatTime(this.audio.currentTime);
+        // ONCE A SECOND, not on every `timeupdate` (~4/s): the phone interpolates
+        // between reports from the playback rate, so more of them buys nothing
+        // and each one crosses the process boundary.
+        const now = Date.now();
+        if (!this._msPosAt || now - this._msPosAt >= 1000) { this._msPosAt = now; this.mediaSessionPos(); }
     }
 
     onPlay() {
         this.isPlaying = true;
         this._hasPlayed = true;
         this.playPauseBtn.textContent = '⏸';
+        // THIS is the moment the Player becomes the audible one, so it is where
+        // the card is claimed and the handlers (re)registered — Bloom may have
+        // dropped ⏮ / ⏭ / the scrubber while it held it.
+        this.mediaSessionClaim();
+        this.mediaSessionMeta();
+        // THE ELEMENT'S OWN EVENTS ARE THE ONE WRITER of the lock screen's
+        // state, so a play started from the phone, the keyboard or the page all
+        // land here — setting it beside each CALLER would be three writers and
+        // a card that says "playing" over a paused track the first time one is
+        // missed.
+        this.mediaSessionState('playing');
+        this.mediaSessionPos();
     }
 
     onPause() {
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶️';
+        this.mediaSessionState('paused');
+        this.mediaSessionPos();
     }
 
     onTrackEnded() {
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶️';
+        this.mediaSessionState('paused');
         document.dispatchEvent(new CustomEvent('trackEnded'));
     }
 

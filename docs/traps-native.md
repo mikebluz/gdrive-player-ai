@@ -7,6 +7,22 @@
 
 ### Native shell, iOS, Electron
 
+- **THE LOCK SCREEN'S BUTTONS ARE CHOSEN BY WHICH ACTIONS YOU REGISTER.** iOS draws ⏮ / ⏭ only
+  when `previoustrack` / `nexttrack` handlers exist, and falls back to ±10s seek when they do not —
+  so registering `seekbackward` / `seekforward` GETS THE SEEK PAIR BACK. Their absence is a contract,
+  not an omission. With no `mediaSession.metadata` at all iOS titles the card from `document.title`,
+  which is how the Player read "Player — Mike Luz" over a blank square.
+- **Now Playing artwork will not reliably load from a `blob:` URL, and fails SILENTLY** — a blank
+  square, indistinguishable from having set none. Re-encode to a `data:` URL (downscaled, e.g. a 512
+  square via canvas); the page's own `<img>` is happy with the blob and should keep it.
+- **`setPositionState` THROWS on a non-finite duration or a position past it**, and the natural caller
+  is `timeupdate`, so an unguarded call takes the progress bar down with it. Check both; report about
+  once a second rather than per `timeupdate` (~4/s) — the phone interpolates from `playbackRate`.
+- **ONE Now Playing card, so one owner: `window.__mediaSessionOwner`.** `bloops.html` loads the Drive
+  Player AND Bloom's native audio, and both drive the card — without a claim the last writer wins
+  whether or not it is the one making the sound. Each claims when it becomes audible (the Player in
+  `onPlay`, Bloom when the native mix arms) and writes nothing while the other holds it; a new owner
+  also CLEARS the actions it cannot honour, or Bloom's card keeps a ⏭ that skips a Drive track.
 - **The Capacitor shell reroutes ALL audio through a MediaStream** (`00-native-audio.js`, inert on the
   web). Nothing may connect to `rawContext.destination` — use `window._bloopsSpeakerSink(ctx)`, which
   returns the stream node for the LIVE context and `ctx.destination` for an offline one. A direct

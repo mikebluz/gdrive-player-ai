@@ -1182,6 +1182,18 @@ if (beatsOnRef.v) {
     // the piece HOLDS ITS PLACE and resumes mid-thought rather than stopping).
     if (navigator.mediaSession) {
       try {
+        // ONE CARD, ONE OWNER (2026-09-21). `bloops.html` loads the Drive
+        // Player too, and the Player now drives the lock screen as well — two
+        // writers on one Now Playing card, and the last one to speak wins
+        // whether or not it is the thing making the sound. Claiming here says
+        // Bloom is, which is true: this runs when the native mix ARMS.
+        try { window.__mediaSessionOwner = 'bloops'; } catch (e) {}
+        // …and Bloom has no playlist, so the Player's ⏮ / ⏭ / scrubber are
+        // dropped rather than left pointing at a Drive track behind a
+        // generative piece. Only the actions THIS owner can honour survive.
+        ['previoustrack', 'nexttrack', 'seekto'].forEach((a) => {
+          try { navigator.mediaSession.setActionHandler(a, null); } catch (e) {}
+        });
         navigator.mediaSession.metadata = new MediaMetadata({
           title: 'Bloops',
           artist: 'generative music',

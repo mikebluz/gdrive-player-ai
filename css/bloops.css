@@ -16999,6 +16999,59 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
   background: #16162a; border-top: 1px solid #2a2a3c; border-bottom: 1px solid #2a2a3c;
 }
 .v2-layer .v2-genrows .v2-genzone:first-child { margin-top: -4px; border-top: 0; }
+/* ── A HUE PER ZONE (2026-09-21) ───────────────────────────────
+   user: "should be different color highlighting, each section should have its
+   own coloring highlight". Three bars in one violet read as three of the same
+   thing; the point of numbering them 1-2-3 is that they are a sequence of
+   different questions. Declared as tokens beside `--evo` and `--salt` (the
+   same idea, one step up: a THING gets a colour and wears it everywhere) and
+   deliberately clear of both, and of the take hues.
+     1 MATERIAL   amber — the choice everything else hangs off
+     2 MAIN KNOBS teal  — the handful you actually turn
+     3 FINE-TUNE  violet, the app's own accent — the rest, where you already are
+   Each bar carries a left edge and tints its own numeral chip, so an open zone
+   is identifiable from the bar alone rather than from its position. */
+/* SCOPED TO THE BAR, NOT TO `.v2-genrows`: zone 1's bar is a child of
+   `.v2-genpop` and only 2 and 3 live in `.v2-genrows`, so a rule scoped to the
+   rows misses MATERIAL — the one zone this was asked about. Caught by
+   measuring the computed colour of all three and getting back two. */
+.v2-layer .v2-gzbar[data-gz="1"] { --zone: #f6ad55; }
+.v2-layer .v2-gzbar[data-gz="2"] { --zone: #4fd1c5; }
+.v2-layer .v2-gzbar[data-gz="3"] { --zone: #b794f4; }
+.v2-layer .v2-genrows .v2-gzbar[data-gz],
+.v2-layer .v2-genpop > .v2-gzbar[data-gz] {
+  border-left: 3px solid var(--zone, #9f7aea);
+  padding-left: 11px;
+}
+.v2-layer .v2-gzbar[data-gz] .v2-zonen {
+  background: color-mix(in srgb, var(--zone) 20%, transparent);
+  border-color: color-mix(in srgb, var(--zone) 55%, transparent);
+  color: var(--zone);
+}
+.v2-layer .v2-gzbar[data-gz] .v2-zcar { color: var(--zone); opacity: 0.75; }
+/* OPEN says so in its own colour — the bar warms and its title takes the hue,
+   so "which zone am I in" is answerable without reading the numeral. Both
+   containers again, and each selector carries the open class so it outranks
+   the plain `background` those containers set. */
+.v2-layer.v2-gz-1 .v2-genrows .v2-gzbar[data-gz="1"],
+.v2-layer.v2-gz-2 .v2-genrows .v2-gzbar[data-gz="2"],
+.v2-layer.v2-gz-3 .v2-genrows .v2-gzbar[data-gz="3"],
+.v2-layer.v2-gz-1 .v2-genpop > .v2-gzbar[data-gz="1"],
+.v2-layer.v2-gz-2 .v2-genpop > .v2-gzbar[data-gz="2"],
+.v2-layer.v2-gz-3 .v2-genpop > .v2-gzbar[data-gz="3"] {
+  background: color-mix(in srgb, var(--zone) 9%, #16162a);
+  border-bottom-color: color-mix(in srgb, var(--zone) 35%, transparent);
+  color: var(--zone);
+}
+/* …and the body below an open zone keeps a faint edge of the same hue, so the
+   rows are visibly INSIDE the section whose bar you just pressed. */
+.v2-layer .v2-genrows .v2-gzbody[data-gz="1"] { --zone: #f6ad55; }
+.v2-layer .v2-genrows .v2-gzbody[data-gz="2"] { --zone: #4fd1c5; }
+.v2-layer .v2-genrows .v2-gzbody[data-gz="3"] { --zone: #b794f4; }
+.v2-layer .v2-genrows .v2-gzbody[data-gz] {
+  border-left: 2px solid color-mix(in srgb, var(--zone) 22%, transparent);
+  padding-left: 9px; margin-left: -2px;
+}
 .v2-layer .v2-genrows .v2-genzone .v2-zonefor {
   text-transform: none; letter-spacing: 0; color: #8a8aa8; font-weight: 500;
   min-width: 0; overflow-wrap: anywhere;

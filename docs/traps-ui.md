@@ -159,6 +159,12 @@
   in the DOM, CSS decides), and the handler repeats the test so a keyboard cannot reach past
   `pointer-events: none`.
 
+- **✦ Generate's zone 1 bar is NOT in `.v2-genrows`** — it is a child of `.v2-genpop`, and only zones
+  2 and 3 live in the rows. A rule scoped to `.v2-genrows .v2-gzbar` therefore styles two of three and
+  silently misses MATERIAL. Scope zone styling to `.v2-layer .v2-gzbar[data-gz]` and list both
+  containers where a container-specific property is needed; check by reading the computed value of
+  ALL THREE and counting distinct results.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

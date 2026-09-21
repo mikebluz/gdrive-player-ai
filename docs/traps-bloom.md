@@ -1263,6 +1263,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   early-return tests `classList.contains('v2-layer')` — which the genwrap is not. A handler inside the
   panel must therefore end with `applyGate(ctx.card, L)`, not a bare `commit`, or nothing repaints.
 
+- **A RULE ARRIVES WITH THE PREVIOUS RULE'S KNOBS, and that reads as a dead control.** Every
+  rhythm/pitch kind reads companion fields (`pulse`→`n`, `euclid`→`steps`/`pulses`,
+  `chance`→`chance`, `walk`/`series`→`span`, `chord`→`voices`, `mixed`→`mix`) that the MATERIAL
+  tuned for the kind it replaced — so ⚠ Advanced: recipe measured as nine pitch options producing
+  four outcomes, because `n: 1` gives one onset a cycle and one onset makes every pitch rule
+  identical. `recipeSeed` lifts ONLY a field that would leave the new kind inert, and only on an
+  explicit recipe edit. Any new kind needs a `RECIPE_NEEDS` entry or it inherits the same trap.
+- **A seeded chance rhythm can legitimately roll a whole cycle silent** — ~1 in 60 at 40% over 8
+  steps — and a take never re-rolls itself, so that one draw is the part for ever and is
+  indistinguishable from a control that does nothing. Do not add a floor to the generator (a sparse
+  chance pattern is SUPPOSED to be able to rest); SAY it, and name the way out (🎲 New take).
+
 ### Bloom stores — what exists, and the one thing to know about each
 
 All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/arch/harness green.

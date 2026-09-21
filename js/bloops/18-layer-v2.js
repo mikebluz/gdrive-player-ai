@@ -10487,8 +10487,39 @@
         if (says.textContent !== txt) says.textContent = txt;
         says.classList.toggle('v2-recipeoff', off);
         if (back) { back.hidden = !off; if (off) back.textContent = '↺ Back to ' + SHN[shp]; }
-        const st2 = off ? 'custom recipe' : '';
+        // ── AN EMPTY TAKE IS NOT A DEAD CONTROL, AND MUST SAY SO ───────
+        // user: "changing them doesn't seem to do anything useful or rational".
+        // MEASURED: ♮ Chance at 40% over 8 steps rolls EVERY slot silent about
+        // once in sixty — legitimately, it is a chance rhythm — and because the
+        // take never re-rolls by itself, that one unlucky draw is the part for
+        // ever. Indistinguishable from a select that does nothing, which is
+        // exactly how it was reported. The rules are fine; the SILENCE was
+        // unexplained. So the row says it, and names the two ways out.
+        let empty = false;
+        try {
+          // THROUGH `V2.`, not bare: `notesFor` and `withEdit` live in the
+          // ENGINE half and this is the UI half — the two share only
+          // `window._v2`, so a bare name would throw into the catch above and
+          // this whole warning would be a silent no-op.
+          const ns0 = V2.withEdit(() => V2.notesFor(L, { E: _masterEng, cfg: _cfgOf(),
+            key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: 6 })) || [];
+          empty = L.part.kind === 'live' && ns0.length === 0;
+        } catch (e) {}
+        if (empty) {
+          const txt2 = '⚠ These rules come out SILENT on this take — the roll landed ' +
+            'on no onsets at all. 🎲 New take rolls another, or raise the knob the rhythm ' +
+            'reads (Chance %, or Pulses).';
+          if (says.textContent !== txt2) says.textContent = txt2;
+          says.classList.add('v2-recipeoff');
+        }
+        const st2 = empty ? 'silent take' : (off ? 'custom recipe' : '');
         if (sum && sum.textContent !== st2) sum.textContent = st2;
+        // …and an empty part is worth opening the fold for, exactly as a custom
+        // recipe is: a warning nobody can see is not a warning.
+        if (empty && !host.classList.contains('v2-so-recipe')) {
+          host.classList.add('v2-so-recipe');
+          pop.querySelectorAll('.v2-discbtn[data-disc="recipe"]').forEach((b0) => { b0.textContent = '▾ Hide'; });
+        }
         if (off && !host.classList.contains('v2-so-recipe')) {
           host.classList.add('v2-so-recipe');
           pop.querySelectorAll('.v2-discbtn[data-disc="recipe"]').forEach((b0) => { b0.textContent = '▾ Hide'; });
@@ -12446,6 +12477,44 @@
     const MS = V2.matSimple || {};
     Object.keys(MS).forEach((k) => { MAT_RECIPE[k] = [MS[k].rhythm.kind, MS[k].pitch.kind]; });
   } catch (e) {}
+  // WHAT EACH RULE NEEDS BEFORE IT CAN SAY ANYTHING. One entry per kind: the
+  // field it reads, the floor below which that kind is inert or indistinguish-
+  // able, and the value to lift it to. Deliberately the SAME numbers the
+  // materials use, so a hand-built recipe lands where a ready-made one would.
+  const RECIPE_NEEDS = {
+    rhythm: {
+      // one onset a cycle makes every PITCH rule look identical — which is why
+      // this floor is 2 and not 1
+      pulse:  [['n', 2, 8]],
+      euclid: [['steps', 4, 16], ['pulses', 1, 5]],
+      drawn:  [['steps', 4, 16], ['pulses', 1, 5]],
+      // 0% is silence, and silence is what "does nothing" looked like
+      chance: [['chance', 1, 45]],
+      ground: [],
+    },
+    pitch: {
+      chord:  [['voices', 2, 3]],
+      stack:  [['voices', 2, 3]],
+      confug: [['voices', 2, 3]],
+      series: [['span', 2, 5]],
+      walk:   [['span', 2, 5]],
+      chance: [['span', 2, 5]],
+      mixed:  [['mix', 1, 50], ['span', 2, 5]],
+      anchor: [], fixed: [],
+    },
+  };
+  function recipeSeed(L, which) {
+    const t = L && L.part && L.part[which]; if (!t) return [];
+    const needs = (RECIPE_NEEDS[which] || {})[t.kind] || [];
+    const lifted = [];
+    needs.forEach(([f, floor, to]) => {
+      const cur = t[f];
+      if (Number.isFinite(cur) && cur >= floor) return;
+      t[f] = to;
+      lifted.push(f + ' → ' + to);
+    });
+    return lifted;
+  }
   const MAT_NAME = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
     mixed: 'Mix chords + notes', ground: 'Play the changes',
     anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones',
@@ -17964,6 +18033,13 @@
       // too); the block is inert markup until then.
       if (openIds.has(String(id))) card.classList.remove('collapsed');
       if (!(openFolds.get(String(id)) || []).some((k) => k.indexOf('v2-ftt-') === 0)) card.classList.add('v2-ftt-rhythm');
+      // …AND MATERIAL IS OPEN (2026-09-21, user: "Material should be expanded
+      // by default"). All three zones folded was right for the other two — they
+      // are tuning — but zone 1 is the question the panel exists to ask, and a
+      // panel that opens on three shut bars asks nothing. Same idiom as the
+      // fine-tune tab above: a remembered zone wins, so this only decides the
+      // FIRST time a card is built.
+      if (!(openFolds.get(String(id)) || []).some((k) => k.indexOf('v2-gz-') === 0)) card.classList.add('v2-gz-1');
       (openFolds.get(String(id)) || []).forEach((k) => {
         card.classList.add(k);
         if (k.indexOf('v2-ftt-') === 0) return;
@@ -18389,6 +18465,24 @@
             (path.indexOf('part.rhythm.') === 0 || path.indexOf('part.pitch.') === 0 ||
              path.indexOf('part.shape.') === 0)) {
           ctx.L.part.kind = 'live';
+          try { E.getCfg(); } catch (e) {}
+        }
+        // ── A RECIPE CHANGE BRINGS ITS COMPANION KNOBS (2026-09-21) ──────
+        // user: "these params don't really make sense right now … changing them
+        // doesn't seem to do anything useful or rational".
+        // MEASURED, and they were right. Every rule reads knobs that the
+        // MATERIAL tuned for the rule it replaced, so the new one arrives with
+        // nothing to work with: on a default layer (`pulse` × `chord`, `n: 1`)
+        // picking Chance gave 0 notes — silence — and with only ONE onset in the
+        // cycle every pitch rule produced the same single hit, so nine options
+        // collapsed to four outcomes and none of them sounded like its name.
+        // The recipe select was not broken; it was arriving somewhere unusable.
+        // ONLY WHAT WOULD BE INERT IS RAISED, and only on an explicit edit of
+        // the recipe. A knob already in a workable range is never touched, so a
+        // deliberate 1-pulse part stays a 1-pulse part until you change the very
+        // rule that makes a single pulse meaningless.
+        if (path === 'part.rhythm.kind' || path === 'part.pitch.kind') {
+          try { recipeSeed(ctx.L, path === 'part.rhythm.kind' ? 'rhythm' : 'pitch'); } catch (e) {}
           try { E.getCfg(); } catch (e) {}
         }
         const mirrorRoot = staged0 ? (f.closest('.v2-genwrap, .v2-autowrap') || ctx.card) : ctx.card;

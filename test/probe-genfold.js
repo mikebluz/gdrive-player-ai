@@ -95,8 +95,11 @@ const ok = (name, cond, detail) => {
   console.log('   rows showing — 1:' + shut.r1 + '  2:' + shut.r2 + '  3:' + shut.r3);
   console.log('   bars: ' + JSON.stringify(shut.bars) + '\n');
 
-  ok('all three zones are shut when the panel opens',
-    shut.open.length === 0 && shut.b1 === 0 && shut.b2 === 0 && shut.b3 === 0,
+  // MATERIAL OPENS WITH THE PANEL since 2026-09-21 (user: "Material should be
+  // expanded by default"). The other two stay folded — they are tuning, and a
+  // panel that unfolded everything was the complaint this fold answered.
+  ok('the panel opens on Material, with the other two folded',
+    shut.open.length === 1 && shut.open[0] === 1 && shut.b1 > 20 && shut.b2 === 0 && shut.b3 === 0,
     JSON.stringify({ open: shut.open, b1: shut.b1, b2: shut.b2, b3: shut.b3 }));
   ok('…and the material picker is inside zone 1, not loose above it',
     shut.picker === true, JSON.stringify(shut.picker));
@@ -122,6 +125,10 @@ const ok = (name, cond, detail) => {
     return true;
   };
 
+  // ZONE 1 ARRIVES OPEN NOW, so the loop below (which asserts "a tap OPENS it")
+  // would tap it shut and read that as a failure. Fold it once first and every
+  // zone starts the loop in the same state again.
+  if ((await look()).open.indexOf(1) >= 0) { await tapBar(1); await zz(300); }
   for (const gz of [1, 2, 3]) {
     if (!(await tapBar(gz))) { ok('zone ' + gz + ' bar is pressable', false, 'no rect'); continue; }
     const o = await look();
@@ -143,9 +150,12 @@ const ok = (name, cond, detail) => {
   const back = await look();
   ok('tapping a bar again folds it away', back.open.length === 0,
     JSON.stringify(back.open));
-  ok('…and the panel is back to its opening height',
-    Math.abs(back.panel - shut.panel) <= 4,
-    shut.panel + 'px → ' + back.panel + 'px');
+  // …compared against ALL THREE SHUT, not against the opening height — the
+  // panel now opens with Material already down, so the two are no longer the
+  // same number.
+  ok('…and the panel is back to its folded height',
+    back.panel < shut.panel && back.panel > 40,
+    'opened at ' + shut.panel + 'px (Material down) → all folded ' + back.panel + 'px');
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

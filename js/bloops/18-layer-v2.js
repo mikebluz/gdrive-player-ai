@@ -762,20 +762,40 @@
   // BLANK and drift the rules, the documented Groundwork bug); everything else
   // is [min, max] and is rounded and clamped on the way in, so the overlay can
   // be merged onto the part's rules WITHOUT a second normalize pass.
+  // A CHARACTER IS ASSIGNED PER REGION (2026-09-20), and a Character is
+  // nothing but a set of these fields — so every field any Character states
+  // has to be listed here or the region would arrive HALF-APPLIED: the
+  // overlay would carry the fields that happen to be whitelisted and silently
+  // drop the rest, which is a Character that sounds like neither itself nor
+  // the part. The added names are exactly the ones `PRESETS` writes, with the
+  // ranges the PART's own normalizer uses — a region and a part must not
+  // disagree about what a value means.
   const BAR_RULE_F = {
     rhythm: { kind: ['pulse', 'euclid', 'chance', 'ground', 'drawn'],
-              pulses: [1, 64], steps: [2, 64], rotate: [0, 63], n: [1, 32],
-              chance: [0, 100], syncop: [0, 100] },
+              // n is [1, 64] BECAUSE THE PART'S IS: at [1, 32] a fast Character
+              // over a long stretch came out at half speed, silently clamped
+              // on the way in — the same too-narrow-range bug as `lenRatio`.
+              pulses: [1, 64], steps: [2, 64], rotate: [0, 63], n: [1, 64],
+              chance: [0, 100], syncop: [0, 100],
+              strike: ['', 'half', 'bar', 'comp'], antic: [0, 1] },
     pitch:  { kind: ['drawn', 'chord', 'stack', 'fixed', 'series', 'anchor', 'walk', 'chance', 'mixed', 'confug'],
-              dir: ['up', 'down', 'updown'],
+              dir: ['up', 'down', 'updown', 'downup', 'converge'],
               // a stretch may RECOLOUR the change it sits on — '' is "the
               // change's own", and it is a legal value so the row can say so
               qual: ['', 'maj', 'min', 'dim', 'dim7', 'aug', 'sus2', 'sus4'],
               ext: ['', '6', '7', 'maj7', '9', '11', '13'],
               inv: [-12, 12],
               voices: [1, 9], mix: [0, 100], span: [1, 12], contour: [-100, 100],
-              lines: [1, 6], stutter: [0, 100], octaves: [1, 4], randomness: [0, 100] },
-    shape:  { lenRatio: [5, 100] },
+              lines: [1, 6], stutter: [0, 100], octaves: [1, 4], randomness: [0, 100],
+              degree: [1, 12], restart: [0, 1], tones: ['', 'triad'],
+              motif: ['', 'bar', 'notes'], mixAt: ['strong', 'change', 'arch', 'any'],
+              chordMode: ['', 'chaos', 'chords', 'chordsplus', 'monk'],
+              spread: [0, 3], variety: [0, 100], subdiv: [1, 16],
+              phraseLen: [1, 16], repeats: [1, 16] },
+    // THE PART'S OWN RANGE (1–400), not a narrower one. At [5, 100] a region
+    // could not hold a Character that rings past its onset (Wandering is 120)
+    // and the value was silently clipped on the way in.
+    shape:  { lenRatio: [1, 400] },
     // OPERATIONS are not rules. Everything above changes how the stretch is
     // GENERATED; these change what came out — so they are applied AFTER the
     // roll, in the composite, and `partWithRules` deliberately does not carry
@@ -1567,6 +1587,13 @@
           }
           if (Object.keys(o2).length) ov[grp] = o2;
         });
+        // WHICH CHARACTER PUT THESE FIELDS HERE. A stamp, exactly like
+        // `part.preset` at the part: the fields above are the whole truth of
+        // what the region plays, and this only lets the panel NAME it and lets
+        // re-picking replace cleanly. An unknown id is dropped rather than
+        // shown, so a downgrade can never make the row claim a Character this
+        // build does not have — and a stamp with no fields left is no stamp.
+        if (typeof src.char === 'string' && PRESET_BY_ID[src.char] && Object.keys(ov).length) ov.char = src.char;
         return Object.keys(ov).length ? ov : undefined;
       });
       if (rb2) p.ruleb = rb2; else delete p.ruleb;
@@ -5986,6 +6013,140 @@
     return { id: pr.id, tuned };
   }
 
+  // ── A CHARACTER OVER A STRETCH ──────────────────────────────────────────
+  // user: "assigning subsets of bars (including fractional) to different
+  // characters, so having a content move through characters within a content".
+  //
+  // There is no new path for this. A region ALREADY generates from its own
+  // spec (`part.ruleb`, rolled by `composite`), and a Character is nothing but
+  // a set of part fields — so a Character over a stretch is resolved INTO a
+  // region overlay, and playback, the drawing, ⚙ Deep, the outlines and
+  // capture all keep honouring exactly the one thing they already honoured.
+  //
+  // RESOLVED BY BUILDING IT, never by copying `pr.set`. A Character is its
+  // stated fields PLUS everything its SHAPE builds — Arp's speed, Roll's
+  // dice, Sustain's single pulse — and `pr.set` alone is a fraction of that.
+  // So the layer is cloned into a scratch draft, the REAL `applyPreset` runs
+  // on the clone, and the overlay is the diff of the three generated groups.
+  // A region Character is the whole-part Character by construction, and the
+  // two cannot drift when a builder changes.
+  //
+  // THE DIFF IS AGAINST THE PART, which is the house absent-is-inherit
+  // grammar the region panel already states out loud: a field the Character
+  // would set to what the part already says is not stored, so "this stretch
+  // plays what the part plays" has exactly one representation (no overlay).
+  function charOverlayFn(E, L, id, key) {
+    const pr = PRESET_BY_ID[id]; if (!pr || !L || !L.part) return null;
+    const lid = L.id | 0;
+    // ⚙ DEEP MAY ALREADY OWN A DRAFT for this layer. Borrowing the slot and
+    // putting the previous entry back is the whole reason this is a
+    // save/restore rather than a plain set/delete — clobbering it would drop
+    // an open draft's edits on the floor.
+    const had = DRAFTS.has(lid), prev = DRAFTS.get(lid);
+    const S = JSON.parse(JSON.stringify(L));
+    DRAFTS.set(lid, { S: S });
+    let built = null;
+    try { built = applyPresetFn(E, S, pr.id); } catch (e) { built = null; }
+    finally {
+      if (had) DRAFTS.set(lid, prev); else DRAFTS.delete(lid);
+      try { E.getCfg(); } catch (e) {}
+    }
+    if (!built) return null;
+    const ov = {};
+    ['rhythm', 'pitch', 'shape'].forEach((grp) => {
+      const was = L.part[grp] || {}, now = S.part[grp] || {}, o2 = {};
+      Object.keys(BAR_RULE_F[grp] || {}).forEach((f) => {
+        const v = now[f];
+        if (v === undefined || was[f] === v) return;
+        o2[f] = v;
+      });
+      if (Object.keys(o2).length) ov[grp] = o2;
+    });
+    // A STRETCH SHORTER THAN THE PART MUST STILL BE STRUCK. The composite
+    // rolls the overlay across the WHOLE cycle and keeps the notes that land
+    // inside the stretch — so a Character counted per CYCLE rather than per
+    // bar has exactly one onset, at the top, and every stretch but the first
+    // came out SILENT. (Measured: ▬ Sustain over the last half-bar of a 4-bar
+    // part produced no notes at all, which reads as "the Character did
+    // nothing" rather than as what it is.)
+    // Pulse onsets are evenly spaced, so a count of `ceil(1/frac)` puts the
+    // spacing at or below the stretch's own length and at least one onset
+    // lands inside it whatever the offset. This is the LEAST that makes the
+    // Character audible where it was asked for, and it is a no-op for every
+    // per-BAR Character (Arp, Roll) — their spacing is already far shorter
+    // than any stretch you can select.
+    const rp = key ? regParse(key) : null;
+    if (rp && ov.rhythm && (ov.rhythm.kind || L.part.rhythm.kind) === 'pulse') {
+      const total = Math.max(1, Math.round(Math.max(0.125, L.part.bars || 1) * SPB));
+      const frac = Math.max(1e-6, (rp.b - rp.a) / total);
+      if (frac < 1 - 1e-9) {
+        const have = (ov.rhythm.n !== undefined) ? (ov.rhythm.n | 0) : ((L.part.rhythm || {}).n | 0);
+        const need = Math.ceil(1 / frac);
+        if (need > (have || 1)) ov.rhythm.n = clamp(need, 1, 64);
+      }
+    }
+    if (!Object.keys(ov).length) return null;     // it IS the part already
+    ov.char = pr.id;
+    return ov;
+  }
+  // WHICH CHARACTER A STRETCH IS, AND HAS IT BEEN MOVED — `presetStateFn` for
+  // a region. "Tuned" is the same question the card asks: does what is stored
+  // still equal what the Character would write? Rebuilding the overlay costs
+  // a clone and two normalizes, and the panel asks on every gate pass, so the
+  // answer is memoized on (layer, key, stored overlay) — any edit to the
+  // overlay changes that signature and the cache misses, which is precisely
+  // when the answer can have changed.
+  let CHAR_MEMO = null;
+  function charStateFn(E, L, key) {
+    const ov = (L && L.part && L.part.ruleb && L.part.ruleb[key]) || null;
+    const id = (ov && typeof ov.char === 'string' && PRESET_BY_ID[ov.char]) ? ov.char : null;
+    if (!id) return { id: null, tuned: false };
+    const sig = (L.id | 0) + '|' + key + '|' + JSON.stringify(ov) + '|' +
+                JSON.stringify([L.part.rhythm, L.part.pitch, L.part.shape]);
+    if (CHAR_MEMO && CHAR_MEMO.sig === sig) return CHAR_MEMO.st;
+    let tuned = true;
+    try {
+      const want = charOverlayFn(E, L, id, key);
+      tuned = JSON.stringify(want) !== JSON.stringify(ov);
+    } catch (e) { tuned = true; }
+    const st = { id: id, tuned: tuned };
+    CHAR_MEMO = { sig: sig, st: st };
+    return st;
+  }
+  // …and the writer. Every selected region gets the SAME Character, which is
+  // what a multi-region selection means everywhere else on this panel.
+  // An empty id is the way back: the stretch generates by the part's rules
+  // again, which is the one meaning "no Character here" can have.
+  function setBarCharFn(E, L, bars, id) {
+    if (!L || !L.part || !Array.isArray(bars) || !bars.length) return false;
+    if (!id) {
+      let moved = false;
+      const rb = L.part.ruleb;
+      if (!rb) return false;
+      bars.forEach((b0) => { const k = String(b0);
+        if (Object.prototype.hasOwnProperty.call(rb, k)) { delete rb[k]; moved = true; } });
+      if (!Object.keys(rb).length) delete L.part.ruleb;
+      return moved;
+    }
+    // PER REGION, not once for the selection — the overlay depends on the
+    // stretch's own LENGTH (see the strike guarantee above), so two stretches
+    // of different sizes given the same Character get different counts. One
+    // overlay reused across both would have made the shorter one silent again.
+    let moved = false;
+    bars.forEach((b0) => {
+      const k = String(b0);
+      const ov = charOverlayFn(E, L, id, k);
+      if (!ov) return;
+      L.part.ruleb = L.part.ruleb || {};
+      // REPLACED, not merged. A Character is a whole statement about what the
+      // stretch is — merging would leave fields from the previous one behind
+      // and the region would be neither Character.
+      L.part.ruleb[k] = ov;
+      moved = true;
+    });
+    return moved;
+  }
+
   // ── WHAT HAPPENS WHEN THE LENGTH CHANGES ────────────────────────────────
   // Onset counts are PER CYCLE, so doubling Bars spreads the same notes over
   // twice the time — the part STRETCHES. That is often what you want and it is
@@ -6211,6 +6372,9 @@
     draftCommit: draftCommitFn,
     draftCancel: draftCancelFn,
     applyPreset: applyPresetFn,
+    charOverlay: charOverlayFn,
+    charState: charStateFn,
+    setBarChar: setBarCharFn,
     presetState: presetStateFn,
     speedOf: speedOfFn,
     setSpeed: setSpeedFn,
@@ -6286,7 +6450,10 @@
           if (cur === undefined) return;
           delete ov[grp][f];
           if (!Object.keys(ov[grp]).length) delete ov[grp];
-          if (!Object.keys(ov).length) delete p2.ruleb[key];
+          // `char` is a STAMP, not a field — an overlay holding nothing but
+          // the name of a Character states nothing, so it goes with the last
+          // field rather than keeping the key alive until the next normalize.
+          if (!Object.keys(ov).filter((k2) => k2 !== 'char').length) delete p2.ruleb[key];
           if (p2.ruleb && !Object.keys(p2.ruleb).length) delete p2.ruleb;
           moved = true; return;
         }
@@ -12550,6 +12717,19 @@
             '<div class="v2-barhead"><span class="v2-bartitle">Bar</span>' +
               '<button type="button" class="v2-barclose" aria-label="Close">\u2715</button></div>' +
             '<span class="ambient-hint v2-barsays"></span>' +
+            // A CHARACTER OVER THIS STRETCH — the door for "a content moves
+            // through characters within a content". OUTSIDE `.v2-barrows`
+            // deliberately: that block is rebuilt with `innerHTML` whenever
+            // the visible set of rows changes, and a select rebuilt under the
+            // finger is the documented repaint trap. Its options never change
+            // (they are the Character list), so sync only ever sets `.value`.
+            // Every shape is listed, not just the part's — picking a
+            // DIFFERENT shape for one stretch is the whole point.
+            '<div class="ambient-ctrl v2-barcharctl">' +
+              '<label for="' + uid(L, 'barchar') + '">Character</label>' +
+              '<select id="' + uid(L, 'barchar') + '" class="ambient-select v2-barcharpick"></select>' +
+              '<span class="ambient-hint v2-barcharsays"></span>' +
+            '</div>' +
             '<div class="v2-barrows"></div>' +
             '<div class="v2-baracts">' +
               '<button type="button" class="ambient-seg v2-barroll" title="Throw the dice again here — the same rules, a different roll. Press as often as you like.">\ud83c\udfb2 Roll again</button>' +
@@ -15060,6 +15240,22 @@
     const t = row.say ? row.say(v, rules) : row.hint;
     return own ? (row.say ? (t + ' \u00b7 set here') : 'set here') : t;
   };
+  // THE CHARACTER LIST FOR A STRETCH — every shape, grouped, because picking
+  // a shape the PART is not is the whole point of assigning one per stretch.
+  // Built once and never rebuilt (see the markup's own note), so this is a
+  // plain string rather than a synced set of rows.
+  const SHAPE_WORD = { ground: 'Groundwork', arp: 'Arpeggio', roll: 'Roll',
+                       sustain: 'Sustain', mixed: 'Mixed' };
+  function barCharOptsHtml() {
+    const list = (V2.presets || []);
+    const byShape = {};
+    list.forEach((pr) => { (byShape[pr.shape] = byShape[pr.shape] || []).push(pr); });
+    return '<option value="">— the part’s own rules</option>' +
+      Object.keys(byShape).map((s) =>
+        '<optgroup label="' + esc(SHAPE_WORD[s] || s) + '">' +
+        byShape[s].map((pr) => '<option value="' + esc(pr.id) + '">' + esc(pr.label) + '</option>').join('') +
+        '</optgroup>').join('');
+  }
   function barRowsHtml(L, bars, rules) {
     const id = L.id | 0;
     const shown = BARROWS.filter((row) => !row.when || row.when(rules));
@@ -15111,6 +15307,28 @@
     // ONE REGION'S rules are shown; with several selected the FIRST is the
     // face and every edit writes to all of them (which is what the title says).
     const rules = V2.barRules(L.part, bars[0]);
+    // THE CHARACTER OVER THIS STRETCH. The options are built ONCE — they are
+    // the Character list and never change — so from then on this only ever
+    // sets `.value` and a hint, and no control is rebuilt under the finger.
+    const cp = card.querySelector('.v2-barcharpick');
+    if (cp) {
+      if (!cp._built) { cp.innerHTML = barCharOptsHtml(); cp._built = 1; }
+      const E2 = _cardE || ((typeof _masterEng !== 'undefined') ? _masterEng : null);
+      let stc = { id: null, tuned: false };
+      try { if (E2 && V2.charState) stc = V2.charState(E2, L, bars[0]); } catch (e) {}
+      // A select whose value matches no option silently shows the FIRST one
+      // (the documented trap), and '' IS an option here — so this is safe.
+      if (cp.value !== (stc.id || '')) cp.value = stc.id || '';
+      const cs2 = card.querySelector('.v2-barcharsays');
+      if (cs2) {
+        const t4 = !stc.id
+          ? 'This stretch generates by the part’s rules. Give it a character and it plays like that instead — the rest of the part is untouched.'
+          : stc.tuned
+            ? 'Its character, with values changed by hand since — the rows below say which.'
+            : 'This stretch plays like this character; the rest of the part keeps its own.';
+        if (cs2.textContent !== t4) cs2.textContent = t4;
+      }
+    }
     const sig = barShownSig(rules);
     if (rows._sig !== sig || rows._bars !== bars.join(',')) {
       rows.innerHTML = barRowsHtml(L, bars, rules);
@@ -17306,6 +17524,25 @@
           if (!V2.applyPreset(E, ctx.L, ppk.value)) return;
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           h._sig = ''; V2.render(E);
+          return;
+        }
+        // A CHARACTER OVER THE SELECTED STRETCH — the same writer the probe
+        // drives (`V2.setBarChar`), so the panel and the engine cannot mean
+        // two different things by it. NOT a card rebuild: the stretch's
+        // material is re-derived from its rules rather than stored, so the
+        // drawing and the popover repaint and the part is audible immediately
+        // — and a rebuild here would close the very popover being used.
+        const bcp = ev.target.closest && ev.target.closest('.v2-barcharpick');
+        if (bcp) {
+          const ctx = layerOf(bcp); if (!ctx) return;
+          if (!BARPOP || BARPOP.id !== (ctx.L.id | 0)) return;
+          if (!V2.setBarChar(E, ctx.L, BARPOP.bars.slice(), bcp.value || '')) return;
+          try { E.getCfg(); } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          const rw2 = ctx.card.querySelector('.v2-barrows'); if (rw2) rw2._sig = '';
+          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+          try { barpopSync(ctx.card, ctx.L); } catch (e) {}
+          try { v2TakeHeard(E, ctx.L); } catch (e) {}
           return;
         }
         const spd = ev.target.closest && ev.target.closest('.v2-speed');

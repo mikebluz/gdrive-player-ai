@@ -15442,6 +15442,23 @@
 .v2-layer .v2-barrows select.ambient-select {
   width: 100%; min-width: 0; min-height: 36px;
 }
+/* A CHARACTER OVER THE SELECTED STRETCH. It sits OUTSIDE `.v2-barrows` on
+   purpose (that block is rebuilt wholesale and a select rebuilt under the
+   finger is the repaint trap), so the padding and the 36px touch floor are
+   stated here rather than inherited from the rows' rule above.
+   `.ambient-ctrl` is a GRID (84px 1fr auto) — the third column is `auto`, so
+   a sentence left in it is squeezed to a few characters wide. The hint takes
+   the whole next row instead, which is the documented fix. */
+.v2-layer .ambient-ctrl.v2-barcharctl {
+  padding: 0 14px 8px; margin: 0; flex: 0 0 auto; min-height: 0;
+}
+.v2-layer .v2-barcharctl select.ambient-select {
+  width: 100%; min-width: 0; min-height: 36px;
+}
+.v2-layer .v2-barcharctl .v2-barcharsays {
+  grid-column: 1 / -1; margin-top: 4px; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
 .v2-barpop .v2-barreset { color: #f6ad55; }
 .v2-barpop .v2-barreset:disabled { color: #6b6b8a; border-color: #22222f; cursor: default; }
 .v2-layer .ambient-ctrl.v2-barsec {

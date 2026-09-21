@@ -92,3 +92,11 @@
   overlay, so a handler that creates `{}` and then calls something that normalizes is writing to an
   orphan — the press silently does nothing, with no error anywhere. The tell is a debug line printing
   `undefined` for a field you just assigned.
+  **A PROBE holds the same orphan.** `_normalizeAmbientCfg` REPLACES objects on every `getCfg()`, so
+  a layer captured once at the top and used after an edit is stale — and a stale layer makes two
+  obviously different things measure as identical. Re-read it (`const Lat = () => cfg.layers[0]`)
+  at every use. Measured 2026-09-20: two Characters an octave apart reported as the same notes.
+- **THE v2 CARD'S CONTROLS ARE DELEGATED ON `input`, NOT `change`.** A probe that dispatches only
+  `change` on a `<select>` reaches nothing and reads as "the handler was never wired" — the writer is
+  never called and the config never moves. A real pick fires `input` THEN `change`; dispatch both.
+  Before concluding a control is dead, WRAP ITS WRITER and check whether it was called at all.

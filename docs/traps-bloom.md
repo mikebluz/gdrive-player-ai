@@ -768,6 +768,26 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     vocabulary is how a select offers a value `setBarRule` rejects — which renders it BLANK.
   - **`sel: FOO` in the `BARROWS` literal READS the binding**, so a `const` declared below it is a TDZ
     page error. Declare the option lists ABOVE `BARROWS`, or keep the reference lazy.
+  - **`BAR_RULE_F` IS A WHITELIST WITH RANGES, AND BOTH HALVES BITE SILENTLY (2026-09-20).** A field
+    it does not list is dropped from the overlay by normalize; a range NARROWER than the part's own
+    clips the value on the way in. Neither errors, and both read as "the setting did nothing" —
+    measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
+    come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
+    onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **A CHARACTER OVER A STRETCH (2026-09-20, user: "assigning subsets of bars (including fractional)
+  to different characters, so having a content move through characters within a content").** No new
+  path: a Character is resolved into a `part.ruleb` overlay and `composite` already plays one, so
+  playback, the drawing, ⚙ Deep and capture need no change. Two things that are not obvious:
+  - **Resolve it by BUILDING it, never by copying `pr.set`.** A Character is its stated fields plus
+    whatever its SHAPE builds (Arp's speed, Sustain's single pulse) — `pr.set` alone is a fraction of
+    it. `charOverlay` clones the layer into a scratch DRAFT, runs the real `applyPreset` on the
+    clone, and diffs the three groups; the region Character is then the whole-part one by
+    construction. Borrow-and-restore the `DRAFTS` slot — ⚙ Deep may already own it.
+  - **`composite` rolls the overlay over the WHOLE cycle and keeps what lands inside the region.** So
+    a Character counted per CYCLE rather than per bar has one onset, at the top, and every stretch
+    but the first came out SILENT (measured: ▬ Sustain over the last half-bar of a 4-bar part → no
+    notes). `charOverlay` raises a pulse count to `ceil(1/frac)` so the spacing fits inside the
+    stretch. This is also why the overlay is built PER REGION, not once for a multi-region selection.
 - **✎ WRITTEN IS A STATE, NOT A DOOR (2026-09-14, user: "i don't think 'by hand/written' and 'by
   rule/generated' are true alternatives").** They never were: one is the state a part is IN, the other
   an ACTION that fills it. **A new layer now starts EMPTY and WRITTEN** and makes no sound until you

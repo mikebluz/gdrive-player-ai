@@ -774,6 +774,22 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **A KNOB THAT MOVES NOTHING IS MEASURABLE — `test/probe-deepdead.js` (2026-09-20, user: "if the
+  param creates no change for whatever reason, it should be disabled for that Material").** It sweeps
+  every row ⚙ Deep SHOWS, per material, and asks the seam whether the notes moved: 32 of 132 are
+  dead today, listed in the probe's `KNOWN` set as a burn-down. Three ways this measurement lied
+  before it was right, all worth knowing before trusting a sweep like it:
+  - **Sample SEVERAL passes.** Evolve advances the take every N passes, so a one-cycle sample called
+    it dead on all five shapes.
+  - **Do NOT pin the take.** `withTake(pinOf(S))` is what the drawing does to hold its picture still,
+    and a pinned take is exactly what overrides Evolve's epoch — measured through the pin it reads
+    dead while playback hears it change every pass.
+  - **Sweep more than the extremes.** Evolve reads 0 as off and 64 as "every 64 passes", so both
+    ends look identical over any sample short enough to run; it takes a small value to see it.
+  - And the deadness is not one bug: the chord VOICING cluster needs a voicing in force, Salt's two
+    rows need Salt re-voice on, Evolve needs a material with dice, and **`sustain · Voicing` looks
+    like an ENGINE fault** — `_ambPickVoicing` returns a voicing for that layer when called directly
+    and the notes still come out as the plain thirds stack. Greying that one would hide a bug.
 - **⚙ DEEP'S STAGED PICTURE IS A PIANO ROLL (2026-09-20, user: "this visualizer also needs grid
   lines and a piano roll on the left and note readouts").** It drew a bar grid and purple bars with
   no pitch reference, so a semitone and an octave looked alike. It is the card's roll at a smaller

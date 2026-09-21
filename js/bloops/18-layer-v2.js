@@ -13002,7 +13002,15 @@
                 '<span class="ambient-hint"></span></div>' +
               (function (rr0) {
                 const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
-                return gsl(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, gN,
+                // A TYPED NUMBER, NOT A SLIDER (2026-09-20, user: "all 'How
+                // many' onset inputs should be user-supplied numeric inputs
+                // (not a range of options)"). An onset COUNT is a number you
+                // know before you reach for it \u2014 "I want 7" \u2014 and a slider
+                // makes you hunt for it by pixel, worse the narrower the row.
+                // `gst` is the same stepper the other discrete counts use, so
+                // it commits through the same delegated handler and a value
+                // can also just be typed in.
+                return gst(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, gN,
                     'onsets in the cycle \u2014 up to the Grid', 'kind:live;rhythm:euclid,drawn') +
                   gsl(L, 'part.rhythm.chance', 'Chance', rr0.chance, 0, 100,
                       'how often a step sounds', 'kind:live;rhythm:chance');
@@ -13075,7 +13083,8 @@
               // `rhythm.n` — a main knob, beside Speed (it was in Fine-tune).
               // …but NOT on a sustain (pulse × chord): that shape is one onset
               // holding a chord, so "how many" is always 1 and the knob is noise
-              gsl(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 32,
+              // …and typed here too, for the same reason as the Euclid one above.
+              gst(L, 'part.rhythm.n', 'How many', (L.part.rhythm || {}).n, 1, 64,
                   'onsets in the cycle', 'kind:live;rhythm:pulse;pitch:series,walk,mixed,fixed,anchor,drawn') +
               // ── TUNED — what differs from the Character (2026-09-17) ────
               // Replaces Fine-tune's summary line. One chip per knob moved away

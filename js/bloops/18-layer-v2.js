@@ -455,6 +455,49 @@
   // own writer. Values are compared back by `presetStateFn`, which is what
   // lets the card say "· tuned" and ↺ Reset put them back.
   const PRESETS = [
+    // ── ♦ BEAT'S CHARACTERS — WHERE THE GENRE LIVES ────────────────
+    // Lanes are Kick · Snare · Hat · Clap · Open hat · Tom · Crash · Perc, and
+    // a lane is `p` hits spread evenly with `r` steps of push. Over 16 steps:
+    // p:4 is every beat, p:8 eighths, p:16 sixteenths, and r:4 moves a 2-hit
+    // lane off 1-and-3 onto the backbeat.
+    // WRITTEN AS A SET LIKE EVERY OTHER CHARACTER, so ↺ Reset, "· tuned" and
+    // the Changed chips work on a beat with no new machinery.
+    { id: 'backbeat', shape: 'beat', label: 'Backbeat',
+      set: { 'part.rhythm.beat.lanes.0.p': 4, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 2, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 8, 'part.rhythm.beat.lanes.2.r': 0 } },
+    { id: 'fourfloor', shape: 'beat', label: 'Four on the floor',
+      set: { 'part.rhythm.beat.lanes.0.p': 4, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 2, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 0, 'part.rhythm.beat.lanes.4.p': 4,
+             'part.rhythm.beat.lanes.4.r': 2 } },
+    // HALF-TIME: the snare waits for 3, which is the whole feel.
+    { id: 'halftime', shape: 'beat', label: 'Half-time',
+      set: { 'part.rhythm.beat.lanes.0.p': 2, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 1, 'part.rhythm.beat.lanes.1.r': 8,
+             'part.rhythm.beat.lanes.2.p': 8, 'part.rhythm.beat.lanes.2.r': 0 } },
+    // A EUCLID THAT IS NOT A DIVISOR is what makes a break limp the right way:
+    // 5 kicks over 16 will not sit on the beat and is not meant to.
+    { id: 'breakbeat', shape: 'beat', label: 'Breakbeat',
+      set: { 'part.rhythm.beat.lanes.0.p': 5, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 2, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 11, 'part.rhythm.beat.lanes.2.r': 0,
+             'part.rhythm.beat.vary': 25 } },
+    { id: 'skippy', shape: 'beat', label: 'Skippy hats',
+      set: { 'part.rhythm.beat.lanes.0.p': 4, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 2, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 13, 'part.rhythm.beat.lanes.2.r': 1,
+             'part.rhythm.beat.vary': 35 } },
+    // MOTORIK: everything straight, nothing syncopated, the hat never stops.
+    { id: 'motorik', shape: 'beat', label: 'Motorik',
+      set: { 'part.rhythm.beat.lanes.0.p': 4, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 2, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 16, 'part.rhythm.beat.lanes.2.r': 0 } },
+    { id: 'sparsebeat', shape: 'beat', label: 'Sparse',
+      set: { 'part.rhythm.beat.lanes.0.p': 2, 'part.rhythm.beat.lanes.0.r': 0,
+             'part.rhythm.beat.lanes.1.p': 1, 'part.rhythm.beat.lanes.1.r': 4,
+             'part.rhythm.beat.lanes.2.p': 4, 'part.rhythm.beat.lanes.2.r': 2,
+             'part.rhythm.beat.vary': 20 } },
     { id: 'pad', shape: 'sustain', label: 'Pad',
       set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 1, 'part.pitch.inv': 0 } },
     { id: 'organ', shape: 'sustain', label: 'Organ',
@@ -1197,6 +1240,35 @@
         while (out2.length < r.steps) out2.push(0);
         r.lanes[li] = out2;
       }
+      // ── ♦ BEAT: THE RULES BEHIND A KIT (2026-09-21) ────────────────
+      // user: "what about drums? we should probably have a Beat material type".
+      // Drums were the ONE layer type with no generator: the kit emitter read
+      // only the drawn `lanes`, so a beat had to be built cell by cell and
+      // 🎲 New take, Evolve and Salt had nothing to re-decide — a drum layer was
+      // permanently "recorded" while every pitched layer generated.
+      // THE GENERATOR ALREADY EXISTED, one version back: v1's Beat was a
+      // EUCLID PER LANE (`euclidKit` / `euclidPattern`), and this file's own v1
+      // importer still fills lanes with `euclidCells(pulses, steps, rotate)`.
+      // v2 kept the data and dropped the rules; this puts them back.
+      //   beat = { lanes: [{ p: pulses, r: rotate }, …], vary }
+      // ADDITIVE AND ABSENT BY DEFAULT: a kit with no `beat` plays its drawn
+      // lanes exactly as before, byte for byte.
+      if (r.beat && typeof r.beat === 'object') {
+        const bl = Array.isArray(r.beat.lanes) ? r.beat.lanes : [];
+        const outB = [];
+        for (let li = 0; li < _V2_LANES; li++) {
+          const e = (bl[li] && typeof bl[li] === 'object') ? bl[li] : {};
+          const pu = clamp(e.p | 0, 0, r.steps);
+          // A LANE WITH NO PULSES IS OFF, and stores nothing else — one
+          // representation for silence, so a rotate left behind by a lane you
+          // switched off cannot come back when you switch it on.
+          outB.push(pu > 0 ? { p: pu, r: clamp(e.r | 0, 0, Math.max(0, r.steps - 1)) } : {});
+        }
+        const vr = clamp(r.beat.vary | 0, 0, 100);
+        r.beat = { lanes: outB };
+        if (vr > 0) r.beat.vary = vr;
+        if (!outB.some((e) => e.p > 0)) delete r.beat;     // nothing stated = no rules
+      } else if (r.beat !== undefined) delete r.beat;
 
       const t = (p.pitch && typeof p.pitch === 'object') ? p.pitch : (p.pitch = {});
       t.kind = PITCHES.has(t.kind) ? t.kind : 'chord';
@@ -1910,6 +1982,52 @@
       for (let i = 0; i < p.length; i++) if (p[i]) return i;
     } catch (e) {}
     return 0;
+  }
+  // ── ♦ BEAT — A EUCLID PER LANE ──────────────────────────────
+  // The rules a kit plays by, resolved to the same 8×N grid the drawn lanes
+  // use — so everything downstream (the emitter, the grid, the playhead, the
+  // drawing) sees one shape and knows nothing about where it came from.
+  // VARY IS WHAT GIVES DRUMS A TAKE. A euclid is a FORMULA, so a fresh seed
+  // changes nothing about it (the rule this file already states for
+  // `rhyShift`) — without this, 🎲 New take on a beat would redraw the same bar
+  // for ever. It uses v1's asymmetric rule verbatim: a hit is DROPPED at
+  // 0.40× the setting and a silent slot ADDED at 0.22×, which thins more than
+  // it thickens and so keeps the pattern recognisable as itself.
+  // ROTATION IS NOT TOUCHED by the seed, deliberately: a randomly rotated kick
+  // is no longer four-on-the-floor, and a beat that loses its downbeat between
+  // takes is not a variation of anything.
+  function beatLanes(p, steps, seed) {
+    const b = p && p.rhythm && p.rhythm.beat;
+    if (!b || !Array.isArray(b.lanes)) return null;
+    const st = Math.max(1, steps | 0);
+    const vary = clamp(b.vary | 0, 0, 100) / 100;
+    const out = [];
+    let any = false;
+    for (let li = 0; li < _V2_LANES; li++) {
+      const e = b.lanes[li] || {};
+      const pu = clamp(e.p | 0, 0, st);
+      if (pu <= 0) { out.push(new Array(st).fill(0)); continue; }
+      let row = [];
+      try { row = euclidCells(pu, st, e.r | 0) || []; } catch (x) { row = []; }
+      const cells = new Array(st);
+      for (let i = 0; i < st; i++) {
+        let on = row[i] ? 1 : 0;
+        if (vary > 0) {
+          // keyed on (layer-seed, lane, step) so one lane's draw cannot shift
+          // another's — the same isolation the chance rhythm keeps
+          const sd = ((seed | 0) ^ (li * 7919) ^ (i * 40503)) >>> 0;
+          if (on && vRnd(sd, 61) < vary * 0.40) on = 0;
+          else if (!on && vRnd(sd, 67) < vary * 0.22) on = 1;
+        }
+        cells[i] = on;
+        if (on) any = true;
+      }
+      out.push(cells);
+    }
+    // A BEAT THAT ROLLED ITSELF SILENT hands back to whatever was drawn rather
+    // than emitting nothing — silence from a rule you cannot see is the
+    // "changing it does nothing" report, and drums have no readout to explain it.
+    return any ? out : null;
   }
   function euclidCells(pulses, steps, rotate) {
     const st = Math.max(1, steps | 0), pu = clamp(pulses | 0, 0, st);
@@ -3438,7 +3556,10 @@
       const rest = (typeof _ambEffRest === 'function') ? (_ambEffRest(L) | 0) : (L.restProb | 0);
       const ghost = L.ghosts | 0, lvar = L.lenVary | 0;
       const st = Math.max(1, p.rhythm.steps | 0);
-      const lanes = p.rhythm.lanes || [];
+      // THE RULES IF THERE ARE ANY, the drawn grid otherwise. One line is the
+      // whole of "drums generate now": everything below this reads `lanes` and
+      // cannot tell which it got.
+      const lanes = beatLanes(p, st, seedBase) || p.rhythm.lanes || [];
       const slot = cyc / st;
       const durMs = Math.max(20, Math.round(slot * 1000 * (p.shape.lenRatio / 100)));
       for (let li = 0; li < _V2_LANES; li++) {
@@ -6030,6 +6151,44 @@
                pitch: { kind: 'confug', voices: 3, civs: [4, 3], corder: 'up', cstrict: 60, cmode: 'ladder' },
                shape: { lenRatio: 85, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
   };
+  // ── ♦ BEAT: THE ONE MATERIAL THAT IS NOT A PITCH RECIPE ───────────
+  // Every other material is a RHYTHM × PITCH pair. A kit answers pitch with the
+  // lane a hit is on, so a beat's recipe is WHICH LANES and WHAT EACH PLAYS —
+  // a euclid per lane, which is what v1's Beat was. It therefore writes
+  // `rhythm.beat` and leaves `pitch` alone, and it is the only entry here
+  // carrying `voice`.
+  // THE DEFAULT IS A BACKBEAT because it is the pattern most people mean by
+  // "a beat": kick on 1 and 3, snare on 2 and 4, eighths on the hat.
+  const BEAT_DEFAULT = { steps: 16, lanes: [
+    { p: 4, r: 0 },    // kick   — four on the floor's poorer cousin: every 4th
+    { p: 2, r: 4 },    // snare  — the backbeat, pushed to land on 2 and 4
+    { p: 8, r: 0 },    // hat    — eighths
+    {}, {}, {}, {}, {},
+  ] };
+  const MAT_BEAT = {
+    voice: 'kit',
+    rhythm: { kind: 'drawn', steps: BEAT_DEFAULT.steps,
+              beat: { lanes: BEAT_DEFAULT.lanes.map((e) => Object.assign({}, e)) } },
+    shape: { lenRatio: 60, holdSteps: 0 }, ring: 0, barsMode: 'fill',
+  };
+  function makeBeatFn(E, L) {
+    if (!L || !L.part) return null;
+    const p = L.part;
+    p.kind = 'live';
+    p.barsMode = MAT_BEAT.barsMode;
+    delete L.ring;
+    // THE VOICE COMES WITH IT. A beat on a synth is not a beat — this is the
+    // one material that states its instrument, because its whole recipe is
+    // addressed to lanes that only a kit has.
+    L.instrument = L.instrument || {};
+    L.instrument.voice = 'kit';
+    p.bars = partBarsFor(E, L) || p.bars || 2;
+    p.rhythm = JSON.parse(JSON.stringify(MAT_BEAT.rhythm));
+    p.shape = Object.assign({}, p.shape, MAT_BEAT.shape);
+    p.mat = 'beat';
+    try { E.getCfg(); } catch (e) {}
+    return { bars: p.bars };
+  }
   function makeSimpleFn(E, L, key) {
     const spec = MAT_SIMPLE[key];
     if (!spec || !L || !L.part) return null;
@@ -6053,8 +6212,12 @@
   function applyPresetFn(E, L, id) {
     const pr = PRESET_BY_ID[id]; if (!pr || !L || !L.part) return null;
     if (shapeKeyOf(L) !== pr.shape) {
+      // ♦ Beat builds through its own maker — without this entry a Beat
+      // Character applied to anything else returns null and the press is a
+      // silent no-op, which is how a Character comes to "do nothing".
       const mk = { sustain: () => makeSustainFn(E, L, true), arp: () => makeArpFn(E, L),
-                   roll: () => rollRunFn(E, L), mixed: () => makeMixedFn(E, L), ground: () => makeGroundFn(E, L) }[pr.shape];
+                   roll: () => rollRunFn(E, L), mixed: () => makeMixedFn(E, L),
+                   ground: () => makeGroundFn(E, L), beat: () => makeBeatFn(E, L) }[pr.shape];
       if (!mk || !mk()) return null;
     }
     // a STAGED layer is not in cfg — writing the cfg one would leak past ✓ Done
@@ -6432,6 +6595,7 @@
     makeArp: makeArpFn,
     makeSimple: makeSimpleFn,       // the table-driven doors
     matSimple: MAT_SIMPLE,          // …and the table, so the recipe has ONE source
+    makeBeat: makeBeatFn,           // ♦ Beat — a kit recipe, not a pitch one
     presets: PRESETS,
     draftOpen: draftOpenFn,
     draftOf: draftOfFn,
@@ -9908,6 +10072,25 @@
     const p = L.part, r = p.rhythm || {}, t = p.pitch || {};
     const n = (x) => (x | 0);
     const plural = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
+    // ♦ A BEAT IS NAMED BY ITS DRUMS. Everything below reads `pitch`, which a
+    // kit answers with the lane — so a drum part came out described as
+    // "Sustained — undefined notes of the first change", which is the toast
+    // that actually appeared when Beat was pressed.
+    if (((L.instrument && L.instrument.voice) || 'synth') === 'kit') {
+      const bl = (r.beat && Array.isArray(r.beat.lanes)) ? r.beat.lanes : null;
+      if (bl) {
+        const parts = [];
+        bl.forEach((e, li) => {
+          const pu = (e && e.p | 0) || 0;
+          if (pu > 0) parts.push(plural(pu, 'hit') + ' of ' + (V2.LANE_NAMES[li] || ('lane ' + li)).toLowerCase());
+        });
+        const vy = n(r.beat.vary);
+        return (parts.length ? parts.join(', ') : 'no drums playing') +
+          ' over ' + n(r.steps) + ' steps' + (vy ? ', re-decided ' + vy + '% each take' : '');
+      }
+      const drawn = (r.lanes || []).reduce((a, row) => a + (row || []).reduce((b2, c) => b2 + (c ? 1 : 0), 0), 0);
+      return plural(drawn, 'hit') + ' drawn over ' + n(r.steps) + ' steps';
+    }
     let rh;
     if (r.kind === 'euclid') {
       rh = plural(n(r.pulses), 'hit') + ' spread evenly over ' + n(r.steps) + ' steps';
@@ -9989,7 +10172,8 @@
     const M = { sustain: '\u25ac Sustain a chord', arp: '\u27f3 Arpeggiate', roll: '\ud83c\udfb2 Roll a line',
                 mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
-                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued' };
+                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
+                beat: '\u2666 Beat' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -10004,7 +10188,13 @@
     // when present (it records the actual press); the shape answers otherwise,
     // which is what keeps "what Material are we using" answerable on every
     // part rather than only the ones made since yesterday.
-    const guess = (r.kind === 'ground') ? 'ground'
+    // A KIT WITH RULES IS A BEAT, and it is asked FIRST: `beat` lives on the
+    // rhythm and says nothing about pitch, so every guess below would answer
+    // from a `pitch.kind` the kit never reads and name some pitched material
+    // over a drum part.
+    const guess = (r.beat && Array.isArray(r.beat.lanes) &&
+                   ((L.instrument && L.instrument.voice) === 'kit')) ? 'beat'
+      : (r.kind === 'ground') ? 'ground'
       : (t.kind === 'confug') ? 'confug'
       : (t.kind === 'mixed') ? 'mixed'
       : (t.kind === 'series') ? 'arp'
@@ -10162,7 +10352,8 @@
                 roll: '\ud83c\udfb2 Roll a line', mixed: '\u2687 Mix chords + notes',
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
-                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued' };
+                scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
+                beat: '\u2666 Beat' };
     // `.v2-genface` was the sub-label INSIDE ⚙ Deep's button and went with it;
     // the query is kept because ✨ Quick's own face still uses the same class
     // on some builds, and a missing node here is simply skipped.
@@ -10183,7 +10374,15 @@
     // select whose value matches no option silently shows the FIRST one.
     const sp = card.querySelector('.v2-shapepick');
     if (sp) {
-      const SH = [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
+      // A KIT ANSWERS PITCH WITH THE LANE, so every material below writes
+      // `pitch` into a part that will never read it: measured, picking one on a
+      // drum layer changes NOTHING audible, which is the same dead-control
+      // shape reported one level up. A kit gets the one material addressed to
+      // lanes; a synth gets the nine addressed to pitch. Neither sees the
+      // other's, because neither can play it.
+      const isKit3 = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
+      const SH = isKit3 ? [['beat', '\u2666 Beat \u2014 a pattern per drum']] :
+        [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
         ['onenote', '\u25aa Repeat one note'], ['arp', '\u27f3 Arpeggiate'],
         ['roll', '\ud83c\udfb2 Roll a line'], ['scatter', '\u273b Scatter tones'],
         ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes'],
@@ -10212,7 +10411,15 @@
         const cb3 = Math.max(0.125, +(L.part.bars || 1));
         const barsTxt = (Math.round(cb3 * 100) / 100) + ' bar' + (cb3 === 1 ? '' : 's');
         let on3 = 0;
-        if (rh3.kind === 'euclid' || rh3.kind === 'drawn') on3 = (rh3.pulses | 0) || 0;
+        // A KIT'S ONSETS ARE ITS LANES' HITS, not `pulses` — which it never
+        // reads. A ♦ Beat of 4 kicks + 2 snares + 8 hats was announcing
+        // "3 onsets" (the leftover euclid default) over a bar with fourteen.
+        const kit3 = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
+        if (kit3) {
+          const bl3 = (rh3.beat && Array.isArray(rh3.beat.lanes)) ? rh3.beat.lanes : null;
+          on3 = bl3 ? bl3.reduce((a, e) => a + ((e && e.p | 0) || 0), 0)
+                    : (rh3.lanes || []).reduce((a, row) => a + (row || []).reduce((b2, c) => b2 + (c ? 1 : 0), 0), 0);
+        } else if (rh3.kind === 'euclid' || rh3.kind === 'drawn') on3 = (rh3.pulses | 0) || 0;
         else if (rh3.kind === 'pulse') on3 = (rh3.n | 0) || 0;
         bits.push(on3 > 0
           ? on3 + ' onset' + (on3 === 1 ? '' : 's') + ' over ' + barsTxt +
@@ -10263,7 +10470,12 @@
     // matches no option silently shows the FIRST one — the documented trap).
     const prow = card.querySelector('.v2-shapepop .v2-presetctl');
     if (prow) {
-      const PK = { sustain: 'sustain', arp: 'arp', roll: 'roll', melody: 'roll', mixed: 'mixed', ground: 'ground' };
+      // A HAND-KEPT MAP IS A LIST A NEW MATERIAL IS MISSING FROM: with no
+      // `beat` entry `shp` came out undefined, the list came out empty, and the
+      // picker HID ITSELF — seven Characters in the table and no door to any of
+      // them, silently.
+      const PK = { sustain: 'sustain', arp: 'arp', roll: 'roll', melody: 'roll', mixed: 'mixed',
+                   ground: 'ground', beat: 'beat' };
       const shp = (L.part.kind === 'live') ? PK[matProv(L).key] : null;
       const list = shp ? (V2.presets || []).filter((pr) => pr.shape === shp) : [];
       const st0 = V2.presetState ? V2.presetState(L) : { id: null, tuned: false };
@@ -12469,6 +12681,10 @@
   // LIFTED HERE so there is ONE table. It was local to that panel's sync, and
   // the Pitch row needed the same answer — a second copy is how the two come
   // to disagree about what "Arpeggiate" is made of.
+  // ♦ BEAT IS DELIBERATELY ABSENT from this table. A recipe here is a RHYTHM
+  // × PITCH pair, and a kit answers pitch with the lane — so Beat has no pair
+  // to stand for, and `⚠ Advanced: recipe` (which reads this) correctly
+  // declines to offer it two selects that would do nothing.
   const MAT_RECIPE = { sustain: ['pulse', 'chord'], arp: ['pulse', 'series'], roll: ['euclid', 'walk'],
     melody: ['euclid', 'walk'], mixed: ['euclid', 'mixed'], ground: ['ground', 'chord'] };
   // …and the table-driven doors state their own recipe, DERIVED from the table
@@ -12515,7 +12731,8 @@
     });
     return lifted;
   }
-  const MAT_NAME = { sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
+  const MAT_NAME = { beat: 'Beat',
+    sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
     mixed: 'Mix chords + notes', ground: 'Play the changes',
     anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones',
     confug: 'ConFugued' };
@@ -13485,6 +13702,11 @@
             // every handler that already found those buttons still does.
             '<div class="v2-shaperow"><select class="ambient-select v2-shapepick" aria-label="Material"></select></div>' +
             '<span class="ambient-seg-row v2-genshapes">' +
+              // ♦ BEAT is the kit's only door and the only one that states an
+              // instrument. It is in the DOM beside the rest because the select
+              // works by PRESSING the matching button — the one implementation
+              // of confirm/adopt/stamp/roll they all share.
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="beat" title="♦ Beat — a pattern per drum: a euclid on each lane, so a kit generates like everything else.">\u2666 Beat</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="anchor" title="⚓ Pedal point — one note held against the whole progression, whatever the chords do.">\u2693 Hold a pedal note</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="onenote" title="▪ One note, struck again and again — the same degree of each chord, so it follows the changes.">\u25aa Repeat one note</button>' +
@@ -13554,6 +13776,31 @@
                 'These notes are written down. Touch any knob here and this draft hands the ' +
                 'part back to the rules, so you can hear what they make \u2014 ' +
                 '\u2713 Done keeps it, \u2715 Cancel puts the written notes back.</span></div>' +
+              // ── ♦ BEAT'S KNOBS — HOW BUSY EACH DRUM IS ───────────────
+              // One number per lane: hits per cycle, spread evenly by the same
+              // euclid every other rhythm here uses. 0 silences that drum, which
+              // is how you choose WHICH lanes play without a second control.
+              // ONE ROW OF EIGHT, on the grid the change strip already uses —
+              // eight labelled rows would be the panel this card keeps having to
+              // shrink, and "how busy is the hat" is one number, not a section.
+              // Gated `voice:kit`: on a synth these write lanes nothing reads.
+              (function (bl) {
+                return '<div class="ambient-ctrl v2-beatrow" data-v2when="kind:live;voice:kit">' +
+                  '<label>Each drum</label>' +
+                  '<span class="v2-beatlanes">' +
+                  V2.LANE_NAMES.map((nm, li) =>
+                    mini(L, 'part.rhythm.beat.lanes.' + li + '.p', nm,
+                         ((bl[li] || {}).p | 0), 0, 32, 1)).join('') +
+                  '</span>' +
+                  '<span class="ambient-hint">hits per cycle, spread evenly — 0 sits that drum out</span>' +
+                  '</div>' +
+                  // VARY IS WHAT GIVES A BEAT A TAKE. A euclid is a formula, so
+                  // without it 🎲 New take would redraw the same bar for ever —
+                  // the very thing that made drums feel inert.
+                  gst(L, 'part.rhythm.beat.vary', 'Vary', ((L.part.rhythm.beat || {}).vary | 0), 0, 100,
+                      '% the pattern re-decides on each take — 0 plays the same bar every time',
+                      'kind:live;voice:kit');
+              })(((L.part.rhythm || {}).beat || {}).lanes || []) +
               '<div class="ambient-ctrl v2-presetctl" hidden>' +
                 '<label for="' + uid(L, 'preset') + '-gen">Character</label>' +
                 '<select id="' + uid(L, 'preset') + '-gen" class="ambient-select v2-presetpick"></select>' +
@@ -13572,8 +13819,13 @@
                 // `gst` is the same stepper the other discrete counts use, so
                 // it commits through the same delegated handler and a value
                 // can also just be typed in.
+                // `voice:synth` BECAUSE A KIT NEVER READS IT. The kit emitter
+                // takes only `lanes` and `steps`, so on a drum layer this row
+                // wrote a number nothing looked at — the dead-control shape
+                // this panel keeps having to weed out. ♦ Beat asks the same
+                // question per lane instead.
                 return gst(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, gN,
-                    'onsets in the cycle \u2014 up to the Grid', 'kind:live;rhythm:euclid,drawn') +
+                    'onsets in the cycle \u2014 up to the Grid', 'kind:live;voice:synth;rhythm:euclid,drawn') +
                   gsl(L, 'part.rhythm.chance', 'Chance', rr0.chance, 0, 100,
                       'how often a step sounds', 'kind:live;rhythm:chance');
               })(L.part.rhythm || {}) +
@@ -21107,7 +21359,8 @@
           // a SHAPE press is not a preset — the stamp would name values the
           // part is about to stop having
           delete ctx.L.part.preset;
-          const info = (which === 'arp') ? V2.makeArp(E, ctx.L)
+          const info = (which === 'beat') ? V2.makeBeat(E, ctx.L)
+            : (which === 'arp') ? V2.makeArp(E, ctx.L)
             : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
             : (which === 'ground') ? V2.makeGround(E, ctx.L)
             // THE TABLE-DRIVEN DOORS — one call, whichever it was

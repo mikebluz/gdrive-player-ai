@@ -19,6 +19,13 @@
   on the dev server that is the user's real saved state.
 - **Run a new probe against BOTH the dev origin and a fresh one.** Same code, different stored state,
   different answer — and the one you developed against is the one that lies to you.
+- **Changing the instrument while ⚙ Deep is open leaves the draft stale.** Deep holds a STAGED copy;
+  switching the voice on the card underneath rebuilds it, and the next material press lands on the
+  OLD part — measured as "picked Beat, got a frozen synth", which reads exactly like the door being
+  broken. Shut Deep, switch, reopen — which is the order a person works in anyway.
+- **Measuring a preset through live dice measures the dice.** A Character is a set of stated values;
+  with `vary` left at 45 from an earlier check, Half-time read 3/3/3 instead of 2/1/8. Turn the dice
+  off before asserting about anything deterministic.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

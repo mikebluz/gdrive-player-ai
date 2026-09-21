@@ -1275,6 +1275,23 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   indistinguishable from a control that does nothing. Do not add a floor to the generator (a sparse
   chance pattern is SUPPOSED to be able to rest); SAY it, and name the way out (🎲 New take).
 
+- **A KIT READS ONLY `rhythm.lanes` AND `steps` — never `pitch`, never `rhythm.pulses`.** So every
+  pitched material and every euclid row is a DEAD CONTROL on a drum layer: measured, picking one
+  changed nothing audible. Gate them `voice:synth`, and give a kit the one material addressed to
+  lanes. ♦ Beat's rules are `rhythm.beat = { lanes: [{p, r}…], vary }` — a euclid per lane, resolved
+  by `beatLanes` into the same grid the drawn form uses, so everything downstream cannot tell which
+  it got. Absent = the drawn grid, byte for byte.
+- **A EUCLID IS A FORMULA, so a fresh seed gives no new take** (the rule `rhyShift` already states).
+  Drums therefore need `beat.vary` or 🎲 New take redraws the same bar for ever — which is what made a
+  drum layer feel permanently "recorded". Vary uses v1's asymmetric rule (drop at 0.40×, add at
+  0.22×) so the pattern thins more than it thickens and stays recognisable. **Never seed the
+  ROTATION**: a randomly rotated kick is no longer four-on-the-floor, and a beat that loses its
+  downbeat between takes is not a variation of anything.
+- **`PK` in the preset sync is a HAND-KEPT MAP of material → Character shape.** A material missing
+  from it resolves to `undefined`, the filtered list comes out empty, and the picker HIDES ITSELF —
+  seven Characters in the table with no door to any of them, silently. Add the entry in the same
+  change as the material.
+
 ### Bloom stores — what exists, and the one thing to know about each
 
 All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/arch/harness green.

@@ -15672,6 +15672,21 @@
 }
 .v2-gwpart .v2-mini .ambient-step-btn:active { background: rgba(159, 122, 234, 0.3); color: #e6def8; }
 .v2-gwpart .v2-mini .ambient-step-inp { color: #f0edfa; }
+/* ♦ BEAT'S EIGHT LANES — one number per drum, on the same grid the change
+   strip uses, so the steppers line up in columns rather than wrapping ragged.
+   Each cell is one `mini`, and the lane NAME is its caption. */
+.v2-beatrow > .v2-beatlanes {
+  display: grid; gap: 5px; min-width: 0;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+}
+.v2-beatrow .v2-mini .ambient-stepper {
+  border: 1px solid #34344a; border-radius: 7px; overflow: hidden;
+  background: rgba(45, 45, 63, 0.3); width: 100%; min-width: 0;
+}
+.v2-beatrow .v2-mini .ambient-step-btn { background: transparent; color: #7e7899; font-weight: 600; }
+.v2-beatrow .v2-mini .ambient-step-inp { flex: 1 1 auto; width: auto; min-width: 0; color: #f0edfa; }
+/* a drum set to 0 is sitting out, and says so rather than just reading zero */
+.v2-beatrow .v2-mini .ambient-step-inp[value="0"] { color: #6b6b8a; }
 .v2-gwcell .v2-mini { padding: 0; }
 .v2-gwcell .v2-mini-lab { display: none; }   /* the chord name above IS the label */
 /* SET BY HAND vs following the number above — a value you chose must not look

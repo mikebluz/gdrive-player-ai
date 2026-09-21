@@ -59,7 +59,23 @@ const ok = (name, cond, detail) => {
       ms.setPositionState = (st) => { window.__ms.pos = st; window.__ms.posN++; return realPos(st); };
     }
     window.musicPlayer.mediaSessionInit();
+    // …and a QUIESCENCE STAMP. The app restores a saved playlist a few seconds
+    // into boot (and the ⏭ / ⏮ presses below start their own async work),
+    // and every one of those calls `loadTrack`, which pauses the element and
+    // strips its src. Racing that made the playback block read "paused" with
+    // the position never leaving 0 — on the checkout that HAS a saved
+    // playlist, deterministically, while a fresh origin passed.
+    const p0 = window.musicPlayer;
+    const realLoad = p0.loadTrack.bind(p0);
+    window.__lastLoad = Date.now();
+    p0.loadTrack = (t) => { window.__lastLoad = Date.now(); return realLoad(t); };
   });
+  // Never by CLEARING the origin's storage — that is the user's real saved
+  // playlist on the dev server. Wait for the boot to finish instead.
+  const quiet = async (ms = 1500) => {
+    await page.waitForFunction((m) => Date.now() - (window.__lastLoad || 0) > m,
+      { timeout: 20000, polling: 200 }, ms);
+  };
 
   const acts = await page.evaluate(() => window.__ms.actions.slice());
   console.log('\n  registered actions: ' + JSON.stringify(acts) + '\n');
@@ -143,6 +159,7 @@ const ok = (name, cond, detail) => {
     JSON.stringify(wired));
 
   // ── STATE AND POSITION follow the element's own events ──────────────────
+  await quiet();
   const play = await page.evaluate(async () => {
     // three seconds of 8-bit silence, so `duration` is real — the silent WAV
     // the player ships for gesture-unlocking has an EMPTY data chunk and a

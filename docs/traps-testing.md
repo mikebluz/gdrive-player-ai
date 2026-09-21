@@ -11,6 +11,14 @@
   HTML 404 page and every probe run against the worktree logs `Unexpected token '<'`. Harmless to most
   checks, but any "no page errors" assertion fails on it and the noise masks a REAL page error. Copy
   the file in from the main checkout before believing a probe's error list.
+- **A probe that starts driving as soon as the page loads is racing the app's own boot.** The Player
+  restores a saved playlist a few seconds in, and that calls `loadTrack`, which pauses the audio
+  element and strips its src — so a playback check read "paused" with the position never leaving 0,
+  DETERMINISTICALLY on the origin that has a saved playlist and never on a fresh one. Hook the call
+  that disturbs you, stamp the time, and wait for quiescence. Never by clearing the origin's storage:
+  on the dev server that is the user's real saved state.
+- **Run a new probe against BOTH the dev origin and a fresh one.** Same code, different stored state,
+  different answer — and the one you developed against is the one that lies to you.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

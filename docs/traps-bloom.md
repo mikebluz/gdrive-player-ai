@@ -787,8 +787,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     finger), so the summary kept whatever was true at build time: set Motion to Contrary and it still
     read "oblique". Repainted in `genSync` now, from ONE definition (`harmSaysOf` / `harmSumOf`) used
     at build time too — and swept with `querySelectorAll`, because ⚙ Deep builds harmony TWICE.
-  - **`harmRowHtml(...).replace('data-v2when="…"', …)` retargets the CHIPS row, not the voice rows** —
-    a string pattern replaces the FIRST match, and the chips row is returned first.
+  - **A GATE SPLICED IN WITH `.replace('data-v2when="…"', …)` REACHES ONE ROW.** A string pattern
+    replaces the FIRST match only, and `harmRowHtml` returns the chips row before the voice rows —
+    so ⚙ Deep's two harmony copies, built "with complementary gates — exactly one shows", in fact
+    showed BOTH voice rows on every shape for as long as they existed. Reported as "why are the
+    harmony params in two places". There is ONE copy now (Fine-tune ▸ Notes, with the rest of the
+    "which notes" family) and no splice. **Count the rows that are ON SCREEN, per shape** — a check
+    that counts call sites, or trusts a gate string, would have passed throughout.
 - **PITCH · HARMONY · VOICING ARE ⚙ DEEP'S, AND ONLY DEEP'S (2026-09-20, user: "it seems like these
   3 param groups (Pitch/Harmony/Voicing) belong in Deep").** They already did — every field those ✦
   Generate tabs carried had a row in ⚙ Deep — so the sheet's tabs were a SECOND door and were

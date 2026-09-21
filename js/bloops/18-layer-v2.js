@@ -13033,15 +13033,19 @@
               gsel(L, 'part.rhythm.strike', 'Strike', (L.part.rhythm || {}).strike || '',
                    [['', 'Once per change'], ['half', 'Every half bar'], ['bar', 'Every bar'],
                     ['comp', 'Comp \u2014 the 1 and the & of 2']], '', 'kind:live;rhythm:ground') +
-              // HARMONY is a main knob for single-note shapes and a fine one
-              // for chord shapes, so the panel carries it TWICE with
-              // complementary gates — exactly one shows. Its buttons are
-              // class-delegated with no id and rebuilt from state, so two
-              // copies cannot drift (the same reason the sheet copy is safe).
-              ((typeof harmRowHtml === 'function')
-                ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
-                    'data-v2when="kind:live;voice:synth;pitch:fixed,anchor,series,drawn"')
-                : '') +
+              // (HARMONY WAS BUILT HERE TOO until 2026-09-20 — "a main knob for
+              // single-note shapes and a fine one for chord shapes", carried
+              // twice with complementary gates so that exactly one would show.
+              // It never worked. The gate was applied with
+              // `.replace('data-v2when="…"', …)`, and a STRING pattern replaces
+              // only the FIRST match — which is the CHIPS row, because
+              // `harmRowHtml` returns it before the per-voice rows. So the
+              // chips obeyed their gate while every voice row kept the bare
+              // `kind:live;voice:synth` and showed in BOTH places at once:
+              // reported as "why are the harmony params in two places".
+              // ONE COPY NOW, in Fine-tune ▸ Notes with the rest of the "which
+              // notes" family. A lit voice is still announced from up here by
+              // the Changed chips and by the tab's own count.)
               // Arpeggiate counts its onsets as a pulse, so ITS "How many" is
               // `rhythm.n` — a main knob, beside Speed (it was in Fine-tune).
               // …but NOT on a sustain (pulse × chord): that shape is one onset
@@ -13158,9 +13162,14 @@
                   (L.followSalt ? 'On — follows the colours' : 'Off — holds the chord') + '</button>' +
                 '<span class="ambient-hint">re-voice inside a chord as Salt recolours it</span></div>' +
               saltRows(L, 'kind:live;voice:synth', true) +
+              // HARMONY — extra voices shadowing the line at a stated interval.
+              // THE ONLY COPY, and deliberately ungated beyond `kind:live`:
+              // every live pitch kind reads `part.pitch.harm`, which is what
+              // the row has always said. The pitch list that used to be spliced
+              // in here reached only the chips row anyway (see the note at the
+              // deleted second copy), so no shape loses a door it really had.
               ((typeof harmRowHtml === 'function')
-                ? harmRowHtml(L, L.part.pitch || {}).replace('data-v2when="kind:live;voice:synth"',
-                    'data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed,walk,chance"')
+                ? harmRowHtml(L, L.part.pitch || {})
                 : '')) +
               // ── REPEATS — how the part repeats itself
               ftrows('form',

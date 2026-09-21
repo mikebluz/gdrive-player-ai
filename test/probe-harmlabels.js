@@ -191,6 +191,62 @@ const ok = (name, cond, detail) => {
   ok('…and so did the summary under the chips',
     /contrary/.test(after.sum || ''), JSON.stringify((after.sum || '').slice(0, 90)));
 
+  // ── ONE HOME, FOR EVERY SHAPE ───────────────────────────────────────────
+  // user: "why are the harmony params in two places, they should only be in
+  // one". ⚙ Deep used to build harmony TWICE with complementary gates, and the
+  // gate was spliced in with `.replace('data-v2when="…"', …)` — a STRING
+  // pattern, so it replaced only the FIRST match: the chips row. Every VOICE
+  // row kept the bare gate and showed in both places at once. Counting the
+  // ROWS THAT ARE ON SCREEN is the only form of this check that would have
+  // failed then and passes now; counting call sites would not have.
+  console.log('\n  harmony rows on screen, per shape:\n');
+  const dupes = [];
+  for (const [shape, pid] of [['ground', 'held'], ['arp', 'arpwide'], ['roll', 'rollpulse'],
+                              ['sustain', 'pad'], ['mixed', 'mixarch']]) {
+    const n = await page.evaluate((id) => {
+      const E = _masterEng;
+      const L = (E.getCfg().layers || [])[0];
+      L.part.kind = 'live'; L.part.notes = []; E.getCfg();
+      window._v2.applyPreset(E, (E.getCfg().layers || [])[0], id);
+      E.getCfg();
+      const L2 = (E.getCfg().layers || [])[0];
+      L2.part.pitch.harm = [{ deg: -2 }];
+      E.getCfg();
+      // the STAGED copy is what ⚙ Deep shows, so light the voice there too
+      const S = window._v2.stagedOf(L2.id | 0);
+      if (S) { S.part.pitch.harm = [{ deg: -2 }]; E.getCfg(); }
+      return null;
+    }, pid);
+    await zz(700);
+    // every fine-tune tab in turn: a row hidden behind a tab is still A HOME
+    const counts = await page.evaluate(() => {
+      const card = document.querySelector('.v2-layer');
+      const tabs = [...card.querySelectorAll('.v2-fttab')];
+      const seen = { rows: 0, chips: 0 };
+      const vis = (el) => {
+        let n = el;
+        while (n && n !== card) { if (n.style && n.style.display === 'none') return false; n = n.parentElement; }
+        return true;
+      };
+      tabs.forEach((tb) => {
+        tb.click();
+        seen.rows = Math.max(seen.rows,
+          [...card.querySelectorAll('.v2-genwrap .ambient-ctrl.v2-harmopt')].filter(vis).length);
+        seen.chips = Math.max(seen.chips,
+          [...card.querySelectorAll('.v2-genwrap .v2-harm')].filter(vis).length ? 1 : 0);
+      });
+      // …plus the rows that are gated on regardless of which tab is showing
+      seen.gatedRows = [...card.querySelectorAll('.v2-genwrap .ambient-ctrl.v2-harmopt')]
+        .filter((r) => r.style.display !== 'none').length;
+      return seen;
+    });
+    console.log('   ' + shape.padEnd(9) + 'voice rows gated on: ' + counts.gatedRows);
+    if (counts.gatedRows > 1) dupes.push(shape + ' shows ' + counts.gatedRows);
+  }
+  console.log('');
+  ok('the harmony voice row has exactly ONE home, for every shape',
+    dupes.length === 0, dupes.join(' · '));
+
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

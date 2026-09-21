@@ -118,6 +118,16 @@
   belong to, which is the one place nobody looks. Add the selector in the same change, and check it by
   opening a NEIGHBOUR and measuring.
 
+- **`.ambient-ctrl` is `84px 1fr auto`, so a row's READOUT sets its control's width.** The third
+  column takes whatever its hint needs and the `1fr` shrinks around it, while a row with no hint gets
+  the lot — measured in ⚙ Deep's zone 2: six control widths in seven rows. Inside `.v2-genrows` every
+  readout now drops to its own line (`grid-column: 2 / -1`, auto row) so there is ONE control column.
+  Three things that idiom needs: an EMPTY hint must be `display: none` or it costs a line for no text;
+  a gutter-styled readout (`text-align: right`, `justify-self: end`) must be re-aligned once it has a
+  full line, or it strands itself on the far side; and `grid-column: 2 / -1` with an auto row is what
+  makes a label-plus-prose row keep its hint on line 1 while a label-control-hint row pushes it to
+  line 2 — no second selector needed.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

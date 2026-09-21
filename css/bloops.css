@@ -15722,6 +15722,66 @@
    override loses the cascade — compound it (the documented trap, now on its
    fifth control). */
 .v2-layer .v2-genrows select.ambient-select { width: 100%; min-width: 0; }
+/* ── ONE CONTROL COLUMN (2026-09-21) ───────────────────────────
+   user: "how can we clean up the inputs for more symmetry? the right gutter
+   readouts create visual friction making inputs different sizes".
+   `.ambient-ctrl` is `84px 1fr auto`, so the third column took whatever its
+   readout needed and the 1fr control shrank around it — a row with no readout
+   got the lot. MEASURED in ⚙ Deep's zone 2: SIX different control widths and
+   six different right edges in seven rows (308/314/319/359/386/396 at 1200px;
+   155/165/206/233/243 at 390px). Every control is one 1fr track now and prose
+   drops to its own line beneath it, so every row ends at the same edge.
+   `grid-column: 2 / -1` with an AUTO row does both jobs at once: on a row that
+   already has a control in column 2 the hint is pushed to the next line, and on
+   a label-plus-prose row (`.v2-deferhint`) column 2 of row 1 is free, so it
+   stays where it was instead of leaving a blank line above itself.
+   THE READOUT GAINS ROOM RATHER THAN LOSING IT — a hint squeezed into 27–78px
+   over three lines becomes one line at full width, so the panel is no taller.
+   This is the SAME fix the base sheet already makes below 560px for sliders
+   ("a long hint must not eat the slider"), generalised to every control type
+   and every width inside this panel. */
+.v2-layer .v2-genrows .ambient-ctrl {
+  grid-template-columns: 84px minmax(0, 1fr);
+  /* the readout belongs to the control ABOVE it, not to the next row, so the
+     line it sits on is tucked close — `gap: 10px` from the base rule applies
+     to both axes, and at 10px a five-character readout cost 25px of panel */
+  column-gap: 10px; row-gap: 4px;
+}
+.v2-layer .v2-genrows .ambient-ctrl > .ambient-hint {
+  grid-column: 2 / -1; white-space: normal; overflow-wrap: anywhere; line-height: 1.35;
+}
+/* AN EMPTY READOUT MUST NOT TAKE A LINE. Several rows ship a blank
+   `<span class="ambient-hint">` for `genSync` to write into later (Speed, the
+   slider values); in the gutter they cost nothing, on their own line they each
+   cost ~10px of dead space — measured on Voicing and Strike, which grew for a
+   readout that has no text. `:empty` is live, so the line appears the moment
+   JS writes into it. */
+.v2-layer .v2-genrows .ambient-ctrl > .ambient-hint:empty { display: none; }
+/* …and a slider's live value reads LEFT once it has its own line.
+   `text-align: right` is correct for a narrow gutter — it keeps the digits
+   hard against the edge — but given the full width it strands the number on
+   the far side, the one readout in the panel that does not begin where its
+   control begins. */
+.v2-layer .v2-genrows .ambient-ctrl > .ambient-hint.ambient-sl-v { text-align: left; }
+/* `.v2-wideh` WAS THIS FIX, ONE ROW AT A TIME — "a row whose sentence needs
+   the whole width", spanning `1 / -1`. Now that EVERY row drops its readout to
+   its own line it is redundant here, and its column-1 start makes Arrive the
+   one readout in the panel that does not begin where its control does. Scoped
+   to this panel, so the class keeps working on the sheet, where the general
+   rule does not apply. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-wideh > .ambient-hint { grid-column: 2 / -1; }
+/* A DIE'S VALUE IS A BARE "0%", not a sentence — it stays in the gutter beside
+   the slider it belongs to, which is where you want it while dragging. Only
+   its HINT drops below. `.v2-dmv` is reached by the rule above (it carries
+   `.ambient-hint` too), so its column is restated here. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-dmrow { grid-template-columns: 84px minmax(0, 1fr) auto; }
+.v2-layer .v2-genrows .ambient-ctrl.v2-dmrow > .ambient-hint.v2-dmv { grid-column: 3; }
+/* ↺ Reset is an ACTION, not a readout, and an action belongs on the control
+   line — the row still ends at the same right edge as every other. It is the
+   ONLY row in this panel whose third child is not an `.ambient-hint` (audited:
+   23 row shapes, one exception), which is why this is a named exception rather
+   than a rule about buttons. */
+.v2-layer .v2-genrows .ambient-ctrl.v2-presetctl { grid-template-columns: 84px minmax(0, 1fr) auto; }
 /* THE ▸ More FOLD. A header is a header, not another parameter row: its
    button sits BESIDE its name, matching the sheet's own `.v2-disc` rule. */
 .v2-layer .v2-genrows .ambient-ctrl.v2-disc {

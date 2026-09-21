@@ -7,6 +7,10 @@
 
 ### Measurement & testing discipline
 
+- **A worktree has no `js/config.js`** — it is gitignored, so the server answers that request with the
+  HTML 404 page and every probe run against the worktree logs `Unexpected token '<'`. Harmless to most
+  checks, but any "no page errors" assertion fails on it and the noise masks a REAL page error. Copy
+  the file in from the main checkout before believing a probe's error list.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

@@ -148,6 +148,17 @@
   column-gap against a 5px put the third column 1px out). And the control inside a track must be
   told to fill it, or you have aligned cells with unaligned contents.
 
+- **Replacing a gutter label with a grid deletes what the label MEANT.** "All of it" was the only
+  thing saying that a Groundwork part's three knobs are the FLOOR every change inherits; dropping it
+  for column alignment left a bare "Notes 3" above a strip of per-change 3s with nothing to tell them
+  apart, and it was reported as the parameters having gone missing. A caption ABOVE the group keeps
+  both — the meaning and the columns.
+- **Splitting a surface into tabs means splitting its ROWS too, not just its panels.** The first cut
+  put the per-change note count AND the line's three-state toggle on both tabs, so the Line tab read
+  as a place where some of the line lived. Each tab hides the half that is not its business (one strip
+  in the DOM, CSS decides), and the handler repeats the test so a keyboard cannot reach past
+  `pointer-events: none`.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

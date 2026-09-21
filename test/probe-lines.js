@@ -165,11 +165,18 @@ const ok = (name, cond, detail) => {
     });
     const bodies = [...blk.querySelectorAll('.v2-gwbody')].map((b) => ({
       k: b.getAttribute('data-gwt'), shown: vis(b) }));
+    // EACH TAB SHOWS ONLY ITS OWN HALF OF A CHANGE: the note count belongs to
+    // the chord, the three-state ♪ to the line, and a change's line settings
+    // open only where the line lives.
     return {
       n: top.length,
       lefts: [...new Set(top.map((i) => i.l))].sort((a, b) => a - b),
       widths: [...new Set(top.map((i) => i.w))].sort((a, b) => a - b),
       tabs, bodies,
+      caps: [...blk.querySelectorAll('.v2-gwcap')].filter(vis).map((e) => e.textContent),
+      cellMel: [...blk.querySelectorAll('.v2-gwcell .v2-gwmel')].filter(vis).length,
+      cellStep: [...blk.querySelectorAll('.v2-gwcell .v2-mini')].filter(vis).length,
+      melFaces: [...blk.querySelectorAll('.v2-gwcell .v2-gwmel')].map((e) => e.textContent.trim()),
       h: Math.round(br.height),
     };
   });
@@ -193,6 +200,16 @@ const ok = (name, cond, detail) => {
   ok('…and every control on the block shares a small set of columns',
     bs0.n >= 5 && bs0.lefts.length <= 3, JSON.stringify({ n: bs0.n, lefts: bs0.lefts }));
   ok('…each one track wide', bs0.widths.length === 1, JSON.stringify(bs0.widths));
+  // WHERE THE "All changes" PARAMS WENT. Dropping the gutter label for the
+  // grid took the only thing saying these three are the floor every change
+  // inherits, leaving a bare "Notes 3" over a strip of per-change 3s.
+  ok('…under an "All changes" heading, paired with "Each change"',
+    bs0.caps.length === 2 && /All changes/i.test(bs0.caps[0]) && /Each change/i.test(bs0.caps[1]),
+    JSON.stringify(bs0.caps));
+  // user: "we can remove the toggle from the Each change cards on Chords tab"
+  ok('…and a change on the Chords tab shows its note count, not the line toggle',
+    bs0.cellStep >= 3 && bs0.cellMel === 0,
+    JSON.stringify({ steppers: bs0.cellStep, melToggles: bs0.cellMel }));
 
   // THE OTHER TAB IS THE SAME GRID — an alignment that holds on one tab and
   // not the other is the asymmetry this is here to prevent.
@@ -216,6 +233,19 @@ const ok = (name, cond, detail) => {
   ok('…and it lands on the very same columns',
     bs1.lefts.length <= 3 && JSON.stringify(bs1.lefts) === JSON.stringify(bs0.lefts),
     JSON.stringify({ line: bs1.lefts, chords: bs0.lefts }));
+  // …and the mirror of the check above: here the change carries the line's
+  // three-state and NOT the chord's note count. user: "line should still be
+  // tweakable per change, but only on its tab".
+  ok('…where a change carries the line toggle instead of its note count',
+    bs1.cellMel >= 3 && bs1.cellStep === 0,
+    JSON.stringify({ steppers: bs1.cellStep, melToggles: bs1.cellMel }));
+  // THREE STATES TOLD APART BY WORDS, not by a legend of glyphs.
+  ok('…and that toggle says which of its three states it is in',
+    bs1.melFaces.length >= 3 && bs1.melFaces.every((f) => /follows|plays|none|no line/i.test(f)),
+    JSON.stringify(bs1.melFaces));
+  ok('…with the same two headings as the other tab',
+    bs1.caps.length === 2 && /All changes/i.test(bs1.caps[0]) && /Each change/i.test(bs1.caps[1]),
+    JSON.stringify(bs1.caps));
 
   // ── 2. A CHANGE'S OWN LINE IS EDITABLE ──────────────────────────────────
   // Lit under a real finger: the press is what seeds the part's kind, and a

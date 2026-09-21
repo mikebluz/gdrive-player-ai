@@ -4677,6 +4677,14 @@ const ok = (name, cond, detail) => {
     o.chordOutranksPart = o.nChord === 13 && /"chords":\{"0":\{"voices":3\}\}/.test(o.chordStored);
     o.cellMarked = cellOf(0).classList.contains('own') && !cellOf(1).classList.contains('own');
     // ── A LINE OVER THE CHORD ────────────────────────────────────────────
+    // THE ♪ Line TAB FIRST (2026-09-21): a part block is two tabs, and every
+    // line control below — the part's ♪ Line switch, a change's three-state —
+    // is the LINE tab's half. On Chords they are `display: none`, and while a
+    // `.click()` still fires on a hidden node, a check that drives controls
+    // nobody can see is not checking the card the user has. Pressed on BOTH
+    // blocks, because the tab is per part and `cellOf` reaches across them.
+    card().querySelectorAll('.v2-gwptab[data-gwt="line"]').forEach((t2) => t2.click());
+    await wait(260);
     // The chord SUSTAINS and a separate voice moves over it — a real second
     // pass, not a re-voicing. 3 changes in the Chorus x 4 notes = 12 more.
     const lb = blocks()[1].querySelector('.v2-gwpmel');

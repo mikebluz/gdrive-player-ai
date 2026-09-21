@@ -10786,7 +10786,12 @@
   // would otherwise give it.
   function gwMelFace(btn, mel, partOn) {
     const st = (!mel || mel.on == null) ? 'inherit' : (mel.on === 1 ? 'on' : 'off');
-    const face = st === 'on' ? '\u266a' : (st === 'off' ? '\u2014' : (partOn ? '\u21b3\u266a' : '\u21b3'));
+    // THE FACE SAYS IT IN WORDS (2026-09-21). Three states told apart only by
+    // the glyphs ♪ / — / ↳♪ is a legend you have to already know, and the
+    // button owns its whole cell now that the note count lives on the other
+    // tab -- so there is room to simply say which of the three it is.
+    const face = st === 'on' ? '\u266a plays'
+      : (st === 'off' ? '\u2014 none' : (partOn ? '\u21b3 follows' : '\u21b3 no line'));
     if (btn.textContent !== face) btn.textContent = face;
     btn.dataset.gwmel = st;
     btn.classList.toggle('on', st === 'on' || (st === 'inherit' && partOn));
@@ -10842,14 +10847,27 @@
           '" data-gwt="' + k + '" data-gwpi="' + pi + '" title="' + tip + '">' + lab +
           (k === 'line' && lineLit ? '<i class="v2-gwtdot">\u25cf</i>' : '') + '</button>').join('') +
       '</div>';
+    // "ALL CHANGES" IS BACK (2026-09-21, user: "where did 'All changes' params
+    // go"). Making the rows a grid meant dropping the 58px gutter label they
+    // carried ("All of it"), and with it went the only thing saying that these
+    // three are the FLOOR every change inherits -- leaving a bare "Notes 3"
+    // above a strip of per-change "3"s with nothing to tell them apart. It
+    // returns as a caption ABOVE the group, the same shape "Each change"
+    // already had, so the meaning is back and the columns are untouched.
+    // BOTH TABS GET THE PAIR, which is the other half of the answer to "why
+    // are there Chords and Line tabs": each tab is the same two questions at
+    // two scales -- what all the changes do, then what one of them says instead.
+    const cap = (t2) => '<span class="v2-gwrowlab v2-gwcap">' + t2 + '</span>';
     const glob = tabs +
       '<div class="v2-gwbody" data-gwt="chords">' +
+      cap('All changes') +
       '<div class="v2-gwrow v2-gwglob">' +
       mini(L, gp + 'voices', 'Notes', ps.voices, 0, 9, 1) +
       mini(L, gp + 'hold', 'Hold %', ps.hold, 5, 200, 5) +
       mini(L, gp + 'slip', 'Slip', ps.slip, 0, 100, 5) +
       '</div></div>' +
       '<div class="v2-gwbody" data-gwt="line">' +
+      cap('All changes') +
       // THE \u266a Line SWITCH LEADS ITS OWN TAB. It used to sit at the end of the
       // chord row, which is the one place you would not look for it.
       '<div class="v2-gwrow v2-gwlinetop">' +
@@ -10946,7 +10964,7 @@
       '<div class="v2-gwphead"><span class="v2-gwpname">' + esc(nm || ('Part ' + (pi + 1))) + '</span>' +
         '<span class="v2-gwpsum"></span></div>' +
       glob +
-      '<div class="v2-gwrow v2-gwchords"><span class="v2-gwrowlab">Each change</span>' +
+      '<div class="v2-gwrow v2-gwchords">' + cap('Each change') +
         cells.join('') + '</div>' +
       melRows +
       '</div>';
@@ -20173,6 +20191,11 @@
         const gcn = t.closest && t.closest('.v2-gwcname');
         if (gcn) {
           const ctx = layerOf(gcn); if (!ctx) return;
+          // NOT A DOOR ON THE CHORDS TAB -- what it opens is the change's LINE
+          // settings, which are not this tab's business. CSS takes the pointer
+          // and this takes the keyboard, so the two agree.
+          const blk3 = gcn.closest('.v2-gwpart');
+          if (blk3 && !blk3.classList.contains('v2-gwt-line')) return;
           const ci = gcn.getAttribute('data-gwci') | 0;
           const row = ctx.card.querySelector('.v2-gwclrow[data-gwci="' + ci + '"]');
           if (!row) return;

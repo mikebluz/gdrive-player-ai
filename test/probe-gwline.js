@@ -129,19 +129,12 @@ const ok = (name, cond, detail) => {
   const before = await look();
   ok('with no line at all, the settings row is not drawn', before.row === false,
     JSON.stringify({ row: before.row }));
-  {
-    const box = await page.evaluate(() => {
-      const x = document.querySelector('.v2-layer .v2-gwmel'); if (!x) return null;
-      x.scrollIntoView({ block: 'center' });
-      const r = x.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width };
-    });
-    if (box && box.w > 0) await page.touchscreen.tap(box.x, box.y);
-    await zz(1200);
-  }
-  // THE PART'S LINE SETTINGS LIVE ON THE ♪ Line TAB since 2026-09-21 — a part
-  // block is two tabs (Chords · ♪ Line) rather than both stacked. Pressed as a
-  // person would, so this also proves the tab is a real target and not a 0×0.
+  // THE ♪ Line TAB FIRST (2026-09-21). A part block is two tabs, and a
+  // change's three-state ♪ is the LINE tab's half of the cell — on Chords the
+  // cell carries only its note count. Pressing it before switching tapped
+  // empty space and every check below read as though the press had done
+  // nothing. Pressed as a person would, so it also proves the tab is a real
+  // target and not a 0×0 one.
   {
     const box = await page.evaluate(() => {
       const x = document.querySelector('.v2-layer .v2-gwptab[data-gwt="line"]'); if (!x) return null;
@@ -153,6 +146,16 @@ const ok = (name, cond, detail) => {
     else { ok('the ♪ Line tab is a real target', box.w >= 44 && box.h >= 28, JSON.stringify(box));
            await page.touchscreen.tap(box.x, box.y); }
     await zz(700);
+  }
+  {
+    const box = await page.evaluate(() => {
+      const x = document.querySelector('.v2-layer .v2-gwmel'); if (!x) return null;
+      x.scrollIntoView({ block: 'center' });
+      const r = x.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width };
+    });
+    if (box && box.w > 0) await page.touchscreen.tap(box.x, box.y);
+    await zz(1200);
   }
   const perChange = await look();
   console.log('\n  a ♪ Line lit on ONE change:\n');

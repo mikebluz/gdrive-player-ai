@@ -15551,6 +15551,27 @@
 /* a line is playing somewhere in this part — said on the tab, so the state is
    legible from the tab you are NOT on */
 .v2-gwptabs .v2-gwtdot { font-style: normal; font-size: 0.5rem; color: #9f7aea; vertical-align: 2px; }
+/* -- EACH TAB SHOWS ONLY ITS OWN HALF OF A CHANGE (2026-09-21) -----------
+   user: "now that Line has its own area we can remove the toggle from the Each
+   change cards on Chords tab; line should still be tweakable per change, but
+   only on its tab". Exactly right, and it is what made the split read as
+   arbitrary: the Chords tab carried the per-change note count AND the line's
+   three-state toggle, so the Line tab looked like a place some of the line
+   lived rather than all of it.
+   ONE STRIP IN THE DOM, not two. The cells are shared and each tab hides the
+   half that is not its business, so `gwPartsSync` keeps writing one set of
+   controls in place and there is no second copy of a cell to drift. */
+.v2-gwpart.v2-gwt-chords .v2-gwcell .v2-gwmel,
+.v2-gwpart.v2-gwt-chords .v2-gwcell .v2-gwccar,
+.v2-gwpart.v2-gwt-chords .v2-gwclrow { display: none; }
+.v2-gwpart.v2-gwt-line .v2-gwcell .v2-mini { display: none; }
+/* ...and on the Chords tab the chord's name is the plain caption it always
+   was: the door it opens leads to line settings, which are not here. The
+   handler checks the same thing, so a keyboard cannot reach past this. */
+.v2-gwpart.v2-gwt-chords .v2-gwcell .v2-gwcname { pointer-events: none; }
+/* the line toggle takes the width the note count had, so the cells keep the
+   one grid rather than collapsing to the width of a button */
+.v2-gwpart.v2-gwt-line .v2-gwcell .v2-gwmel { justify-self: stretch; width: 100%; }
 .v2-gwpart .v2-gwbody { display: none; }
 .v2-gwpart.v2-gwt-chords .v2-gwbody[data-gwt="chords"] { display: block; }
 .v2-gwpart.v2-gwt-line .v2-gwbody[data-gwt="line"] { display: block; }
@@ -15599,6 +15620,9 @@
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 }
 .v2-gwchords > .v2-gwrowlab { grid-column: 1 / -1; }
+/* a group heading, not a gutter label -- it sits ABOVE its controls and spans,
+   which is what lets the controls themselves keep one set of columns */
+.v2-gwcap { display: block; margin-top: 7px; }
 .v2-gwfoot { border-top: none; padding-top: 0; }
 .v2-genacts .v2-gwcancel { color: #fc8181; }
 .v2-gwx { color: #a0aec0; }

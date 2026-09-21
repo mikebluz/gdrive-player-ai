@@ -19942,8 +19942,49 @@
               try { v2TakeHeard(E, c2.L); } catch (e) {}
               return;
             }
+            // A ROLL THAT CHANGES NOTHING HAS TO SAY SO (2026-09-21, user:
+            // "why does clicking New take only work once (re-rolls once) then
+            // no-ops from then on"). The take advances every press — it is the
+            // NOTES that cannot move, because some materials have no dice in
+            // them at all: ⛰ Play the changes takes its chord tones from the
+            // changes and its strike pattern is fixed, so every take is the
+            // same take unless a ♪ Line is set to Walk. The press was silent
+            // about that, and a button that reports nothing reads as broken.
+            // Asked of the SEAM, at the cycle's own origin, before and after.
+            const rollSig = (L3) => {
+              try {
+                const cfg3 = E.getCfg();
+                const cyc3 = (V2.cycleSec && V2.cycleSec(L3, cfg3)) || 2;
+                const sv = { pa: E._progAnchor, ps: E._playStartAt, bg: E._barGridAnchor };
+                E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+                try {
+                  return (V2.withEdit(() => V2.withTake(V2.pinOf(L3), () => V2.notesFor(L3,
+                    { E, cfg: cfg3, key: 'v2:' + (L3.id | 0), cycleStart: 0, cycleSec: cyc3 }))) || [])
+                    .map((n) => Math.round(n.at * 1000) + ':' + Math.round((n.freq || 0) * 100) +
+                                ':' + Math.round(n.durMs)).join(' ');
+                } finally { E._progAnchor = sv.pa; E._playStartAt = sv.ps; E._barGridAnchor = sv.bg; }
+              } catch (e) { return null; }
+            };
+            const wasSig = rollSig(c2.L);
             V2.newTake(c2.L, selBarsN);
             try { E.getCfg(); } catch (e) {}
+            // RE-RESOLVED: `getCfg` normalizes and replaces objects, so the
+            // layer held across it is an orphan (the house rule).
+            let L4 = c2.L;
+            try {
+              const f4 = (E.getCfg().layers || []).find((x) => x && (x.id | 0) === (c2.L.id | 0));
+              if (f4) L4 = f4;
+            } catch (e) {}
+            const nowSig = rollSig(L4);
+            if (wasSig && nowSig && nowSig === wasSig) {
+              try {
+                showToast('\ud83c\udfb2 Take ' + ((V2.takeOf(L4) | 0) + 1) +
+                  ' \u2014 and it is IDENTICAL. Nothing in this content is rolled' +
+                  (((L4.part.rhythm || {}).kind === 'ground')
+                    ? ': \u266a Line set to Walk is what gives Play the changes its dice.'
+                    : ' \u2014 its rules have no dice to throw.'), { ms: 6000 });
+              } catch (e) {}
+            }
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             // REWRITE, NEVER PLAY. This used to audition the new take, which on
             // the phone's ~1 s broadcast read as "it just played the current

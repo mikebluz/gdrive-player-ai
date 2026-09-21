@@ -798,6 +798,14 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   downstream re-sorts that path. An anticipated note is MEANT to overhang the downbeat it
   anticipates (`dm0 += anticK`), so across the seam it ends past the cycle; that is correct, and the
   invariant is only that it must not cover the next pass's first hit.
+- **🎲 NEW TAKE SAYS WHEN THE TAKE IT ROLLED IS IDENTICAL (2026-09-21, user: "why does clicking
+  New take only work once (re-rolls once) then no-ops from then on").** The take advances on every
+  press — measured at 0→1→2→3→4→5 on a fresh part, a walk-line part, a series-line part and one
+  with every bar take-pinned, so "works once" was not reproducible. What is real is that the NOTES
+  cannot move on a material with no dice, and the press was silent about it. It compares the seam
+  before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
+  **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
+  and it is worth reaching for before hunting a state bug.
 - **PLAY THE CHANGES HAS NO DICE OF ITS OWN (2026-09-20, user: "Evolve is not rerollling this
   content … also Show ahead doesn't seem to be working anymore").** Both reports and "Evolve only
   works when I turn Salt on" are ONE fact: a Groundwork part is deterministic — its chord tones come

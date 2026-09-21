@@ -8910,7 +8910,6 @@
     const CHT = cmarks ? 13 : 0;          // the chord band
     const TOP = 15 + CHT;                 // the ruler gutter
     const GUT = phone ? 24 : 28;          // the keyboard gutter — wide enough for "C4"
-    const PC_BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
     let loM = 60, hiM = 71;
     if (mids.length) {
       loM = Math.floor(Math.min.apply(null, mids)) - 1;
@@ -11118,6 +11117,13 @@
   // to edit — its notes are a consequence of rules — so tapping one LOCKS the
   // take first and says so; that is the same act as pressing 🔒, reached from
   // the thing you were already pointing at.
+  // WHICH PITCH CLASSES ARE BLACK KEYS. MODULE SCOPE, because TWO drawings
+  // need it now — the card's roll and ⚙ Deep's staged one — and a second
+  // copy is how two pictures of one part start disagreeing about which row
+  // is which. (It lived inside `drawPartViz`; a bare name from out here
+  // would have thrown into a surrounding catch and drawn nothing at all,
+  // which is this file's own two-IIFE trap in miniature.)
+  const PC_BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
   const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
   const noteName = (m) => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
   // LOCK WHAT IS DRAWN. The remembered preview anchor is passed through so that
@@ -14593,7 +14599,13 @@
       if (!open[sel]) return;
       const cv = card.querySelector(sel + ' .v2-stagecv'); if (!cv) return;
       const wCss = cv.clientWidth; if (!(wCss > 0)) return;
-      const dpr = Math.max(1, window.devicePixelRatio || 1), hCss = 96;
+      // THE HEIGHT COMES FROM CSS, not from a number repeated here. It was
+      // hard-coded at 96 while the stylesheet also said 96 — two places to
+      // change, and the roll needs the taller box to fit a keyboard and a
+      // note name in a row (at 96 a 12-semitone window gives rowH 6.8, under
+      // the 8 a label needs, so the readouts would never have drawn).
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const hCss = Math.max(60, Math.round(cv.clientHeight || 150));
       if (cv.width !== Math.round(wCss * dpr)) cv.width = Math.round(wCss * dpr);
       if (cv.height !== Math.round(hCss * dpr)) cv.height = Math.round(hCss * dpr);
       const g = cv.getContext('2d'); if (!g) return;
@@ -14639,36 +14651,93 @@
       } catch (e) { notes = []; }
       const bars = Math.max(1, Math.round(+(S.part && S.part.bars) || 1));
       const TOP = 14;
-      // PUBLISHED LIKE THE CARD'S ROLL, so the one sweep painter serves both
-      cv._plotGeo = { x0: 0, w: wCss, top: TOP, h: hCss, cyc: cyc, playing: false, vsc: 1, f0: 0, cs: cs0 };
-      cv._barsGeo = { barsF: bars, w: wCss, x0: 0 };
-      cv._pitchGeo = null; cv._chordGeo = null; cv._hits = [];
-      // the bar grid, numbered like the card's ruler
+      // ── A PIANO ROLL, NOT A BARCODE (2026-09-20) ──────────────────────────
+      // user: "this visualizer also needs grid lines and a piano roll on the
+      // left and note readouts". It had a bar grid and nothing else: purple
+      // bars floating in a box with no pitch reference at all, so two notes a
+      // semitone apart and two an octave apart looked the same, and there was
+      // no way to tell WHICH note any of them was.
+      // The card's own roll has answered this for a long time; this is that
+      // answer at this size, with the same colours and the same rules — the
+      // gutter is the ground and the black keys sit ON it, black rows tint
+      // across the plot, every semitone gets a faint line and every C a
+      // stronger one. Deliberately NOT a second invention: two pictures of one
+      // part that disagree about what a row means is worse than one picture.
+      const GUT = 24;                       // wide enough for "C4", as the card's is
+      const PLOT = Math.max(1, wCss - GUT);
       g.font = '10px -apple-system, Segoe UI, sans-serif';
-      for (let b = 0; b <= bars; b++) {
-        const x = Math.round((b / bars) * (wCss - 1)) + 0.5;
-        g.strokeStyle = '#2d2d3f'; g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, hCss); g.stroke();
-        if (b < bars) { g.fillStyle = '#6b6b8a'; g.fillText(String(b + 1), x + 3, 10); }
-        if (b < bars) for (let q = 1; q < 4; q++) {
-          const xq = Math.round(((b + q / 4) / bars) * (wCss - 1)) + 0.5;
-          g.strokeStyle = '#1b1b2b'; g.beginPath(); g.moveTo(xq, TOP); g.lineTo(xq, hCss); g.stroke();
-        }
-      }
+      // PUBLISHED LIKE THE CARD'S ROLL, so the one sweep painter serves both.
+      // `x0` is the GUTTER now — `paintSweep` reads it, so the playhead starts
+      // where the plot does rather than under the keys.
+      cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: hCss, cyc: cyc, playing: false, vsc: 1, f0: 0, cs: cs0 };
+      cv._barsGeo = { barsF: bars, w: PLOT, x0: GUT };
+      cv._pitchGeo = null; cv._chordGeo = null; cv._hits = [];
       const played = notes.filter((n) => n && n.freq > 0 && (n.at - cs0) >= -1e-6 && (n.at - cs0) < cyc);
+      // THE PITCH WINDOW FIRST, because the keyboard is drawn from it and the
+      // bar grid has to stop at the gutter. A silent cycle has no window, so
+      // it says so and draws nothing else — a keyboard with no notes on it
+      // reads as "these notes are somewhere off screen".
       if (!played.length) {
         g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
         g.fillText('silent for this cycle', 8, TOP + (hCss - TOP) / 2 + 4);
         return;
       }
       const mid = played.map((n) => 69 + 12 * Math.log2(n.freq / 440));
-      let lo = Math.floor(Math.min(...mid)) - 2, hi = Math.ceil(Math.max(...mid)) + 2;
-      if (hi - lo < 12) { const c = (hi + lo) / 2; lo = Math.floor(c - 6); hi = lo + 12; }
-      const rowH = (hCss - TOP - 2) / (hi - lo + 1);
-      g.fillStyle = 'rgba(159,122,234,0.92)'; g.strokeStyle = '#d6bcfa';
+      let lo = Math.floor(Math.min.apply(null, mid)) - 1, hi = Math.ceil(Math.max.apply(null, mid)) + 1;
+      if (hi - lo < 11) { const c = (hi + lo) / 2; lo = Math.floor(c - 5.5); hi = lo + 11; }
+      const rows = hi - lo + 1;
+      const rowH = (hCss - TOP) / rows;
+      const yOf = (m) => TOP + (hi - m) * rowH;
+      cv._pitchGeo = { loM: lo, hiM: hi, rowH: rowH, top: TOP };
+      // ── THE KEYS ──────────────────────────────────────────────────────────
+      g.fillStyle = '#e8e4f2';
+      g.fillRect(0, TOP, GUT, hCss - TOP);
+      for (let m = lo; m <= hi; m++) {
+        const y = yOf(m), pc = ((m % 12) + 12) % 12;
+        if (PC_BLACK[pc]) {
+          g.fillStyle = '#15151f';
+          g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
+          g.fillStyle = 'rgba(159,122,234,0.055)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+        } else if (!PC_BLACK[((m + 1) % 12 + 12) % 12]) {
+          // a white key under a white key (B|C, E|F) — the only places a real
+          // keyboard shows a line
+          g.strokeStyle = 'rgba(20,20,35,0.45)'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
+        }
+        // A LINE PER SEMITONE across the plot, the C's stronger — without them
+        // a row is a guess, which is the whole complaint.
+        g.strokeStyle = (pc === 0) ? 'rgba(159,122,234,0.20)' : 'rgba(159,122,234,0.07)';
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(GUT, Math.round(y) + 0.5); g.lineTo(wCss, Math.round(y) + 0.5); g.stroke();
+        // NAME THE C's — the one landmark that makes the rest countable.
+        if (pc === 0 && rowH >= 5) {
+          const fs = rowH >= 8 ? 8 : 7;
+          g.fillStyle = '#42425e';
+          g.font = fs + 'px -apple-system, Segoe UI, sans-serif';
+          g.fillText('C' + (Math.floor(m / 12) - 1), 1.5, y + Math.min(rowH - 1, fs));
+        }
+      }
+      g.strokeStyle = 'rgba(159,122,234,0.30)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(GUT + 0.5, TOP); g.lineTo(GUT + 0.5, hCss); g.stroke();
+      // ── THE BAR GRID, numbered like the card's ruler ──────────────────────
+      // Drawn AFTER the keys so its lines sit over the row tints, and starting
+      // at the gutter so a bar line never crosses the keyboard.
+      g.font = '10px -apple-system, Segoe UI, sans-serif';
+      for (let b = 0; b <= bars; b++) {
+        const x = Math.round(GUT + (b / bars) * (PLOT - 1)) + 0.5;
+        g.strokeStyle = '#2d2d3f'; g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, hCss); g.stroke();
+        if (b < bars) { g.fillStyle = '#6b6b8a'; g.fillText(String(b + 1), x + 3, 10); }
+        if (b < bars) for (let q = 1; q < 4; q++) {
+          const xq = Math.round(GUT + ((b + q / 4) / bars) * (PLOT - 1)) + 0.5;
+          g.strokeStyle = '#1b1b2b'; g.beginPath(); g.moveTo(xq, TOP); g.lineTo(xq, hCss); g.stroke();
+        }
+      }
+      // ── THE NOTES ─────────────────────────────────────────────────────────
       played.forEach((n, i) => {
-        const x = ((n.at - cs0) / cyc) * wCss;
-        const w = Math.max(2, ((n.durMs / 1000) / cyc) * wCss);
-        const y = TOP + (hi - mid[i]) * rowH;
+        const x = GUT + ((n.at - cs0) / cyc) * PLOT;
+        const w = Math.max(2, ((n.durMs / 1000) / cyc) * PLOT);
+        const y = yOf(mid[i]);
         const ww = Math.min(w, wCss - x), hh = Math.max(2, rowH - 1);
         // A GAP BETWEEN NOTES, so ONSETS ARE VISIBLE (2026-09-20). This filled
         // each note edge to edge with no stroke, so at Length 100% consecutive
@@ -14678,7 +14747,21 @@
         // — the engine, the panel and the Changed line were all correct and
         // this drawing was the only thing saying otherwise. The card's own roll
         // strokes its notes, which is why the same take reads correctly there.
+        g.fillStyle = 'rgba(159,122,234,0.92)';
         g.fillRect(x, y, Math.max(1, ww - 1), hh);
+        // …AND THE NOTE'S NAME ON IT when there is room for it. "Note readouts"
+        // was asked for alongside the keyboard, and the keyboard alone only
+        // answers it by counting rows from the nearest C. Drawn only where it
+        // FITS — a clipped "C♯" reads as "C" and would be a readout that lies.
+        if (rowH >= 8) {
+          const nm = noteName(Math.round(mid[i]));
+          const fs = Math.min(9, Math.max(7, Math.floor(rowH - 2)));
+          g.font = fs + 'px -apple-system, Segoe UI, sans-serif';
+          if (g.measureText(nm).width + 4 <= ww - 1) {
+            g.fillStyle = '#1a1026';
+            g.fillText(nm, x + 2, y + hh - Math.max(1, (hh - fs) / 2));
+          }
+        }
         cv._hits.push({ x, y, w: ww, h: hh, midi: Math.round(mid[i]), t: (n.at - cs0) / cyc });
       });
     });

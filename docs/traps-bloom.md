@@ -774,6 +774,21 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **⚙ DEEP'S STAGED PICTURE IS A PIANO ROLL (2026-09-20, user: "this visualizer also needs grid
+  lines and a piano roll on the left and note readouts").** It drew a bar grid and purple bars with
+  no pitch reference, so a semitone and an octave looked alike. It is the card's roll at a smaller
+  size now — same gutter, same black-key rows, a line per semitone with the C's stronger, note names
+  where a row is ≥8px — because two pictures of one part that disagree about what a row means is
+  worse than one picture.
+  - **`PC_BLACK` was LOCAL to `drawPartViz`.** A second drawing needing it must hoist it to module
+    scope, not copy it; a bare name from outside would have thrown into a surrounding catch and
+    drawn nothing, with no error anywhere.
+  - **`_pitchGeo` was published as `null` here**, and `paintSweep` reads it for the lit note and the
+    vertical readout — so the staged preview silently had neither. A canvas that publishes the
+    geometry gets both for free.
+  - **The height lived in TWO places** (a hard-coded `hCss = 96` and a CSS `height: 96px`). The
+    drawing reads `clientHeight` now; at 96 a 12-semitone window gives a 6.8px row, under what a
+    label needs, so the readouts could never have drawn whatever the code said.
 - **A SECTION HEADING MUST NAME ITS RULE, NOT PRAISE ITS CONTENTS (2026-09-20, user: "what does
   'The Knobs that Matter' mean, doesn't say anything descriptive of why they are grouped").** ⚙ Deep's
   step 2 was called that for months; it said nothing about membership and implied step 3 held knobs

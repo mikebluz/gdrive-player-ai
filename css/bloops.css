@@ -15686,7 +15686,11 @@
    height (the canvas is sized from its box), full width, the drawing's own
    ground; the label sits on it like the card's ruler does. */
 .v2-stageviz { position: relative; margin: 0 14px 8px; flex: 0 0 auto; }
-.v2-stageviz .v2-stagecv { display: block; width: 100%; height: 96px; border-radius: 8px; border: 1px solid #22222f; }
+/* TALL ENOUGH TO BE A PIANO ROLL (2026-09-20). At 96px a 12-semitone window
+   gives a 6.8px row — enough for a coloured bar, not for a keyboard beside
+   it or a note name on it. The drawing reads this height rather than
+   carrying its own copy of the number. */
+.v2-stageviz .v2-stagecv { display: block; width: 100%; height: 150px; border-radius: 8px; border: 1px solid #22222f; }
 /* the sweep's overlay during ▶ Preview — sized and placed by `paintSweep` from
    the canvas it tracks, like the roll's `.v2-vizph` */
 .v2-stageviz .v2-stageph { position: absolute; left: 0; top: 0; pointer-events: none; }

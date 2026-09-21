@@ -13179,8 +13179,23 @@
                   '% of the space each note fills', 'kind:live;rhythm:pulse,euclid,drawn,chance') +
               gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
                   'nudge each note late by a random hair — a strum', 'kind:live;rhythm:ground') +
+              // ARRIVE SAYS WHAT IT DOES (2026-09-21, user: "why are chords
+              // different lengths"). Its hint was EMPTY, and it is the only
+              // thing on the card that alternates them: an anticipated chord
+              // is held an 8th longer (it rings through the bar line it
+              // arrived before) and the chord ahead of it gives that 8th up
+              // to make room. Measured on ⛰ Comp: 550 · 250 · 550 · 250 …
+              // against a flat 400 with Arrive off. Both halves of one trade,
+              // and neither was written down anywhere.
+              // FULL-WIDTH HINT (`v2-wideh`): `.ambient-ctrl`'s third column
+              // is `auto`, so a sentence left in it squeezes the select next
+              // to it — the same reason the harmony row's caption moved.
               gsel(L, 'part.rhythm.antic', 'Arrive', (L.part.rhythm || {}).antic ? '1' : '',
-                   [['', 'On the change'], ['1', 'An 8th early']], '', 'kind:live;rhythm:ground') +
+                   [['', 'On the change'], ['1', 'An 8th early']],
+                   'an anticipated chord lands an 8th before its bar line and rings through it \u2014 ' +
+                   'so the chord ahead of it gives that 8th up, and the two lengths alternate',
+                   'kind:live;rhythm:ground')
+                .replace('class="ambient-ctrl"', 'class="ambient-ctrl v2-wideh"') +
               gst(L, 'part.rhythm.voices', 'Rows', num((L.part.rhythm || {}).voices, 1), 1, 8,
                   'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
               gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,

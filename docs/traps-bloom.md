@@ -774,6 +774,15 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **A NOTE'S LENGTH IS `lenRatio` OF ITS OWN SLOT IN THE GRID, NOT OF THE GAP YOU SEE (2026-09-21,
+  user: "why are chords different lengths").** ⛰ Comp's grid is uneven — 750 and 1250 spans — so its
+  lengths alternate whatever else is set (300 · 500 at 40%). **Arrive then trades an 8th between
+  neighbours**: the anticipated chord gains it (it rings through the bar line it arrived before) and
+  the chord ahead of it gives it up, giving 250 · 550. Both halves are one mechanism, and the Arrive
+  row's hint was EMPTY — the only control on the card that does this said nothing about it. Note the
+  lengths are still measured against the PRE-anticipation spans, so after the wrap fix the onsets are
+  evenly spaced while the lengths are not; that is coherent comping, not a bug, but it is the reason
+  the two look unrelated.
 - **AN ANTICIPATION WRAPS TO THE END OF THE CYCLE (2026-09-20, user: "changes to Character seem to
   introduce onset timing irregularities, like they hit too early after the very first one").** Arrive
   (`rhythm.antic`) pulls each change an 8th early, and the cycle's own top used to be filtered out of

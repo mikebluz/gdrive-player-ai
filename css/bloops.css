@@ -15963,6 +15963,13 @@
    It reuses `.v2-mini-lab`'s type (one caption style on this card, not two)
    but NOT `.v2-mini` itself: that class also re-sizes steppers to a fixed
    104px, which would leave each stepper short of its cell. */
+/* A ROW WHOSE SENTENCE NEEDS THE WHOLE WIDTH. `.ambient-ctrl` is a grid whose
+   third column is `auto`, so a hint of more than a few words squeezes the
+   control beside it; this gives the hint the next row instead. */
+.v2-layer .ambient-ctrl.v2-wideh > .ambient-hint {
+  grid-column: 1 / -1; margin-top: 3px; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere; min-width: 0;
+}
 .v2-layer .v2-harmcell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .v2-layer .v2-harmcell > .v2-mini-lab { padding-left: 1px; }
 /* a compound selector because `.ambient-select` is `width: 100%` and declared

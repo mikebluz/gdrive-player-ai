@@ -79,6 +79,19 @@ const ok = (name, cond, detail) => {
     const raw = V.withEdit(() => V.withTake(V.pinOf(Lat()), () => V.notesFor(Lat(),
       { E, cfg: E.getCfg(), key: 'v2:' + Lat().id, cycleStart: 0, cycleSec: 6 }))) || [];
     out.ordered = raw.every((n, i) => i === 0 || n.at >= raw[i - 1].at - 1e-9);
+    const durList = () => {
+      const L2 = Lat();
+      E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+      const ns2 = V.withEdit(() => V.withTake(V.pinOf(L2), () => V.notesFor(L2,
+        { E, cfg: E.getCfg(), key: 'v2:' + L2.id, cycleStart: 0, cycleSec: 6 }))) || [];
+      const byT = {};
+      ns2.forEach((n) => { const t = Math.round(n.at * 1000); byT[t] = Math.round(n.durMs); });
+      return Object.keys(byT).map(Number).sort((a, b) => a - b).map((t) => byT[t]);
+    };
+    out.durs = { on: durList() };
+    delete Lat().part.rhythm.antic; E.getCfg();
+    out.durs.off = durList();
+    V.applyPreset(E, Lat(), 'comp'); E.getCfg();
     out.lastEnd = Math.round(Math.max.apply(null, raw.map((n) => n.at * 1000 + n.durMs)));
     return out;
   });
@@ -121,6 +134,63 @@ const ok = (name, cond, detail) => {
     JSON.stringify(r.held.on) === JSON.stringify([0, 2000, 4000]) &&
     JSON.stringify(r.stabs.on) === JSON.stringify([0, 1000, 2000, 3000, 4000, 5000]),
     'held ' + JSON.stringify(r.held.on) + '  stabs ' + JSON.stringify(r.stabs.on));
+
+  // ── AND THE KNOB THAT CAUSES IT SAYS SO ─────────────────────────────────
+  // user: "why are chords different lengths". Arrive is the only thing that
+  // alternates them — the anticipated chord is held an 8th longer and the one
+  // ahead of it gives that 8th up — and its hint was EMPTY.
+  console.log('  chord lengths on ⛰ Comp:\n');
+  console.log('   Arrive on    ' + r.durs.on.join(' · '));
+  console.log('   Arrive off   ' + r.durs.off.join(' · ') + '\n');
+  // THE COMP GRID IS ALREADY UNEVEN — 750 and 1250 spans — so lengths
+  // alternate with Arrive OFF too (300 · 500). What Arrive does is trade an
+  // 8th between the two, which is a different claim and the one to check.
+  ok('a comp figure alternates two lengths, Arrive or not',
+    new Set(r.durs.on).size === 2 && new Set(r.durs.off).size === 2,
+    'on ' + JSON.stringify(r.durs.on) + '  off ' + JSON.stringify(r.durs.off));
+  ok('…and Arrive trades an 8th between them — the long one gains it, the short gives it',
+    Math.max.apply(null, r.durs.on) - Math.max.apply(null, r.durs.off) === 50 + 0 ||
+    (Math.max.apply(null, r.durs.on) > Math.max.apply(null, r.durs.off) &&
+     Math.min.apply(null, r.durs.on) < Math.min.apply(null, r.durs.off)),
+    'on ' + JSON.stringify(r.durs.on) + '  off ' + JSON.stringify(r.durs.off));
+
+  {
+    const c = await page.evaluate(() => {
+      const card = document.querySelector('.v2-layer');
+      if (card.classList.contains('collapsed')) card.querySelector('.ambient-collapse').click();
+      return true;
+    });
+    await zz(900);
+    await page.evaluate(() => {
+      const b = document.querySelector('.v2-layer .v2-genbtn');
+      if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }
+    });
+    await zz(1300);
+    const h = await page.evaluate(() => {
+      const card = document.querySelector('.v2-layer');
+      const el = [...card.querySelectorAll('.v2-genwrap .v2-f[data-f="part.rhythm.antic"]')][0];
+      const row = el && el.closest('.ambient-ctrl');
+      if (!row) return { err: 'no Arrive row' };
+      const hint = row.querySelector('.ambient-hint');
+      const hr = hint && hint.getBoundingClientRect();
+      const pr = row.getBoundingClientRect();
+      const sel = row.querySelector('select');
+      return {
+        text: hint ? hint.textContent.trim() : '',
+        wide: !!(hr && pr && hr.width > pr.width * 0.6),
+        fits: !!(hint && hint.scrollWidth <= hint.clientWidth + 1),
+        selW: sel ? Math.round(sel.getBoundingClientRect().width) : 0,
+      };
+    });
+    console.log('   Arrive hint: “' + (h.text || h.err) + '”');
+    console.log('   select ' + h.selW + 'px, hint full-width=' + h.wide + '\n');
+    ok('the Arrive control explains the trade it makes',
+      !!h.text && /8th/.test(h.text) && /alternate|gives/.test(h.text),
+      JSON.stringify(h.text || h.err));
+    ok('…and its sentence does not squeeze the select beside it',
+      h.wide === true && h.fits === true && h.selW > 80,
+      'select ' + h.selW + 'px, wide=' + h.wide + ', fits=' + h.fits);
+  }
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

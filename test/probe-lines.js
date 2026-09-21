@@ -177,6 +177,29 @@ const ok = (name, cond, detail) => {
     };
   });
 
+  // ── THE ROW IS FOLDED UNTIL THE CHORD'S NAME ASKS FOR IT (2026-09-21) ──
+  // user: "this UI is a total unwieldy mess, all you see are + and - minus
+  // buttons". A freshly lit line follows its part in every respect, so its six
+  // knobs are a second copy of the part's row until one of them moves.
+  const shut = await shape();
+  ok('a freshly lit line does not also open six knobs',
+    shut.row === true && shut.off === false, JSON.stringify({ row: shut.row, off: shut.off, h: shut.h }));
+  // …AND THE DOOR IS REAL. A fold whose opener cannot be pressed is worse than
+  // no fold: the settings would simply be gone.
+  const door = await page.evaluate(() => {
+    const b = document.querySelector('.v2-layer .v2-gwcell[data-gwci="0"] .v2-gwcname');
+    if (!b) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height), off: !!b.offsetParent,
+             x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  ok('…and the chord’s own name is the door to them',
+    !!door && door.off && door.w > 10 && door.h > 8, JSON.stringify(door));
+  // pressed as a person would, not by writing the class
+  if (door && door.w > 0) await page.touchscreen.tap(door.x, door.y);
+  await zz(900);
+
   const s0 = await shape();
   console.log('  change 0’s line row: ' + s0.w + '×' + s0.h + '   fields: ' + s0.fields.join(' · '));
   console.log('  inherited values: ' + JSON.stringify(s0.vals));
@@ -230,6 +253,27 @@ const ok = (name, cond, detail) => {
     m1.first === 9 && m0.first === 4, JSON.stringify({ before: m0.first, after: m1.first }));
   ok('…and ↺ Follow lights up, with something to put back',
     !!s1.follow && s1.follow.on === true && s1.follow.dis === false, JSON.stringify(s1.follow));
+  // A CHANGE THAT DIFFERS IS NEVER FOLDED AWAY — hiding the fact that this
+  // change has stopped following its part would hide the only reason the row
+  // exists. Checked by forcing a rebuild and reading it back.
+  const afterBuild = await page.evaluate(() => {
+    const host = document.querySelector('.v2-layer .v2-gwpartshost');
+    if (host) host._sig = '';                      // make the next sync rebuild
+    // `V2.render` and NOT `applyGate` — the gate pass is not published on
+    // `window._v2` (the two IIFEs share only that object), so calling it here
+    // would throw into the catch and this check would measure nothing. A full
+    // re-render is the harder test anyway: the fold state has to survive the
+    // card being rebuilt from scratch.
+    const E = _masterEng, V = window._v2;
+    V.render(E);
+    const row = document.querySelector('.v2-layer .v2-gwclrow[data-gwci="0"]');
+    const r = row ? row.getBoundingClientRect() : null;
+    return { shut: !!(row && row.classList.contains('v2-gwclshut')),
+             h: r ? Math.round(r.height) : 0, off: !!(row && row.offsetParent) };
+  });
+  await zz(500);
+  ok('…and a change that differs stays open through a rebuild',
+    afterBuild.shut === false && afterBuild.off === true, JSON.stringify(afterBuild));
 
   // RANGE — the field a line had no way to state at all before.
   await page.evaluate(() => {

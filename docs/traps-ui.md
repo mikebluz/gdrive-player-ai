@@ -128,6 +128,17 @@
   makes a label-plus-prose row keep its hint on line 1 while a label-control-hint row pushes it to
   line 2 — no second selector needed.
 
+- **`.ambient-stepper` gets its border ONLY from `.ambient-ctrl-step .ambient-stepper`.** Hand-built
+  `.v2-mini` steppers (the Groundwork block, the harmony cells) never match it, so each value renders
+  as two FILLED ± buttons with a bare digit floating between them and the only boxes on screen are
+  the chrome — measured in one ♪ Lines block: 32 ± at 19% of its area against 12% for the 16 numbers
+  they adjust, and it was reported as "all you see are + and - buttons". Give a hand-built stepper the
+  container and let the ± be transparent glyphs inside it; paint only, the 32×34 tap targets stay.
+- **A button that reuses a caption's class must not reset `color`/`font`.** Turning `.v2-gwcn` from a
+  `<span>` into a `<button>` with a `color: inherit` reset made the ONE chord with a line the only
+  grey caption on the row — a two-class reset outranks the one-class rule that paints every other
+  one. A door must never be dimmer than the plain labels beside it.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

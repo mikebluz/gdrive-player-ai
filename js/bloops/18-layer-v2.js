@@ -10577,6 +10577,24 @@
   // is what "↺ Follow the part" has to undo (and what greys it when there is
   // nothing to undo).
   const gwMelOwnKeys = (om) => Object.keys(om || {}).filter((k) => k !== 'on');
+  // ── A CHANGE'S LINE SETTINGS ARE FOLDED (2026-09-21) ────────────────────
+  // user: "this UI is a total unwieldy mess, all you see are + and - minus
+  // buttons". Sixteen steppers in one block, and six of them were the PART's
+  // line knobs repeated for one change — the same row twice, open at once.
+  // Folded behind the chord's own name now: the name is already on the cell,
+  // so this costs no new chrome, which would have been a strange way to answer
+  // "too many buttons".
+  // MODULE STATE, like `GENPOP` — it must survive the card being rebuilt, and
+  // it is a view preference rather than anything about the music, so it has no
+  // business in the layer.
+  // A CHANGE THAT DIFFERS IS ALWAYS SHOWN: a fold that hides the fact that this
+  // change is not following its part would hide the only reason the row exists.
+  const GWLOPEN = new Map();
+  function gwlOpen(id) {
+    let s = GWLOPEN.get(id | 0);
+    if (!s) { s = new Set(); GWLOPEN.set(id | 0, s); }
+    return s;
+  }
   function gwPartsSync(card, L) {
     const host = card.querySelector('.v2-gwpartshost'); if (!host) return;
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
@@ -10680,6 +10698,16 @@
         if (ks3 && ks3.value !== m3.kind) ks3.value = m3.kind;
         const mk = ks3 && ks3.closest('.v2-mini');
         if (mk) mk.classList.toggle('own', typeof om.kind === 'string');
+        // THE CARET FOLLOWS THE ROW, not the store: ↺ Follow clears a change's
+        // overrides while leaving its row open, and a caret reading ▸ over an
+        // open row is a readout contradicting what is on screen beside it.
+        const cn3 = blk.querySelector('.v2-gwcname[data-gwci="' + ci + '"]');
+        if (cn3) {
+          const op3 = !row.classList.contains('v2-gwclshut');
+          cn3.classList.toggle('on', op3);
+          const car3 = cn3.querySelector('.v2-gwccar');
+          if (car3 && car3.textContent !== (op3 ? '\u25be' : '\u25b8')) car3.textContent = op3 ? '\u25be' : '\u25b8';
+        }
         const fb = row.querySelector('.v2-gwcfollow');
         if (fb) {
           const owned = gwMelOwnKeys(om);
@@ -10829,9 +10857,20 @@
       const own = gwGet(L, 'chords', i) || {};
       const hasV = Number.isFinite(own.voices);
       const v = hasV ? own.voices : ps.voices;
+      // THE NAME IS THE DOOR to this change's line settings — but only once it
+      // HAS a line of its own, because that is the only state with a row to
+      // open. Otherwise it stays the plain caption it has always been.
+      const ownLine = !!(own.mel && own.mel.on === 1);
+      const capOpen = ownLine && (gwMelOwnKeys(own.mel).length > 0 || gwlOpen(L.id).has(i));
+      const cap = ownLine
+        ? '<button type="button" class="v2-gwcn v2-gwcname' + (capOpen ? ' on' : '') +
+            '" data-gwci="' + i + '" title="' +
+            (capOpen ? 'Hide this change\u2019s line settings' : 'Give this change\u2019s line its own settings') +
+            '">' + esc(cn || String(i + 1)) +
+            '<i class="v2-gwccar">' + (capOpen ? '\u25be' : '\u25b8') + '</i></button>'
+        : '<span class="v2-gwcn">' + esc(cn || String(i + 1)) + '</span>';
       cells.push('<span class="v2-gwcell' + (hasV ? ' own' : '') + (v === 0 ? ' silent' : '') +
-        '" data-gwci="' + i + '">' +
-        '<span class="v2-gwcn">' + esc(cn || String(i + 1)) + '</span>' +
+        '" data-gwci="' + i + '">' + cap +
         mini(L, 'part.ground.chords.' + i + '.voices', cn || String(i + 1), v, 0, 9, 1) +
         '<button type="button" class="v2-gwmel" data-gwci="' + i + '">\u21b3</button>' +
         '</span>');
@@ -10854,7 +10893,9 @@
       let cn2 = '';
       try { cn2 = (typeof _ambChordShort === 'function') ? _ambChordShort(chords[i]) : ''; } catch (e) {}
       const owned = gwMelOwnKeys(om);
-      return '<div class="v2-gwrow v2-gwmelrow v2-gwclrow" data-gwci="' + i + '">' +
+      const shown = owned.length > 0 || gwlOpen(L.id).has(i);
+      return '<div class="v2-gwrow v2-gwmelrow v2-gwclrow' + (shown ? '' : ' v2-gwclshut') +
+        '" data-gwci="' + i + '">' +
         '<span class="v2-gwrowlab">♪ ' + esc(cn2 || String(i + 1)) + '</span>' +
         mini(L, cp + 'mel.rate', 'Notes', m.rate, 1, 16, 1) +
         '<span class="v2-mini v2-gwkind"><span class="v2-mini-lab">Moves</span>' +
@@ -20073,6 +20114,28 @@
         // inherit everywhere in this overlay, so "follow" is a DELETE of the
         // fields and nothing else; `on` is kept because it is the one field
         // that means something by itself (see `normGroundMel`).
+        // THE CHORD'S NAME OPENS ITS LINE SETTINGS. Toggled on the row ITSELF
+        // rather than by re-rendering the block: this changes nothing about the
+        // music, and a rebuild here would detach the very button under the
+        // finger (the documented re-render-under-the-finger trap, which this
+        // panel has already been caught by once). The module Set is updated so
+        // a LATER rebuild — one caused by something else — remembers.
+        const gcn = t.closest && t.closest('.v2-gwcname');
+        if (gcn) {
+          const ctx = layerOf(gcn); if (!ctx) return;
+          const ci = gcn.getAttribute('data-gwci') | 0;
+          const row = ctx.card.querySelector('.v2-gwclrow[data-gwci="' + ci + '"]');
+          if (!row) return;
+          const openNow = row.classList.toggle('v2-gwclshut') === false;
+          const set = gwlOpen(ctx.L.id);
+          if (openNow) set.add(ci); else set.delete(ci);
+          gcn.classList.toggle('on', openNow);
+          const car = gcn.querySelector('.v2-gwccar');
+          if (car) car.textContent = openNow ? '\u25be' : '\u25b8';
+          gcn.title = openNow ? 'Hide this change\u2019s line settings'
+                              : 'Give this change\u2019s line its own settings';
+          return;
+        }
         const gcf = t.closest && t.closest('.v2-gwcfollow');
         if (gcf) {
           const ctx = layerOf(gcf); if (!ctx) return;

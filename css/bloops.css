@@ -15508,6 +15508,22 @@
 /* ONE CHANGE'S OWN LINE — the part's line row is the floor, so a change's sits
    further in and lighter, and its label is the chord it plays over. */
 .v2-gwclrow { margin-left: 8px; border-left-style: dashed; border-left-color: rgba(159, 122, 234, 0.3); }
+/* folded until the chord's own name asks for it — see `GWLOPEN` */
+.v2-gwclrow.v2-gwclshut { display: none; }
+/* THE NAME IS A DOOR when this change has a line of its own: the caption it
+   already was, plus a caret. No new button — adding chrome would be an odd
+   answer to "all you see are + and - buttons". */
+.v2-gwcell .v2-gwcname {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left;
+  /* NO `font`/`color` RESET HERE. The button carries `.v2-gwcn` too, and that
+     class is what paints every chord caption — a two-class reset outranks its
+     one-class rule, so `color: inherit` made the ONE chord with a line the only
+     grey one on the row. A door must not be dimmer than the captions beside it. */
+}
+.v2-gwcell .v2-gwccar { font-style: normal; font-size: 0.62rem; opacity: 0.6; }
+.v2-gwcell .v2-gwcname.on .v2-gwccar { opacity: 1; color: #d6bcfa; }
+@media (hover: hover) { .v2-gwcell .v2-gwcname:hover { color: #d6bcfa; } }
 .v2-gwclrow > .v2-gwrowlab { color: #d6bcfa; text-transform: none; letter-spacing: 0; font-size: .72rem; min-width: 44px; }
 /* A FIELD THIS CHANGE STATES ITSELF, against one it is inheriting — the same
    mark the note-count cells carry, so "own" reads the same everywhere. */
@@ -15551,6 +15567,32 @@
   background: #0f0f1e; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
 }
 /* the cell holds a real ± stepper, so it must not restyle it into a button */
+/* ── THE NUMBER LEADS, NOT THE ± (2026-09-21) ─────────────────────
+   user: "this UI is a total unwieldy mess, all you see are + and - minus
+   buttons". MEASURED in one ♪ Lines block: 32 ± buttons taking 19% of its
+   area against 12% for the 16 numbers they adjust — the chrome outweighed the
+   content 1.6 to 1.
+   THE CAUSE IS A MISSING CONTAINER. `.ambient-stepper` gets its border and
+   background from `.ambient-ctrl-step .ambient-stepper`, and these steppers are
+   hand-built `.v2-mini` markup inside `.v2-gwrow`, which never matches it — so
+   each value rendered as two FILLED purple buttons with a bare digit floating
+   between them, and the only boxes on screen were the ±. One pill per value,
+   with the ± as quiet glyphs inside it, and you read sixteen numbers instead
+   of thirty-two buttons.
+   THE TAP TARGET IS UNCHANGED — 32×34 each, still the documented three-to-a-row
+   geometry; only the paint moves. */
+.v2-gwpart .v2-mini .ambient-stepper {
+  border: 1px solid #34344a; border-radius: 7px; overflow: hidden;
+  background: rgba(45, 45, 63, 0.3);
+}
+.v2-gwpart .v2-mini .ambient-step-btn {
+  background: transparent; color: #7e7899; font-weight: 600; font-size: 0.95rem;
+}
+@media (hover: hover) {
+  .v2-gwpart .v2-mini .ambient-step-btn:hover { background: rgba(159, 122, 234, 0.16); color: #d6bcfa; }
+}
+.v2-gwpart .v2-mini .ambient-step-btn:active { background: rgba(159, 122, 234, 0.3); color: #e6def8; }
+.v2-gwpart .v2-mini .ambient-step-inp { color: #f0edfa; }
 .v2-gwcell .v2-mini { padding: 0; }
 .v2-gwcell .v2-mini-lab { display: none; }   /* the chord name above IS the label */
 /* SET BY HAND vs following the number above — a value you chose must not look

@@ -806,6 +806,21 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **A LINE LIT ON A CHANGE HAD NO CONTROLS (2026-09-21, user: "where are the controls for the melody
+  line that is added per part?" — asked alongside "i cleared the content and then re-generated, and
+  it just created the same part").** Groundwork's per-change ♪ is three-state and can switch a line
+  on by itself, but the settings row (Moves · Notes · Octave · Length · Level) rendered only off the
+  PART's line. So a line lit change by change had no Moves anywhere — it stayed on the default
+  `series`, a deterministic sweep, which is exactly why the part regenerated identically. **The one
+  knob that gives ⛰ Play the changes dice was the one with no door.** The row shows when the part OR
+  any of its changes has a line, and writes the PART's `mel`, which a change stating only `on: 1`
+  inherits through `groundSet`'s layer → part → change merge.
+  - **The panel's `_sig` decides whether it rebuilds**, so a new reason for a control to appear must
+    go INTO that signature — and nothing else may, since values are written in place (a value in
+    there re-renders under the finger, the documented ± trap).
+  - **The Changes panel lives in ⚙ Deep ▸ Fine-tune ▸ Repeats.** A probe that does not open the
+    panel and select that tab measures every control in it at 0×0; and ⚙ Deep clones the layer when
+    it opens, so state a test wants the draft to have must be set BEFORE it opens.
 - **PLAY THE CHANGES SHIPS WITH EVERY DIE AT ZERO (2026-09-20/21, user: "Evolve is not rerollling
   this content" → "i thought hitting new take just spun up a new take indefinitely").** It is not
   that the material CANNOT roll — measured, distinct takes out of 6 on ⛰ Comp: bare **1**, Roam 6,

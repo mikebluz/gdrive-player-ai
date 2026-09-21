@@ -10480,8 +10480,20 @@
     // re-render-under-the-finger trap, caught by the gate. Values and marks
     // are written IN PLACE below; only a control appearing or disappearing
     // redraws.
+    // …and whether any CHANGE in a part has a line, because that now decides
+    // whether the line's settings row is drawn too. Still only "does a control
+    // appear", never a value — the warning above is the whole reason this
+    // signature is hand-written.
+    const gwAnyLine = (r) => {
+      if (gwMelOn(gwPartSet(L, r.pi).mel)) return 1;
+      for (let i = r.from; i < r.from + r.len; i++) {
+        const o = gwGet(L, 'chords', i);
+        if (o && o.mel && o.mel.on === 1) return 1;
+      }
+      return 0;
+    };
     const sig = JSON.stringify([chords.length, rgs.map((r) => [r.pi, r.from, r.len]),
-      rgs.map((r) => (gwMelOn(gwPartSet(L, r.pi).mel) ? 1 : 0))]);
+      rgs.map((r) => (gwMelOn(gwPartSet(L, r.pi).mel) ? 1 : 0)), rgs.map(gwAnyLine)]);
     if (host._sig !== sig) {
       host._sig = sig;
       if (!rgs.length) {
@@ -10503,8 +10515,17 @@
       };
       const gp2 = 'part.ground.parts.' + r.pi + '.';
       put(gp2 + 'voices', ps.voices); put(gp2 + 'hold', ps.hold); put(gp2 + 'slip', ps.slip);
-      if (gwMelOn(ps.mel)) {
-        const m2 = ps.mel;
+      // the same test the markup used — a row that is drawn must be synced,
+      // or its values freeze at whatever the build happened to put there
+      const anyLine2 = gwMelOn(ps.mel) || (function () {
+        for (let i3 = r.from; i3 < r.from + r.len; i3++) {
+          const o3 = gwGet(L, 'chords', i3);
+          if (o3 && o3.mel && o3.mel.on === 1) return true;
+        }
+        return false;
+      })();
+      if (anyLine2) {
+        const m2 = ps.mel || {};
         put(gp2 + 'mel.rate', clamp(num(m2.rate, 4) | 0, 1, 16));
         put(gp2 + 'mel.oct', clamp(num(m2.oct, 1) | 0, -1, 3));
         put(gp2 + 'mel.len', clamp(num(m2.len, 80) | 0, 5, 200));
@@ -10563,6 +10584,27 @@
     const gp = 'part.ground.parts.' + pi + '.';
     const melOn = gwMelOn(ps.mel);
     const mel = ps.mel || {};
+    // ANY LINE IN THIS PART, not just the part's own (2026-09-21, user: "where
+    // are the controls for the melody line that is added per part?"). A CHANGE
+    // can switch a line on by itself — that is what its three-state ♪ is for —
+    // and the settings row rendered only off the PART's line, so a line lit
+    // change by change had no Moves, Notes, Octave, Length or Level anywhere
+    // on the card. Its `kind` then stayed at the default `series`, a
+    // deterministic sweep, which is also why the part kept regenerating
+    // identically: the one knob that gives ⛰ Play the changes dice was the
+    // one with no door.
+    // WRITTEN TO THE PART, which is exactly right under the absent-is-inherit
+    // grammar this panel already runs on: `groundSet` merges layer → part →
+    // change, so a change that states only `on: 1` takes the part's `kind`,
+    // and a change that wants its own still overrides it.
+    const anyChangeLine = (function () {
+      for (let i2 = r.from; i2 < r.from + r.len; i2++) {
+        const o2 = gwGet(L, 'chords', i2);
+        if (o2 && o2.mel && o2.mel.on === 1) return true;
+      }
+      return false;
+    })();
+    const showMel = melOn || anyChangeLine;
     // GLOBAL — this part speaking for every change in it. A value equal to the
     // layer's own is still stored here, because it is the floor its own changes
     // inherit and deleting it would silently hand them back to the layer.
@@ -10577,8 +10619,8 @@
           : 'Add a line that moves over the chord \u2014 the chord holds underneath') +
         '">\u266a Line' + (melOn ? ' on' : '') + '</button>' +
       '</div>' +
-      (melOn ? '<div class="v2-gwrow v2-gwmelrow">' +
-        '<span class="v2-gwrowlab">The line</span>' +
+      (showMel ? '<div class="v2-gwrow v2-gwmelrow">' +
+        '<span class="v2-gwrowlab">' + (melOn ? 'The line' : 'The lines') + '</span>' +
         mini(L, gp + 'mel.rate', 'Notes', clamp(num(mel.rate, 4) | 0, 1, 16), 1, 16, 1) +
         '<span class="v2-mini v2-gwkind"><span class="v2-mini-lab">Moves</span>' +
           '<select class="ambient-select v2-f" data-f="' + gp + 'mel.kind">' +

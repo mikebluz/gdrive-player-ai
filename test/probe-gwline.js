@@ -1,0 +1,181 @@
+// PROBE — a ♪ Line lit on a CHANGE has controls, like one lit on the part.
+//
+// user: "where are the controls for the melody line that is added per part?"
+// — asked alongside "i cleared the content and then re-generated, and it just
+// created the same part it had just created". One gap answers both.
+//
+// A change's three-state ♪ can switch a line on by itself, but the settings
+// row (Moves · Notes · Octave · Length % · Level) rendered only off the PART's
+// line. So a line lit change by change had no controls anywhere on the card —
+// and its `kind` stayed at the default `series`, a deterministic sweep, which
+// is precisely why the part regenerated identically. The one knob that gives
+// ⛰ Play the changes dice was the one with no door.
+//
+//   node test/probe-gwline.js        (needs `npm start` on :3001)
+import puppeteer from 'puppeteer-core';
+
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const URL = process.env.BLOOPS_URL || 'http://localhost:3001/bloops.html';
+const zz = (ms) => new Promise((r) => setTimeout(r, ms));
+let pass = 0, fail = 0;
+const ok = (name, cond, detail) => {
+  if (cond) { pass++; console.log('  ✓ ' + name); }
+  else { fail++; console.log('  ✗ ' + name + (detail ? '\n      ' + detail : '')); }
+};
+
+(async () => {
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
+    args: ['--autoplay-policy=no-user-gesture-required'], protocolTimeout: 300000 });
+  const page = await browser.newPage();
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.setViewport({ width: 390, height: 780, isMobile: true, hasTouch: true });
+  await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  await zz(2500);
+  await page.evaluate(() => { document.body.classList.add('view-mix'); _ambInitMaster(); });
+  await zz(600);
+  await page.evaluate(() => {
+    const E = _masterEng, cfg = E.getCfg();
+    cfg.bed.present = true; cfg.prog.on = true;
+    cfg.prog.chords = [{ root: 6, intervals: [0, 3, 7] }, { root: 9, intervals: [0, 4, 7, 11] },
+                       { root: 7, intervals: [0, 4, 7, 10] }];
+    delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+    E.getCfg();
+  });
+  await zz(400);
+  await page.evaluate(() => { const x = document.getElementById('mix-bloom-add-layer'); x.scrollIntoView({ block: 'center' }); x.click(); });
+  await zz(500);
+  await page.evaluate(() => { [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')]
+    .find((x) => x.textContent.trim() === 'Layer').click(); });
+  await zz(1000);
+  await page.evaluate(() => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; L.part.notes = []; E.getCfg();
+    window._v2.applyPreset(E, (E.getCfg().layers || [])[0], 'comp');
+    E.getCfg(); window._v2.render(E);
+  });
+  await zz(900);
+  await page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    if (card.classList.contains('collapsed')) card.querySelector('.ambient-collapse').click();
+  });
+  await zz(1000);
+  // LIGHT A LINE ON ONE CHANGE FIRST, on the layer — ⚙ Deep clones the layer
+  // when it opens, so doing it first is what puts it in the draft too.
+  await page.evaluate(() => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0];
+    const g = L.part.ground || (L.part.ground = {});
+    const bag = g.chords || (g.chords = {});
+    (bag['0'] || (bag['0'] = {})).mel = { on: 1 };
+    E.getCfg(); window._v2.render(E);
+  });
+  await zz(900);
+  // THE CHANGES PANEL LIVES IN ⚙ DEEP ▸ FINE-TUNE ▸ REPEATS. Its row is
+  // `.ambient-ctrl v2-ft v2-ft-form` inside `.v2-genrows`, so without opening
+  // the panel AND selecting that tab the whole block lays out at 0×0 and a
+  // control in it measures as missing — the trap this repo names.
+  await page.evaluate(() => {
+    const b = document.querySelector('.v2-layer .v2-genbtn');
+    if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }
+  });
+  await zz(1400);
+  await page.evaluate(() => {
+    const t = document.querySelector('.v2-layer .v2-fttab[data-ft="form"]');
+    if (t) { t.scrollIntoView({ block: 'center' }); t.click(); }
+  });
+  await zz(900);
+
+  const look = () => page.evaluate(() => {
+    const card = document.querySelector('.v2-layer');
+    const row = card.querySelector('.v2-gwmelrow');
+    const vis = (el) => {
+      if (!el) return false;
+      let n = el;
+      while (n && n !== card) { if (n.style && n.style.display === 'none') return false; n = n.parentElement; }
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const kind = card.querySelector('.v2-gwkind select');
+    return {
+      row: !!row, shown: vis(row),
+      kind: kind ? kind.value : null,
+      kinds: kind ? [...kind.options].map((o) => o.value) : [],
+      fields: row ? [...row.querySelectorAll('[data-f]')].map((e) => e.getAttribute('data-f').split('.').pop()) : [],
+      cells: card.querySelectorAll('.v2-gwcell').length,
+      // WHICH ANCESTOR IS SHUT — a row can be in the DOM and laid out at 0×0
+      // because a container above it is closed, and the tell is the chain.
+      chain: (() => {
+        const out2 = []; let n = row;
+        while (n && n !== card) {
+          const r2 = n.getBoundingClientRect();
+          out2.push((n.className || n.tagName) + '=' + Math.round(r2.width) + 'x' + Math.round(r2.height));
+          n = n.parentElement;
+        }
+        return out2.slice(0, 6);
+      })(),
+    };
+  });
+
+  // ── A LINE LIT ON ONE CHANGE, the way its own ♪ does ───────────────────
+  const perChange = await look();
+  console.log('\n  a ♪ Line lit on ONE change:\n');
+  console.log('   settings row shown: ' + perChange.shown);
+  console.log('   fields: ' + perChange.fields.join(' · '));
+  console.log('   Moves = ' + perChange.kind + '   of ' + JSON.stringify(perChange.kinds));
+  console.log('   chain: ' + (perChange.chain || []).join('  <  ') + '\n');
+
+  ok('the line’s settings row is now on screen', perChange.shown === true,
+    JSON.stringify({ row: perChange.row, shown: perChange.shown }));
+  ok('…and it carries all five of the line’s knobs',
+    ['rate', 'kind', 'oct', 'len', 'vel'].every((f) => perChange.fields.indexOf(f) >= 0),
+    JSON.stringify(perChange.fields));
+  ok('…including Moves, the one that decides whether takes differ',
+    !!perChange.kind && perChange.kinds.indexOf('walk') >= 0,
+    JSON.stringify({ kind: perChange.kind, kinds: perChange.kinds }));
+
+  // ── AND SETTING IT REACHES THE CHANGE'S OWN LINE ────────────────────────
+  const dice = await page.evaluate(() => {
+    const E = _masterEng, V = window._v2;
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    // …and measured on the DRAFT too, which is what the panel is editing
+    const Lat = () => V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    const distinct = () => {
+      const s = new Set();
+      for (let t = 0; t < 5; t++) {
+        const L = Lat();
+        E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+        s.add((V.withEdit(() => V.withTake(t, () => V.notesFor(L,
+          { E, cfg: E.getCfg(), key: 'v2:' + L.id, cycleStart: 0, cycleSec: 6 }))) || [])
+          .map((n) => Math.round(n.at * 1000) + ':' +
+            Math.round(69 + 12 * Math.log2((n.freq || 440) / 440))).join(' '));
+      }
+      return s.size;
+    };
+    const out = { series: distinct() };
+    // drive the row's own select, as a person would
+    const sel = document.querySelector('.v2-layer .v2-gwkind select');
+    if (sel) {
+      sel.value = 'walk';
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    out.stored = ((((Lat().part.ground || {}).parts || {})['0'] || {}).mel || {}).kind || null;
+    out.walk = distinct();
+    return out;
+  });
+  await zz(600);
+  console.log('   distinct takes out of 5 — series ' + dice.series + ', walk ' + dice.walk +
+              '   (stored kind: ' + dice.stored + ')\n');
+
+  ok('on its default the change’s line is deterministic — the reported "same part"',
+    dice.series === 1, dice.series + ' distinct takes');
+  ok('the row writes the PART’s line, which the change inherits',
+    dice.stored === 'walk', JSON.stringify(dice.stored));
+  ok('…and setting Moves to Walk gives the part dice at last',
+    dice.walk === 5, dice.walk + ' distinct takes');
+
+  if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
+  console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
+  await browser.close();
+  process.exit(fail ? 1 : 0);
+})();

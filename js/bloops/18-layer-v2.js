@@ -498,6 +498,26 @@
              'part.rhythm.beat.lanes.1.p': 1, 'part.rhythm.beat.lanes.1.r': 4,
              'part.rhythm.beat.lanes.2.p': 4, 'part.rhythm.beat.lanes.2.r': 2,
              'part.rhythm.beat.vary': 20 } },
+    // BASS'S CHARACTERS. All four are the same recipe (root degree, low) with a
+    // different RHYTHM - which is what actually separates one bass part from
+    // another. `dir`/`span` do nothing here: `fixed` plays one degree, so a
+    // Character that moved them would be a knob set that changes nothing.
+    { id: 'bassroots', shape: 'bass', label: 'Roots',
+      set: { 'part.rhythm.pulses': 4, 'part.rhythm.steps': 16, 'part.rhythm.rotate': 0,
+             'part.shape.lenRatio': 70 } },
+    // ON THE 1 ONLY - the root under each change, nothing else.
+    { id: 'bassheld', shape: 'bass', label: 'Held',
+      set: { 'part.rhythm.pulses': 1, 'part.rhythm.steps': 16, 'part.rhythm.rotate': 0,
+             'part.shape.lenRatio': 190 } },
+    // EIGHTHS, SHORT - the pumping bass that sits under a four-on-the-floor.
+    { id: 'basspump', shape: 'bass', label: 'Pumping',
+      set: { 'part.rhythm.pulses': 8, 'part.rhythm.steps': 16, 'part.rhythm.rotate': 0,
+             'part.shape.lenRatio': 45 } },
+    // A EUCLID THAT IS NOT A DIVISOR syncopates by construction: 5 over 16 will
+    // not sit on the beat, which is the whole point of a bassline that pushes.
+    { id: 'bassbump', shape: 'bass', label: 'Syncopated',
+      set: { 'part.rhythm.pulses': 5, 'part.rhythm.steps': 16, 'part.rhythm.rotate': 0,
+             'part.shape.lenRatio': 60 } },
     { id: 'pad', shape: 'sustain', label: 'Pad',
       set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 1, 'part.pitch.inv': 0 } },
     { id: 'organ', shape: 'sustain', label: 'Organ',
@@ -6147,6 +6167,17 @@
     // \u266b ConFUGUED — N notes at every onset by stated intervals, re-ordered
     // each time (see the `confug` branch in `pitchesBase`). A PULSE rhythm, so
     // "how many onsets" is `rhythm.n` and the row on the panel writes it.
+    // BASS - THE ROOT OF EACH CHANGE, LOW AND ON THE BEAT. v1 HAD this and v2
+    // never built the door: the v1 importer still maps a Bass layer to exactly
+    // `euclid x fixed degree 1` (see `eff === 'bass'`), so this is a door onto
+    // a recipe the file already knew rather than a new invention.
+    // THE REGISTER IS THE MATERIAL, not a knob you are expected to find. A
+    // root-degree line at the default register 4 is just Repeat one note in the
+    // middle of the mix - what makes it a BASS is sitting two octaves under
+    // everything else, and nobody reaches for Register to discover that.
+    bass:    { rhythm: { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 },
+               pitch: { kind: 'fixed', degree: 1 },
+               shape: { lenRatio: 70, holdSteps: 0 }, ring: 0, barsMode: 'fill', register: 2 },
     confug:  { rhythm: { kind: 'pulse', n: 4, steps: 16 },
                pitch: { kind: 'confug', voices: 3, civs: [4, 3], corder: 'up', cstrict: 60, cmode: 'ladder' },
                shape: { lenRatio: 85, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
@@ -6204,6 +6235,14 @@
     p.rhythm = JSON.parse(JSON.stringify(spec.rhythm));
     p.pitch = JSON.parse(JSON.stringify(spec.pitch));
     p.shape = Object.assign({}, p.shape, spec.shape);
+    // AFTER `matSwitch`, DELIBERATELY - unlike `ring` and `barsMode` above.
+    // Those are structural and are restated on both paths; Register is a
+    // musical choice the player makes often, so a RESTORE keeps whatever they
+    // moved it to and only a fresh BUILD states the material's own.
+    if (spec.register) {
+      L.instrument = L.instrument || {};
+      L.instrument.register = clamp(spec.register | 0, 1, 8);
+    }
     try { E.getCfg(); } catch (e) {}
     return { bars: p.bars };
   }
@@ -10173,7 +10212,7 @@
                 mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -10201,6 +10240,11 @@
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
       : (t.kind === 'anchor') ? 'anchor'
       : (t.kind === 'chance') ? 'scatter'
+      // BOTH `fixed` MATERIALS ARE THE ROOT DEGREE; the RHYTHM separates them -
+      // Repeat one note is a pulse, Bass a euclid. Before this an unstamped
+      // euclid bass reported itself as "Repeat one note", which is the wrong
+      // answer rather than a missing one.
+      : (t.kind === 'fixed' && (r.kind === 'euclid' || r.kind === 'drawn')) ? 'bass'
       : (t.kind === 'fixed') ? 'onenote'
       : (t.kind === 'walk') ? 'roll' : null;
     const mat = M[p.mat] ? p.mat : (v1 ? null : guess);
@@ -10353,7 +10397,7 @@
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass' };
     // `.v2-genface` was the sub-label INSIDE ⚙ Deep's button and went with it;
     // the query is kept because ✨ Quick's own face still uses the same class
     // on some builds, and a missing node here is simply skipped.
@@ -10383,7 +10427,8 @@
       const isKit3 = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
       const SH = isKit3 ? [['beat', '\u2666 Beat \u2014 a pattern per drum']] :
         [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
-        ['onenote', '\u25aa Repeat one note'], ['arp', '\u27f3 Arpeggiate'],
+        ['onenote', '\u25aa Repeat one note'], ['bass', '\u25e2 Bass'],
+        ['arp', '\u27f3 Arpeggiate'],
         ['roll', '\ud83c\udfb2 Roll a line'], ['scatter', '\u273b Scatter tones'],
         ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes'],
         ['confug', '\u266b ConFugued']];
@@ -10475,7 +10520,7 @@
       // picker HID ITSELF — seven Characters in the table and no door to any of
       // them, silently.
       const PK = { sustain: 'sustain', arp: 'arp', roll: 'roll', melody: 'roll', mixed: 'mixed',
-                   ground: 'ground', beat: 'beat' };
+                   ground: 'ground', beat: 'beat', bass: 'bass' };
       const shp = (L.part.kind === 'live') ? PK[matProv(L).key] : null;
       const list = shp ? (V2.presets || []).filter((pr) => pr.shape === shp) : [];
       const st0 = V2.presetState ? V2.presetState(L) : { id: null, tuned: false };
@@ -12731,7 +12776,7 @@
     });
     return lifted;
   }
-  const MAT_NAME = { beat: 'Beat',
+  const MAT_NAME = { beat: 'Beat', bass: 'Bass',
     sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
     mixed: 'Mix chords + notes', ground: 'Play the changes',
     anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones',
@@ -13707,6 +13752,7 @@
               // works by PRESSING the matching button — the one implementation
               // of confirm/adopt/stamp/roll they all share.
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="beat" title="♦ Beat — a pattern per drum: a euclid on each lane, so a kit generates like everything else.">\u2666 Beat</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="bass" title="Bass - the root of each change, low and on the beat.">\u25e2 Bass</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="anchor" title="⚓ Pedal point — one note held against the whole progression, whatever the chords do.">\u2693 Hold a pedal note</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="onenote" title="▪ One note, struck again and again — the same degree of each chord, so it follows the changes.">\u25aa Repeat one note</button>' +

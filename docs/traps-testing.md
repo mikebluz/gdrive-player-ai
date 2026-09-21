@@ -26,6 +26,15 @@
 - **Measuring a preset through live dice measures the dice.** A Character is a set of stated values;
   with `vary` left at 45 from an earlier check, Half-time read 3/3/3 instead of 2/1/8. Turn the dice
   off before asserting about anything deterministic.
+- **Applying a Character re-renders the card, so a captured control is DETACHED by the next one.**
+  A probe that grabs `.v2-presetpick` once and reuses it applies the first Character and silently
+  no-ops on every later one — which reads as the Character having no effect (measured: `pulses`
+  stayed 1 where the preset says 8). Re-query inside the loop. The re-render-under-the-finger trap,
+  hitting the probe rather than the user.
+- **Re-reading the same part at a different `cycleSec` is not a longer look at it.** A 2-bar part
+  read over 24s is ONE cycle resolved against the chord at its start, so a bass that plainly moved
+  across C·F·G in an 8s read reported a single pitch class — and the check called the material broken.
+  Derive from the cycle you already have.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

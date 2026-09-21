@@ -495,6 +495,53 @@
       set: { 'part.rhythm.strike': 'comp', 'part.rhythm.antic': 1, 'part.shape.lenRatio': 40 } },
     { id: 'stabs', shape: 'ground', label: 'Stabs',
       set: { 'part.rhythm.strike': 'half', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 25 } },
+    // ── MORE CHARACTERS (2026-09-20) ──────────────────────────────────────
+    // Asked for outright. Every one is built from values the NORMALIZER
+    // already accepts — `strike` ∈ ''·half·bar·comp, `dir` ∈ SERIES_DIRS,
+    // `tones` ∈ ''·triad, `chordMode` ∈ ''·chaos·chords·chordsplus·monk,
+    // `mixAt` ∈ strong·change·arch·any — so none of these can store a value
+    // the engine would fall back on, and none needs a new field.
+    // GROUNDWORK had the fewest and the least room (three fields), so these
+    // reach for the chord knobs too: a Character is "what this part is like",
+    // and voicing is as much a part of that as rhythm.
+    // `spread` is only STORED alongside a chordMode (the normalizer drops the
+    // whole voicing group without one), so a Character that wants a spread has
+    // to name the mode too — otherwise it reads back as "tuned" on arrival.
+    { id: 'gswell', shape: 'ground', label: 'Swell',
+      set: { 'part.rhythm.strike': '', 'part.rhythm.antic': 1, 'part.shape.lenRatio': 100,
+             'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 1 } },
+    { id: 'gpush', shape: 'ground', label: 'Pushed',
+      set: { 'part.rhythm.strike': 'bar', 'part.rhythm.antic': 1, 'part.shape.lenRatio': 65 } },
+    { id: 'gtwo', shape: 'ground', label: 'Two per bar',
+      set: { 'part.rhythm.strike': 'half', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 85 } },
+    { id: 'gchop', shape: 'ground', label: 'Chop',
+      set: { 'part.rhythm.strike': 'comp', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 18 } },
+    { id: 'arpdown', shape: 'arp', label: 'Down', speed: 8,
+      set: { 'part.pitch.dir': 'down', 'part.pitch.octaves': 2, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'arpwide', shape: 'arp', label: 'Wide', speed: 16,
+      set: { 'part.pitch.dir': 'up', 'part.pitch.octaves': 3, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'arpfold', shape: 'arp', label: 'Fold in', speed: 8,
+      set: { 'part.pitch.dir': 'downup', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
+    { id: 'rollpulse', shape: 'roll', label: 'Pulsing', speed: 16, density: 0.9,
+      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 2, 'proximity': 70, 'part.pitch.stutter': 45,
+             'part.shape.lenRatio': 45, 'part.pitch.motif': '' } },
+    { id: 'rollwander', shape: 'roll', label: 'Wandering', speed: 4, density: 0.4,
+      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 9, 'proximity': 15, 'part.pitch.stutter': 0,
+             'part.shape.lenRatio': 120, 'part.pitch.motif': '' } },
+    { id: 'rollstab', shape: 'roll', label: 'Stabs', speed: 8, density: 0.7,
+      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 35, 'part.pitch.stutter': 0,
+             'part.shape.lenRatio': 20, 'part.pitch.motif': 'bar' } },
+    { id: 'wide', shape: 'sustain', label: 'Wide',
+      set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 3, 'part.pitch.inv': 1 } },
+    // Chaos + spread 0 on a plain triad lands on the SAME four tones Pad does —
+    // "a Character that sounds like its neighbour is not a Character." Chords+
+    // reaches the extensions, and a fifth voice makes it crowd.
+    { id: 'cluster', shape: 'sustain', label: 'Cluster',
+      set: { 'part.pitch.voices': 5, 'part.pitch.chordMode': 'chordsplus', 'part.pitch.spread': 0, 'part.pitch.inv': 0 } },
+    { id: 'mixarch', shape: 'mixed', label: 'Chords at the arch',
+      set: { 'part.pitch.mixAt': 'arch', 'part.pitch.voices': 4, 'part.pitch.span': 6, 'proximity': 40 } },
+    { id: 'mixany', shape: 'mixed', label: 'Chords anywhere',
+      set: { 'part.pitch.mixAt': 'any', 'part.pitch.voices': 3, 'part.pitch.span': 7, 'proximity': 30 } },
   ];
   const PRESET_BY_ID = {};
   PRESETS.forEach((pr) => { PRESET_BY_ID[pr.id] = pr; });

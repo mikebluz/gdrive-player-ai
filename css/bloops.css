@@ -15719,7 +15719,45 @@
 /* THE CORNER ✕ IS 40px AND PINNED at top 10px, so it reaches y=50 — but the
    head measured 36px, and the shape doors below ran UNDER it (the second door
    was half covered). The head reserves the ✕'s height as well as its width. */
-.v2-genhead { min-height: 56px; box-sizing: border-box; }
+.v2-genhead { min-height: 56px; box-sizing: border-box; flex-wrap: wrap; }
+/* ✦ GENERATE'S HEAD BUTTONS (2026-09-21) — ✨ Quick · Key · Notes, the three
+   things its old sheet still had to offer once the Method tab went. They WRAP
+   onto their own line rather than squeezing the title: the head is a flex row
+   and at 390px a title plus three segs plus a close button does not fit on
+   one. */
+/* the head popover is `position: absolute; inset: 0` over THIS panel, so the
+   panel has to be the positioning context or it would pin to the viewport */
+.v2-layer .v2-genpop { position: relative; }
+.v2-layer .v2-genhbtns { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; order: 3; flex: 1 1 100%; }
+.v2-layer .v2-genhbtns .v2-ghb { flex: 0 1 auto; min-width: 0; min-height: 34px; }
+/* …and the popover Key and Notes raise, over the panel and inside it. */
+.v2-layer .v2-ghpop-wrap { position: absolute; inset: 0; z-index: 4; display: flex;
+  align-items: center; justify-content: center; }
+/* …AND `hidden` HAS TO WIN. The rule above is a class selector, which beats
+   the UA stylesheet's `[hidden] { display: none }` — so the shut popover sat
+   over the panel with its scrim swallowing every press, and the head buttons
+   that raise it could never be reached. Measured: the taps landed on the
+   scrim and the popover "never opened". */
+.v2-layer .v2-ghpop-wrap[hidden] { display: none; }
+.v2-layer .v2-ghpop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.v2-layer .v2-ghpop {
+  position: relative; z-index: 1; width: min(94%, 460px); max-height: 80%;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: #16162a; border: 1px solid #2d2d3f; border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+.v2-layer .v2-ghpop-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px 6px; }
+.v2-layer .v2-ghpop-title { font: 600 0.9rem 'Segoe UI', sans-serif; color: #e2e8f0; flex: 1 1 auto; }
+.v2-layer .v2-ghpop-close {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid #2d2d3f; background: none; color: #a0aec0; cursor: pointer;
+}
+.v2-layer .v2-ghpop-body { overflow-y: auto; padding: 4px 14px 12px; }
+/* ONE SECTION AT A TIME — both are built so their delegated wiring has a
+   stable host; the head button says which is showing. */
+.v2-layer .v2-ghsec { display: none; }
+.v2-layer .v2-ghpop-wrap[data-gh="key"] .v2-ghsec[data-gh="key"],
+.v2-layer .v2-ghpop-wrap[data-gh="notes"] .v2-ghsec[data-gh="notes"] { display: block; }
 /* HARMONY'S CHIPS TAKE THE ROW. Beside a hint column they stacked one per line
    on a phone (six rows of chips); the chips span the control columns and the
    hint takes its own line under them (the 3-column-grid trap). */

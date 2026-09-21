@@ -129,9 +129,22 @@ const SHAPES = [['ground', 'held'], ['arp', 'arpwide'], ['roll', 'rollpulse'],
     ok('✦ Generate no longer shows Pitch, Harmony or Voicing',
       !!tabs.names && !has('Pitch') && !has('Harmony') && !has('Voicing'),
       JSON.stringify(tabs.names || tabs.err));
-    ok('…and it kept what a part is made OF',
-      !!tabs.names && has('Key') && has('Notes'),
-      JSON.stringify(tabs.names || tabs.err));
+    // ✦ GENERATE IS ⚙ DEEP NOW (2026-09-21), so there is no sheet to hold
+    // Key and Notes — they are popover buttons in that panel's own head, and
+    // this check used to assert they were tabs here. What it still has to
+    // prove is the thing the dedup was about: pressing ✦ Generate lands you
+    // somewhere that offers the material's knobs, ONCE.
+    const deep = await page.evaluate(() => {
+      const card = document.querySelector('.v2-layer');
+      const vis = (el) => { if (!el) return false;
+        const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      return { open: card.classList.contains('v2-genopen'),
+               key: vis(card.querySelector('.v2-ghb-key')),
+               notes: vis(card.querySelector('.v2-ghb-notes')) };
+    });
+    ok('…and the section lands on ⚙ Deep, with Key and Notes in its head',
+      deep.open === true && deep.key === true && deep.notes === true,
+      JSON.stringify(deep));
   }
 
   const rows = [];

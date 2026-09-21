@@ -806,6 +806,21 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **✦ GENERATE OPENS ⚙ DEEP; THE PANEL IS NOT MOVED INTO THE SHEET (2026-09-21, user: "make Deep
+  the default view, and just add Quick/Key/Notes as header buttons… we drop the Method and Deep
+  buttons").** The section used to open a sheet whose only live content was a Method tab holding a
+  button that opened the panel — a door to a door. **Relocating Deep's rows into the sheet's pane
+  was the obvious implementation and is the wrong one:** every control in there edits the STAGED
+  copy and that binding is `closest('.v2-genwrap')`, so moving them switches them to editing the
+  layer LIVE with nothing on screen saying so, and ✓ Done / ✕ Cancel become decoration over edits
+  already made. The section button clicks `.v2-genbtn` instead; Key and Notes are popovers built
+  INSIDE `.v2-genwrap`, which keeps both that binding and v1's delegated wiring intact. A RECORDED
+  part still gets the sheet — Transpose and Pitch quantize are all it has.
+  - **A `display:` rule on a class BEATS the `[hidden]` attribute.** The shut popover therefore sat
+    over the panel with its scrim swallowing every press, and the head buttons that raise it could
+    not be reached — measured as "the popover never opens" when the taps were landing on its own
+    scrim. Any element toggled by `hidden` that also carries a `display` rule needs
+    `[hidden] { display: none }` beside it.
 - **A NEWLY LIT ♪ LINE ARRIVES ON `walk`, NOT `series` (2026-09-21, user: "it's still just
   recreating the part I just cleared with lines").** `series` is a DETERMINISTIC sweep of the chord,
   so a Groundwork part with a line still replayed identically for ever — the same complaint arriving

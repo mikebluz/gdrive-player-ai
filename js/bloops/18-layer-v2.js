@@ -12827,7 +12827,11 @@
     // of `pitchesBase` consumes it (measured: 0 and 100 play identically on
     // Groundwork, Arpeggio, Sustain and Mixed). What is left here is what a
     // part is made OF and what a RECORDED one does with stored pitches.
-    Generate: ['Method', 'Key', 'Notes', 'Transpose', 'Pitch quantize'],
+    // ✦ GENERATE IS ⚙ DEEP (2026-09-21) — the section button opens that panel
+    // rather than a sheet, so the only tabs left here are what a RECORDED part
+    // does with pitches it already has. Method held two buttons, one of which
+    // opened Deep; Key and Notes are popovers in Deep's own head now.
+    Generate: ['Transpose', 'Pitch quantize'],
     Bank: ['Bank'],
   };
   const secGrp = (sec) => SEC_GRP[sec] || sec;
@@ -13041,8 +13045,53 @@
         '<div class="v2-genwrap">' +
           '<div class="v2-genscrim"></div>' +
           '<div class="v2-genpop v2-shapepop" role="dialog" aria-label="Deep">' +
-            '<div class="v2-genhead"><span class="v2-gentitle">Deep</span>' +
+            // ── THE HEAD IS THE WHOLE GENERATE MENU NOW (2026-09-21, user:
+            // "make Deep the default view, and just add Quick/Key/Notes as
+            // header buttons that open popovers, so then we drop the Method
+            // and Deep buttons (since Generate is now just Deep)").
+            // ✦ Generate opened a sheet whose only real content was a Method
+            // tab holding two buttons, one of which opened THIS panel. So the
+            // sheet was a door to a door. It opens this directly now, and the
+            // three things that sheet still had to offer — ✨ Quick, the Key
+            // and the Notes source — are buttons here, each raising its own
+            // popover over the panel.
+            // THE PANEL IS NOT MOVED to do this, deliberately: every control
+            // inside it edits the STAGED copy, and that binding is
+            // `closest('.v2-genwrap')`. Relocating these rows into the sheet's
+            // pane would have switched them to editing the layer LIVE, with
+            // nothing on screen saying so — ✓ Done and ✕ Cancel would have
+            // become decoration over edits already made.
+            '<div class="v2-genhead"><span class="v2-gentitle">Generate</span>' +
+              '<span class="v2-genhbtns">' +
+                '<button type="button" class="ambient-seg v2-ghb v2-ghb-quick" ' +
+                  'title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them.">\u2728 Quick</button>' +
+                '<button type="button" class="ambient-seg v2-ghb v2-ghb-key" ' +
+                  'title="This layer\u2019s own harmonic frame — its key, its own changes, or yoked to another layer.">Key</button>' +
+                '<button type="button" class="ambient-seg v2-ghb v2-ghb-notes" ' +
+                  'title="Where this layer\u2019s pitches come from — a scale, a chord, a wrap or its own progression.">Notes</button>' +
+              '</span>' +
               '<button type="button" class="v2-genclose" aria-label="Close">\u2715</button></div>' +
+            // …and the popovers those three raise. Built here, inside
+            // `.v2-genwrap`, so a control in one still resolves to the staged
+            // copy exactly as the rows below it do — and so v1's delegated
+            // wiring for the Key and Notes markup (keyed on `data-kokey` and
+            // the notes button's own id) still finds its host.
+            '<div class="v2-ghpop-wrap" hidden>' +
+              '<div class="v2-ghpop-scrim"></div>' +
+              '<div class="v2-ghpop" role="dialog">' +
+                '<div class="v2-ghpop-head"><span class="v2-ghpop-title"></span>' +
+                  '<button type="button" class="v2-ghpop-close" aria-label="Close">\u2715</button></div>' +
+                '<div class="v2-ghpop-body">' +
+                  '<div class="v2-ghsec" data-gh="key">' +
+                    ((typeof _ambKeyOvHtml === 'function') ? _ambKeyOvHtml('v2:' + L.id, L) : '') +
+                  '</div>' +
+                  '<div class="v2-ghsec" data-gh="notes">' +
+                    ((typeof _ambNotesButtonHtml === 'function')
+                      ? _ambNotesButtonHtml('v2-' + L.id) : '') +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
             // THE MODEL USED TO BE A PARAGRAPH HERE and is two CONTROLS now
             // (Rhythm and Pitch, the first two rows below). It was 44px of a
             // 617px panel, static — so after one read it is noise on every
@@ -13771,9 +13820,15 @@
               // two lit doors for one state is the mode-or-status rule broken.
               // What it makes IS the ordinary model (▦ Chords is ⛰
               // Groundwork), so nothing here is a second mechanism.
-              '<button type="button" class="ambient-seg v2-autobtn" title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them. Both make this part GENERATED, for the part you have selected.">\u2728 Quick<span class="v2-matsub">chords \u00b7 melody</span></button>' +
-              // ⚙ DEEP — the one generated door; see ONE GENERATED DOOR above.
-              '<button type="button" class="ambient-seg v2-genbtn" title="Make this part by rule instead of by hand — choose a material and tune what it generates: Sustained, Arpeggio, Roll, Mixed or Groundwork.">\u2699 Deep<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
+              // (✨ QUICK AND ⚙ DEEP LEFT THIS ROW, 2026-09-21. ✦ Generate opens
+              // the Deep panel itself now, so a button in a sheet that opened
+              // it was a door to a door; and Quick is a button in that panel's
+              // own head, beside Key and Notes. The ⚙ Deep button is kept in
+              // the DOM below, hidden, because it is the one thing every
+              // handler and probe presses to open the panel — removing the
+              // node would have meant rewiring all of them in the same change.)
+              '<button type="button" class="ambient-seg v2-autobtn" hidden title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them.">\u2728 Quick</button>' +
+              '<button type="button" class="ambient-seg v2-genbtn" hidden title="Generate">\u2699 Deep<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
               // (⌫ CLEAR MOVED to the drawing's head, beside the 👁 View picker —
               // 2026-09-16, user: "this is the wrong place for Clear".)
               // GROUNDWORK IS A SHAPE IN THE PANEL NOW (2026-09-09, user:
@@ -14057,13 +14112,11 @@
           // panel host by that key, so a v2 card inside the host gets working
           // controls with no wiring of its own. `keyOv` was already coerced and
           // already READ (it rides `_ambNotesOf`) — this is the door.
-          ((typeof _ambKeyOvHtml === 'function')
-            ? tb('Key', _ambKeyOvHtml('v2:' + L.id, L))
-            : '') +
-          ((typeof _ambNotesButtonHtml === 'function')
-            ? _ambNotesButtonHtml('v2-' + L.id).replace('<div class="ambient-ctrl"',
-                '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth"')
-            : '') +
+          // (KEY AND THE NOTES SOURCE MOVED to ✦ Generate's own head,
+          // 2026-09-21 — they are popover buttons there. MOVED, never copied:
+          // both are v1 markup wired by DELEGATION on keys and ids, so a
+          // second copy would have `querySelector` answering with whichever
+          // came first in the DOM and the wrong one would take every press.)
           // ── PITCH · HARMONY · VOICING LIVE IN ⚙ DEEP (2026-09-20) ───────
           // user: "it seems like these 3 param groups (Pitch/Harmony/Voicing)
           // belong in Deep". Three tabs stood here — and every field in them
@@ -18703,8 +18756,18 @@
           const want = gt.getAttribute('data-goto');
           if (!want) return;
           // Content IS the body: nothing to open, only a popover to dismiss.
-          if (want === 'Content') secClose(ctx.card);
-          else if (want !== (secStOf(ctx.card) || {}).grp) secOpen(ctx.card, ctx.L, want, null);
+          if (want === 'Content') { secClose(ctx.card); return; }
+          // ✦ GENERATE IS ⚙ DEEP (2026-09-21). Its sheet's only live content
+          // was a Method tab holding a button that opened this panel, so the
+          // section opens the panel itself — one door, not two. A RECORDED
+          // part still gets the sheet: Transpose and Pitch quantize are what
+          // it has to offer, and Deep generates rules a stored list ignores.
+          if (want === 'Generate' && ctx.L.part && ctx.L.part.kind !== 'recorded') {
+            secClose(ctx.card);
+            const gb = ctx.card.querySelector('.v2-genbtn');
+            if (gb) { gb.click(); return; }
+          }
+          if (want !== (secStOf(ctx.card) || {}).grp) secOpen(ctx.card, ctx.L, want, null);
           return;
         }
         // A HIT NAVIGATES. `popOpen` is the same call the group buttons and the
@@ -20222,6 +20285,35 @@
         // created node: the rows inside are ordinary gated `.ambient-ctrl`s
         // that `applyGate` already sweeps, and keeping them in the DOM is what
         // lets a commit leave the panel alone.
+        // ── ✦ GENERATE'S HEAD BUTTONS (2026-09-21) ─────────────────────────
+        // ✨ Quick raises the panel it always had; Key and Notes raise a
+        // popover built inside `.v2-genwrap`, so their controls still resolve
+        // to the STAGED copy and v1's delegated wiring still finds its host.
+        const ghq = t.closest('.v2-ghb-quick');
+        if (ghq) {
+          const ctx = layerOf(ghq); if (!ctx) return;
+          const ab = ctx.card.querySelector('.v2-autobtn');
+          if (ab) ab.click();
+          return;
+        }
+        const ghs = t.closest('.v2-ghb-key') || t.closest('.v2-ghb-notes');
+        if (ghs) {
+          const ctx = layerOf(ghs); if (!ctx) return;
+          const which = ghs.classList.contains('v2-ghb-key') ? 'key' : 'notes';
+          const wrap = ctx.card.querySelector('.v2-ghpop-wrap');
+          if (!wrap) return;
+          wrap.hidden = false;
+          wrap.setAttribute('data-gh', which);
+          const ttl = wrap.querySelector('.v2-ghpop-title');
+          if (ttl) ttl.textContent = which === 'key' ? 'Key' : 'Notes';
+          return;
+        }
+        if (t.closest('.v2-ghpop-close') || t.closest('.v2-ghpop-scrim')) {
+          const ctx = layerOf(t); if (!ctx) return;
+          const wrap = ctx.card.querySelector('.v2-ghpop-wrap');
+          if (wrap) wrap.hidden = true;
+          return;
+        }
         const go = t.closest('.v2-genbtn');
         if (go) {
           const ctx = layerOf(go); if (!ctx) return;

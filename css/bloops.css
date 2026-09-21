@@ -16706,8 +16706,11 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
    step gets a full-width bar that STICKS to the top of that band — a heading
    you scroll past leaves you guessing which step you are in. */
 .v2-layer .v2-genrows { background: #09090f; box-shadow: inset 0 8px 10px -10px #000, inset 0 -8px 10px -10px #000; }
+/* WRAPS. The step caption says what the step holds now ("— the ones Roll a
+   line uses"), which is longer than the bare title it replaced, and a
+   non-wrapping flex row would push it off the edge at 390px. */
 .v2-layer .v2-genzone {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
   text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.66rem; color: #e2e8f0;
 }
 /* the numeral is the step, so it reads as one — a chip, not a digit in a sentence */
@@ -16727,7 +16730,10 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
   background: #16162a; border-top: 1px solid #2a2a3c; border-bottom: 1px solid #2a2a3c;
 }
 .v2-layer .v2-genrows .v2-genzone:first-child { margin-top: -4px; border-top: 0; }
-.v2-layer .v2-genrows .v2-genzone .v2-zonefor { text-transform: none; letter-spacing: 0; color: #8a8aa8; font-weight: 500; }
+.v2-layer .v2-genrows .v2-genzone .v2-zonefor {
+  text-transform: none; letter-spacing: 0; color: #8a8aa8; font-weight: 500;
+  min-width: 0; overflow-wrap: anywhere;
+}
 .v2-layer .v2-genrows .v2-tunedrow .v2-tunedsays { grid-column: 2 / -1; }
 
 /* ⚙ Deep's five shape doors are one dropdown now — the buttons stay in the DOM

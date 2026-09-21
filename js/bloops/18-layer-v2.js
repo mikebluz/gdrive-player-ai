@@ -10257,15 +10257,24 @@
         const row = hb.closest('.ambient-ctrl');
         if (i === 0 && shown(row)) { tunedRows.add(row); chips.push({ lab: 'Harmony voices', val: '+' + all.length, f: '#harm', v: 0, from: 'default' }); }
       });
-      const zf = pop.querySelector('.v2-zonefor');
+      // SCOPED TO ZONE 2. Step 3 carries a `.v2-zonefor` of its own now, and a
+      // bare `querySelector` answers with whichever comes first in the DOM —
+      // the duplicate-class trap this file keeps paying for. It happens to be
+      // zone 2's today; naming the zone means it still will be tomorrow.
+      const zf = pop.querySelector('.v2-genzone2 .v2-zonefor');
       if (zf) {
         // NAMES THE SHAPE, and ✨ Quick's Melody IS a Roll a line (same recipe,
         // and the Character list below is roll's — `PK` maps it). Saying
         // "Melody" here read as a CHARACTER being picked, because roll has one
         // by that name — one word for two things, the naming rule's own trap.
-        // ONE NAME TABLE (`MAT_NAME`) — a caption that does not know a material
-        // just goes blank, which reads as "this zone is for nothing".
-        const zt = MAT_NAME[matProv(L).key] ? ' \u2014 for ' + MAT_NAME[matProv(L).key] : '';
+        // ONE NAME TABLE (`MAT_NAME`). This used to read "— for Roll a line",
+        // which named the material but still never said WHY these rows sit
+        // together; it states the rule outright now. And it NEVER goes blank:
+        // a caption that did not know a material said nothing at all, which
+        // read as "this zone is for nothing".
+        // NO LEADING SPACE: the bar is a flex row with a 7px gap, so the text
+        // node and this span are already separated — a space here doubles it.
+        const zt = '\u2014 the ones ' + (MAT_NAME[matProv(L).key] || 'this shape') + ' uses';
         if (zf.textContent !== zt) zf.textContent = zt;
       }
       const ts2 = pop.querySelector('.v2-tunedsays');
@@ -12951,7 +12960,17 @@
               // shapes. First row, because a preset sets the rows below it.
               // Options are filled by `genSync` — which shape is in force, and
               // whether its preset has been tuned, move without a rebuild.
-              '<div class="ambient-mod-sub v2-genzone v2-genzone2"><b class="v2-zonen">2</b>The knobs that matter<span class="v2-zonefor"></span></div>' +
+              // "THE KNOBS THAT MATTER" NAMED NOTHING (2026-09-20, user: "what
+              // does 'The Knobs that Matter' mean, doesn't say anything
+              // descriptive of why they are grouped"). It was a boast, not a
+              // description — and it implied step 3 held knobs that do NOT
+              // matter. What actually decides membership here is the SHAPE:
+              // every row in this zone is gated to the material in force
+              // (Strike to Groundwork, Octaves and Direction to Arpeggio,
+              // Voicing to a chord, Chords land to Mixed), so the zone is the
+              // handful of knobs THIS material reads. The caption says that,
+              // and "Main knobs" now pairs with "Fine-tune" as coarse to fine.
+              '<div class="ambient-mod-sub v2-genzone v2-genzone2"><b class="v2-zonen">2</b>Main knobs<span class="v2-zonefor"></span></div>' +
               // THESE KNOBS ARE DEFERRED ON A WRITTEN PART, AND MUST SAY SO
               // (2026-09-20, "not resizing when i change length"). `gateNowOf`
               // deliberately counts a written take as BOTH live and recorded,
@@ -13070,7 +13089,11 @@
               // The rule for what is here at all: play it twice — a knob that
               // makes two passes differ is ✺ Playing's; one that changes only on
               // 🎲 New take is Deep's.
-              '<div class="ambient-mod-sub v2-genzone" data-v2when="kind:live"><b class="v2-zonen">3</b>Fine-tune</div>' +
+              // …and step 3 says what it holds, for the same reason step 2
+              // now does: "Fine-tune" against "Main knobs" is a pairing only
+              // if you already know the rest is here.
+              '<div class="ambient-mod-sub v2-genzone" data-v2when="kind:live"><b class="v2-zonen">3</b>Fine-tune' +
+                '<span class="v2-zonefor">— everything else, in four groups</span></div>' +
               '<div class="v2-fttabs" data-v2when="kind:live" role="tablist">' +
                 [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'], ['take', '🎲 Take']].map(([k, lab]) =>
                   '<button type="button" class="ambient-seg v2-fttab" role="tab" data-ft="' + k + '">' +

@@ -774,6 +774,17 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     measured twice in one pass: `n` at `[1, 32]` against the part's `[1, 64]` made a fast Character
     come out at half speed, and `lenRatio` at `[5, 100]` could not hold one that rings past its
     onset. **When a region must carry some setting, list it AND copy the part's range.**
+- **A SECTION HEADING MUST NAME ITS RULE, NOT PRAISE ITS CONTENTS (2026-09-20, user: "what does
+  'The Knobs that Matter' mean, doesn't say anything descriptive of why they are grouped").** ⚙ Deep's
+  step 2 was called that for months; it said nothing about membership and implied step 3 held knobs
+  that do not. The rule was the SHAPE — every row there is gated to the material in force — so the
+  bar states it: "Main knobs — the ones Play the changes uses", re-named per material and never
+  blank. **When a group's caption cannot be written as a sentence about what is IN it, the grouping
+  is the thing to check first.**
+  - **`genSync` runs TWICE — from the gate pass with the LAYER, and from `stagePass` with the
+    DRAFT** — and both write the same nodes, so while ⚙ Deep is open with a draft whose shape
+    differs, these captions describe whichever call ran last. Pre-existing; measure a panel caption
+    by opening the panel FRESH on each shape, not by editing with it open.
 - **A HARMONY VOICE'S FOUR CONTROLS ARE CAPTIONED INDIVIDUALLY (2026-09-20, user: "these harmony
   controls need better informational labels and tooltips").** They were four unlabelled boxes with a
   positional key underneath (`motion · series · every · canon`), so reading the row meant counting

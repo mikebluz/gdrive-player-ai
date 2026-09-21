@@ -646,6 +646,11 @@
     if (Number.isFinite(m.oct)) o.oct = clamp(m.oct | 0, -1, 3);
     if (Number.isFinite(m.len)) o.len = clamp(m.len | 0, 5, 200);
     if (Number.isFinite(m.vel)) o.vel = clamp(m.vel | 0, 10, 100);
+    // RANGE is the line's OWN, and absent means "the part's" — the shim below
+    // hands `pitchesAt` the part's `pitch` with the line's kind on top, so a
+    // line with nothing to say about range still roams exactly as far as the
+    // part it belongs to. Stated, it overrides for this line only.
+    if (Number.isFinite(m.span)) o.span = clamp(m.span | 0, 1, 12);
     return Object.keys(o).length ? o : null;
   }
   function normGroundSet(g) {
@@ -750,7 +755,11 @@
           kind: GROUND_MEL_KINDS.indexOf(mel.kind) >= 0 ? mel.kind : 'series',
           oct: clamp(gnum(mel.oct, 1) | 0, -1, 3),
           len: clamp(gnum(mel.len, 80) | 0, 5, 200),
-          vel: clamp(gnum(mel.vel, 70) | 0, 10, 100) }
+          vel: clamp(gnum(mel.vel, 70) | 0, 10, 100),
+          // …and `span` stays NULL when nothing states it, rather than being
+          // defaulted here: a number would override the part's on every line
+          // that never asked to, which is the silent-clip trap one rung down.
+          span: Number.isFinite(mel.span) ? clamp(mel.span | 0, 1, 12) : null }
       : null;
     return base;
   }
@@ -4111,13 +4120,27 @@
           if (!ml) continue;
           const t0 = cs + sp2.t0 * cyc, spanSec2 = Math.max(1e-3, (sp2.t1 - sp2.t0) * cyc);
           const stepSec = spanSec2 / ml.rate;
-          const melPart = Object.assign({}, p, {
-            pitch: Object.assign({}, p.pitch, { kind: ml.kind, voices: 1, drift: 0 }),
-          });
+          const melPitch = Object.assign({}, p.pitch, { kind: ml.kind, voices: 1, drift: 0 });
+          if (ml.span != null) melPitch.span = ml.span;
+          const melPart = Object.assign({}, p, { pitch: melPitch });
           for (let k2 = 0; k2 < ml.rate; k2++) {
             const mAt = t0 + k2 * stepSec;
             if (mAt >= cs + cyc - 1e-6) break;
-            const seed2 = seedBase ^ ((sp2.idx + 1) * 0x9e3779b1) ^ (k2 * 2246822519);
+            // EVOLVE REACHES THE LINE (2026-09-21, user: "shouldn't evolve
+            // keep changing both the line and the chord voicings"). This read
+            // `seedBase` flat, which made the line the ONE part of a
+            // Groundwork layer that Evolve could not govern: at How much 40%
+            // the chords kept 60% of their material and the line re-decided
+            // ALL of it, and with the change narrowed to rhythm only the line
+            // still re-pitched. `stageSeed` is the same keep/new ladder the
+            // chord draw walks — and it returns `seedBase` unchanged when no
+            // `chg` is in force, so a part with no Evolve is byte-identical.
+            // The SLOT KEY is the note's own position in the cycle, the same
+            // shape as the chord path's (a fraction × 1000) rather than its
+            // index: a rate change shifts every later index and would
+            // re-decide notes the change meant to keep.
+            const melK = Math.round(((mAt - cs) / Math.max(1e-6, cyc)) * 1000);
+            const seed2 = stageSeed('pit', melK) ^ ((sp2.idx + 1) * 0x9e3779b1) ^ (k2 * 2246822519);
             const reg2 = clamp((L.instrument.register | 0) + ml.oct, 0, 8);
             let msM = [];
             try { msM = withKeyTime(mAt, () => pitchesAt(melPart, ctx.E, ctx.cfg, mAt, reg2, seed2, k2, melMem, L)) || []; } catch (e) {}
@@ -10421,7 +10444,9 @@
       // THE TABS — which is open, how many rows each has for THIS shape, a dot
       // where one is tuned, and the question the open one answers
       const TABQ = { rhythm: 'When the notes land, and for how long.', notes: 'Which pitches, and how they are stacked.',
-        form: 'How the part repeats itself.', take: 'Chance rolled once per take — 🎲 New take rolls it again.' };
+        form: 'How the part repeats itself.',
+        accomp: 'The lines that move over the changes, and how many notes each change states.',
+        take: 'Chance rolled once per take — 🎲 New take rolls it again.' };
       let cur = (([...host.classList].find((k) => k.indexOf('v2-ftt-') === 0)) || 'v2-ftt-rhythm').slice(7);
       if (!TABQ[cur]) cur = 'rhythm';
       pop.querySelectorAll('.v2-fttab').forEach((tb) => {
@@ -10516,6 +10541,42 @@
     };
   }
   const gwMelOn = (m) => !!(m && m.on === 1);
+  // ── WHAT ONE LINE PLAYS BY (2026-09-21) ─────────────────────────────────
+  // The defaults, the PART's line on top, then the CHANGE's own — the same
+  // ladder `groundSetAt` walks in the engine half, and deliberately a second
+  // copy of its numbers rather than a shared one, because the two IIFEs share
+  // only `window._v2`. THEY MUST AGREE: a row that edits a line and the
+  // emitter that plays it disagreeing about what a half-set overlay means is
+  // a knob that reads one number and sounds another.
+  const GW_MEL_DEF = { rate: 4, kind: 'series', oct: 1, len: 80, vel: 70 };
+  // `span` is the one field with no constant of its own — absent, a line
+  // roams as far as its PART's Range does, so the floor has to be looked up.
+  const gwMelSpan = (L) => clamp(((L.part.pitch || {}).span | 0) || 4, 1, 12);
+  function gwMelResolve(L, pm, om) {
+    const o = Object.assign({}, GW_MEL_DEF, pm || {}, om || {});
+    o.rate = clamp(num(o.rate, 4) | 0, 1, 16);
+    o.oct = clamp(num(o.oct, 1) | 0, -1, 3);
+    o.len = clamp(num(o.len, 80) | 0, 5, 200);
+    o.vel = clamp(num(o.vel, 70) | 0, 10, 100);
+    o.span = clamp(num(o.span, gwMelSpan(L)) | 0, 1, 12);
+    if (GW_MEL_KIND.every(([v]) => v !== o.kind)) o.kind = 'series';
+    return o;
+  }
+  // WHICH CHANGES IN THIS PART CARRY A LINE OF THEIR OWN — the ones that get
+  // their own settings row. A line INHERITED from the part is shaped by the
+  // part's row; a line you placed on one change is one you can shape there.
+  function gwOwnLines(L, r) {
+    const out = [];
+    for (let i = r.from; i < r.from + r.len; i++) {
+      const o = gwGet(L, 'chords', i);
+      if (o && o.mel && o.mel.on === 1) out.push(i);
+    }
+    return out;
+  }
+  // …and whether that change says anything BEYOND turning the line on, which
+  // is what "↺ Follow the part" has to undo (and what greys it when there is
+  // nothing to undo).
+  const gwMelOwnKeys = (om) => Object.keys(om || {}).filter((k) => k !== 'on');
   function gwPartsSync(card, L) {
     const host = card.querySelector('.v2-gwpartshost'); if (!host) return;
     let cfg = null; try { cfg = _cfgOf(); } catch (e) {}
@@ -10544,8 +10605,13 @@
       }
       return 0;
     };
+    // …and WHICH changes carry their own line, not merely whether any does:
+    // each one draws its own settings row now, so a line moving from change 2
+    // to change 3 changes the set of controls and must rebuild. Still only
+    // "does a control appear", never a value — the warning above is why.
     const sig = JSON.stringify([chords.length, rgs.map((r) => [r.pi, r.from, r.len]),
-      rgs.map((r) => (gwMelOn(gwPartSet(L, r.pi).mel) ? 1 : 0)), rgs.map(gwAnyLine)]);
+      rgs.map((r) => (gwMelOn(gwPartSet(L, r.pi).mel) ? 1 : 0)),
+      rgs.map(gwAnyLine), rgs.map((r) => gwOwnLines(L, r))]);
     if (host._sig !== sig) {
       host._sig = sig;
       if (!rgs.length) {
@@ -10582,9 +10648,48 @@
         put(gp2 + 'mel.oct', clamp(num(m2.oct, 1) | 0, -1, 3));
         put(gp2 + 'mel.len', clamp(num(m2.len, 80) | 0, 5, 200));
         put(gp2 + 'mel.vel', clamp(num(m2.vel, 70) | 0, 10, 100));
-        const ks = blk.querySelector('.v2-gwkind select');
+        put(gp2 + 'mel.span', clamp(num(m2.span, gwMelSpan(L)) | 0, 1, 12));
+        // THE PART'S OWN kind select — scoped, because each change's line row
+        // carries one too now and a bare `.v2-gwkind select` would hand back
+        // whichever came first in the DOM (the duplicate-class trap: the same
+        // shape that put harmony's readout on the wrong row).
+        const ks = blk.querySelector('.v2-gwmelrow:not(.v2-gwclrow) .v2-gwkind select');
         if (ks && ks.value !== (m2.kind || 'series')) ks.value = m2.kind || 'series';
       }
+      // ── EACH CHANGE'S OWN LINE, written in place for the same reason ────
+      // These inputs show what the change INHERITS until it is edited, so they
+      // have to be re-put every pass: without this, stepping the part's line
+      // would move what plays while the change rows below went on showing the
+      // old number — a computed face with no second writer, frozen.
+      blk.querySelectorAll('.v2-gwclrow').forEach((row) => {
+        const ci = row.getAttribute('data-gwci') | 0;
+        const om = (gwGet(L, 'chords', ci) || {}).mel || {};
+        const m3 = gwMelResolve(L, ps.mel, om);
+        const cp = 'part.ground.chords.' + ci + '.';
+        [['mel.rate', m3.rate], ['mel.oct', m3.oct], ['mel.len', m3.len],
+         ['mel.vel', m3.vel], ['mel.span', m3.span]].forEach(([f, v]) => {
+          const el = row.querySelector('.v2-f[data-f="' + cp + f + '"]');
+          if (el && String(el.value) !== String(v)) el.value = v;
+          // A FIELD THIS CHANGE STATES ITSELF is marked, so "follows the part"
+          // and "happens to match it" are told apart at a glance — the same
+          // distinction the cells' `own` class draws for the note count.
+          const mi = el && el.closest('.v2-mini');
+          if (mi) mi.classList.toggle('own', Object.prototype.hasOwnProperty.call(om, f.slice(4)));
+        });
+        const ks3 = row.querySelector('.v2-gwkind select');
+        if (ks3 && ks3.value !== m3.kind) ks3.value = m3.kind;
+        const mk = ks3 && ks3.closest('.v2-mini');
+        if (mk) mk.classList.toggle('own', typeof om.kind === 'string');
+        const fb = row.querySelector('.v2-gwcfollow');
+        if (fb) {
+          const owned = gwMelOwnKeys(om);
+          fb.classList.toggle('on', owned.length > 0);
+          fb.disabled = !owned.length;
+          fb.title = owned.length
+            ? 'This change sets ' + owned.length + ' of its own — put them back to the part’s line'
+            : 'Every setting here already follows the part’s line';
+        }
+      });
       const pb = blk.querySelector('.v2-gwpmel');
       if (pb) {
         const on2 = gwMelOn(ps.mel);
@@ -10707,6 +10812,13 @@
         mini(L, gp + 'mel.oct', 'Octave', clamp(num(mel.oct, 1) | 0, -1, 3), -1, 3, 1) +
         mini(L, gp + 'mel.len', 'Length %', clamp(num(mel.len, 80) | 0, 5, 200), 5, 200, 5) +
         mini(L, gp + 'mel.vel', 'Level', clamp(num(mel.vel, 70) | 0, 10, 100), 10, 100, 5) +
+        // RANGE — how far the line roams, its own rather than the part's.
+        // Shown at the value it INHERITS, and nothing is stored until it is
+        // moved: `mini` writes only on an edit and `gwPartsSync` puts the
+        // resolved number back each pass, so an untouched Range keeps
+        // following the part instead of silently pinning itself the first
+        // time the panel is opened.
+        mini(L, gp + 'mel.span', 'Range', clamp(num(mel.span, gwMelSpan(L)) | 0, 1, 12), 1, 12, 1) +
         '</div>' : '');
     // THE CHANGES — one cell each, marked when it speaks for itself.
     const cells = [];
@@ -10724,12 +10836,47 @@
         '<button type="button" class="v2-gwmel" data-gwci="' + i + '">\u21b3</button>' +
         '</span>');
     }
+    // ── A LINE YOU PLACED IS A LINE YOU CAN SHAPE (2026-09-21) ───────────
+    // user: "these Lines needs to be promoted to first class items in the
+    // model, so should be editable and customizable". A change could only say
+    // ON, OFF or FOLLOW — every other thing about its line came from the part,
+    // so two lines in one part could never differ, and the ♪ was a switch
+    // rather than an item. Each change that lights its own line now gets the
+    // same six knobs the part's line has, at its own rung.
+    // ABSENT IS STILL INHERIT: these show the number they inherit and store
+    // nothing until one is moved, so the rows are a view of the ladder rather
+    // than a copy of it, and stepping the PART's line still moves every change
+    // that has not spoken for itself.
+    const melRows = gwOwnLines(L, r).map((i) => {
+      const cp = 'part.ground.chords.' + i + '.';
+      const om = (gwGet(L, 'chords', i) || {}).mel || {};
+      const m = gwMelResolve(L, ps.mel, om);
+      let cn2 = '';
+      try { cn2 = (typeof _ambChordShort === 'function') ? _ambChordShort(chords[i]) : ''; } catch (e) {}
+      const owned = gwMelOwnKeys(om);
+      return '<div class="v2-gwrow v2-gwmelrow v2-gwclrow" data-gwci="' + i + '">' +
+        '<span class="v2-gwrowlab">♪ ' + esc(cn2 || String(i + 1)) + '</span>' +
+        mini(L, cp + 'mel.rate', 'Notes', m.rate, 1, 16, 1) +
+        '<span class="v2-mini v2-gwkind"><span class="v2-mini-lab">Moves</span>' +
+          '<select class="ambient-select v2-f" data-f="' + cp + 'mel.kind">' +
+          GW_MEL_KIND.map(([v, lab]) => '<option value="' + v + '"' +
+            (m.kind === v ? ' selected' : '') + '>' + lab + '</option>').join('') +
+          '</select></span>' +
+        mini(L, cp + 'mel.oct', 'Octave', m.oct, -1, 3, 1) +
+        mini(L, cp + 'mel.len', 'Length %', m.len, 5, 200, 5) +
+        mini(L, cp + 'mel.vel', 'Level', m.vel, 10, 100, 5) +
+        mini(L, cp + 'mel.span', 'Range', m.span, 1, 12, 1) +
+        '<button type="button" class="ambient-seg v2-gwcfollow' + (owned.length ? ' on' : '') +
+          '" data-gwci="' + i + '">↺ Follow</button>' +
+        '</div>';
+    }).join('');
     return '<div class="v2-gwpart" data-gwpi="' + pi + '">' +
       '<div class="v2-gwphead"><span class="v2-gwpname">' + esc(nm || ('Part ' + (pi + 1))) + '</span>' +
         '<span class="v2-gwpsum"></span></div>' +
       glob +
       '<div class="v2-gwrow v2-gwchords"><span class="v2-gwrowlab">Each change</span>' +
         cells.join('') + '</div>' +
+      melRows +
       '</div>';
   }
   // ── THE PLAYHEAD ────────────────────────────────────────────────────────
@@ -13392,10 +13539,11 @@
               // if you already know the rest is here.
               '</div>' +
               '<div class="ambient-mod-sub v2-genzone v2-gzbar" data-gz="3" data-v2when="kind:live" role="button" tabindex="0"><b class="v2-zonen">3</b>Fine-tune' +
-                '<span class="v2-zonefor">— everything else, in four groups</span><i class="v2-zcar">▸</i></div>' +
+                '<span class="v2-zonefor">— everything else, in five groups</span><i class="v2-zcar">▸</i></div>' +
               '<div class="v2-gzbody" data-gz="3">' +
               '<div class="v2-fttabs" data-v2when="kind:live" role="tablist">' +
-                [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'], ['take', '🎲 Take']].map(([k, lab]) =>
+                [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'],
+                 ['accomp', '♪ Lines'], ['take', '🎲 Take']].map(([k, lab]) =>
                   '<button type="button" class="ambient-seg v2-fttab" role="tab" data-ft="' + k + '">' +
                     '<span class="v2-ftlab">' + lab + '<i class="v2-ftdot" hidden>●</i></span>' +
                     '<small class="v2-ftn"></small></button>').join('') +
@@ -13522,12 +13670,30 @@
               gst(L, 'part.pitch.phraseLen', 'Phrase', num((L.part.pitch || {}).phraseLen, 4), 1, 16,
                   'chords', 'kind:live;voice:synth;pitch:chord') +
               gst(L, 'part.pitch.repeats', 'Repeats', num((L.part.pitch || {}).repeats, 4), 1, 16,
-                  'times', 'kind:live;voice:synth;pitch:chord') +
-              // GROUNDWORK'S OVERLAY, PART BY PART — the rows above are the
-              // floor; a part, then one change, may say otherwise.
+                  'times', 'kind:live;voice:synth;pitch:chord')) +
+              // ── ♪ LINES — THE ACCOMPANIMENT (2026-09-21) ──────────────
+              // user: "these Lines needs to be promoted to first class items in
+              // the model … they don't feel right in Repeats, they seem hidden
+              // there". They were the LAST row of "Repeats", under five knobs
+              // about how a part repeats itself — a whole second voice filed
+              // under a heading that does not describe it. A line is not a
+              // repeat; it is what plays OVER the changes, so it gets the tab.
+              // The chord-count cells come with it: the two are one overlay
+              // (how many notes this change states, and whether a line moves
+              // over it) and splitting them across tabs would be two doors
+              // onto one model.
+              ftrows('accomp',
               '<div class="ambient-ctrl v2-gwparts" data-v2when="kind:live;rhythm:ground"><label>Changes</label>' +
                 '<span class="v2-gwpartshost"></span>' +
-                '<span class="ambient-hint">↳ follows the floor · 0 notes sits a change out</span></div>') +
+                '<span class="ambient-hint">↳ follows the floor · 0 notes sits a change out</span></div>' +
+              // THE GATE LANGUAGE HAS NO NEGATION — a clause is a SET of legal values
+              // and nothing else, so "not ground" has to be spelled. Written as
+              // `rhythm:!ground` this row would have matched nothing and never
+              // shown: a silent no-op, which is the whole reason the tab needs a
+              // row here at all.
+              '<div class="ambient-ctrl" data-v2when="kind:live;rhythm:pulse,euclid,chance,drawn"><label>♪ Lines</label>' +
+                '<span class="ambient-hint">only ⛰ Play the changes carries lines — they move over a change ' +
+                'while the harmony holds underneath. Pick that material in step 1.</span></div>') +
               // ── 🎲 TAKE — chance that shapes the notes ONCE per take. Traced
               // to the seed, not judged by label: Vary and Rate var draw from
               // `seedBase`, which is the TAKE unless ✺ Playing's Re-roll is on —
@@ -19897,6 +20063,24 @@
           // `gwSeedMelKind`) — a change states only `on`, so without this its
           // line falls to the deterministic default and the part cannot roll.
           if (rec.mel && rec.mel.on === 1) gwSeedMelKind(L8, groundPartOfUI(ci));
+          commit(ctx);
+          applyGate(ctx.card, L8);
+          try { drawPartViz(ctx.card, L8, E); } catch (e) {}
+          return;
+        }
+        // ↺ FOLLOW — this change stops speaking for itself about its line and
+        // goes back to the part's, WITHOUT putting the line out. Absent is
+        // inherit everywhere in this overlay, so "follow" is a DELETE of the
+        // fields and nothing else; `on` is kept because it is the one field
+        // that means something by itself (see `normGroundMel`).
+        const gcf = t.closest && t.closest('.v2-gwcfollow');
+        if (gcf) {
+          const ctx = layerOf(gcf); if (!ctx) return;
+          const ci = gcf.getAttribute('data-gwci') | 0;
+          const L8 = ctx.L;
+          const rec = (((L8.part.ground || {}).chords) || {})[String(ci)];
+          if (!rec || !rec.mel) return;
+          rec.mel = { on: rec.mel.on === 0 ? 0 : 1 };
           commit(ctx);
           applyGate(ctx.card, L8);
           try { drawPartViz(ctx.card, L8, E); } catch (e) {}

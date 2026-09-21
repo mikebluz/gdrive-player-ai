@@ -3724,9 +3724,10 @@ const ok = (name, cond, detail) => {
     const wasRhythm = L().part.rhythm.kind;
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
     card().classList.remove('collapsed');
-    // the per-change overlay is on Fine-tune's Repeats tab since 2026-09-17
-    { const tb = card().querySelector('.v2-shapepop .v2-fttab[data-ft="form"]');
-      if (tb && !card().classList.contains('v2-ftt-form')) { tb.click(); await wait(220); } }
+    // the per-change overlay has its own Fine-tune tab since 2026-09-21 (it was
+    // on "Repeats", where a whole second voice read as hidden)
+    { const tb = card().querySelector('.v2-shapepop .v2-fttab[data-ft="accomp"]');
+      if (tb && !card().classList.contains('v2-ftt-accomp')) { tb.click(); await wait(220); } }
     const r = card().querySelector('.v2-shapepop').getBoundingClientRect();
     o.onScreen = r.width > 0 && r.height > 0 && r.top >= 40 && r.bottom <= innerHeight + 1;
     o.noUseButton = document.querySelectorAll('.v2-layer .v2-mkground').length === 0;
@@ -4690,8 +4691,10 @@ const ok = (name, cond, detail) => {
     const nn = window._v2.takeNotesNow(E, L()) || [];
     o.chordHeld = nn.filter((n) => Math.abs(n.t - 0.4) < 0.001).length >= 1;
     // THE LINE'S OWN SETTINGS, and they are only offered once it is on
-    o.melLabs = [...document.querySelectorAll('.v2-layer .v2-gwmelrow .v2-mini-lab')].map((x) => x.textContent).join('/');
-    o.melKind = !!document.querySelector('.v2-layer .v2-gwmelrow .v2-gwkind select');
+    // SCOPED AWAY FROM `.v2-gwclrow`, which shares the class: a change that
+    // lights its own line draws the same six knobs at its own rung.
+    o.melLabs = [...document.querySelectorAll('.v2-layer .v2-gwmelrow:not(.v2-gwclrow) .v2-mini-lab')].map((x) => x.textContent).join('/');
+    o.melKind = !!document.querySelector('.v2-layer .v2-gwmelrow:not(.v2-gwclrow) .v2-gwkind select');
     // A CHANGE'S LINE BUTTON IS THREE-STATE, because absent and off are
     // different answers — and the FIRST tap always changes what you hear, so
     // on a part that already gives a line it means "not this one".
@@ -4745,7 +4748,7 @@ const ok = (name, cond, detail) => {
     JSON.stringify(gwPartsRun));
   ok('⛰ …and the line is a SECOND voice over the held chord, off by default, three-state per change',
     gwPartsRun.lineAdds && gwPartsRun.melRow && gwPartsRun.melSays && gwPartsRun.chordHeld &&
-    gwPartsRun.melKind && gwPartsRun.melLabs === 'Notes/Moves/Octave/Length %/Level' &&
+    gwPartsRun.melKind && gwPartsRun.melLabs === 'Notes/Moves/Octave/Length %/Level/Range' &&
     gwPartsRun.triState && gwPartsRun.ownLine,
     JSON.stringify(gwPartsRun));
 

@@ -1070,6 +1070,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
     progression. The first cut pruned against the LAYER's own number and threw away a change set to 3
     inside a part set to 1. `groundPrune(cfg, part)` runs from `normalizeAll`, over the bench, the ice
     AND every filed per-part record.
+  - **♪ LINES ARE FIRST-CLASS AT BOTH RUNGS (2026-09-21):** `mel = {on?, rate?, kind?, oct?, len?,
+    vel?, span?}` — `on` is stored BOTH ways (a change may refuse a line its part gives it, so `on: 0`
+    is a statement and must never be pruned as falsy), every other field is absent-is-inherit. `span`
+    has no constant of its own: absent, a line roams as far as the PART's `pitch.span`, so the shim
+    the emitter builds must leave it alone rather than defaulting it. Door: ⚙ Deep ▸ Fine-tune ▸
+    ♪ Lines (`v2-ft-accomp`) — it was the last row of "Repeats" until a whole second voice filed
+    under "how a part repeats itself" was reported as hidden.
   - **A change can carry a LINE over the chord (`mel{on,rate,kind,oct,len,vel}`) — a SECOND emission
     pass, not a re-voicing.** The chord sustains; the line moves across the same span with its own
     rhythm and pitch rule. It reuses `pitchesAt` on a SHIM PART (the `partWithRules` idiom) so it
@@ -1234,6 +1241,27 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   `spat.*`, `unitGate`, `chordMask`…), coerced by v1's own normalizers and resolved by
   `_ambLayerByKey('v2:<id>')` — which is why Ramps, the mixer, the scheduler and the FX chain all work
   with almost no v2 code.
+
+- **A stage that draws its own seed is a stage Evolve cannot govern.** `chg` (Evolve) reaches the
+  material through `stageSeed(stage, slotKey)` — *which* stages change (`what`) and *how much* of each
+  (`am`). Groundwork's ♪ Line read `seedBase` flat, so it was the one part of a layer that re-rolled
+  whole at every setting: at How much 40% the chords kept 60% and the line kept none, and a change
+  narrowed to rhythm still re-pitched it (measured: 15% held either way, i.e. the dial did nothing).
+  Any new emitted voice must draw through `stageSeed`, and its SLOT KEY must be the note's POSITION in
+  the cycle, never its index — an index shifts under a rate change and re-decides notes the change
+  meant to keep. `stageSeed` returns `seedBase` unchanged with no `chg`, so the conversion is
+  byte-identical for content that never evolves.
+- **An inheritance panel must show the inherited number and store nothing.** The Groundwork overlay is
+  absent-is-inherit at three rungs, so a row that WROTE the values it displays would pin a change to
+  its part's settings the first time anyone opened the panel — silently cutting it off. The idiom:
+  build with the RESOLVED value, let `mini` write only on a real edit, and re-`put()` the resolved
+  value every sync pass. Skipping the re-put gives the other half of the bug — the part's line moves
+  what plays while the change's row goes on showing the old number (a computed face with no second
+  writer, frozen).
+- **⚙ Deep is always STAGED, so `matSync` returns early and the card's own sync never runs on it.**
+  The staged panel is synced by `stagePass → genSync(<.v2-genwrap>, S)`, and `genSync`'s own
+  early-return tests `classList.contains('v2-layer')` — which the genwrap is not. A handler inside the
+  panel must therefore end with `applyGate(ctx.card, L)`, not a bare `commit`, or nothing repaints.
 
 ### Bloom stores — what exists, and the one thing to know about each
 

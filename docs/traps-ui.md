@@ -112,6 +112,12 @@
 - **`touch-action: none` blocks two-finger pinch too** — use `pinch-zoom` for surfaces that only need
   single-finger drags. Capacitor's `ios.zoomEnabled` defaults to FALSE and is invisible from the web.
 
+- **A tab strip whose CSS hides tabs BY NAME grows a leak with every new tab.** ⚙ Deep's fine-tune
+  tabs hide with one `:not(.v2-ftt-X) … .v2-ft-X` selector per tab, so a tab added to the JS list and
+  not to that rule shows its rows under EVERY OTHER tab — silently, and only on the tabs it does not
+  belong to, which is the one place nobody looks. Add the selector in the same change, and check it by
+  opening a NEIGHBOUR and measuring.
+
 ### Controls, wiring and reachability
 
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated

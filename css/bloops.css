@@ -15505,6 +15505,18 @@
   text-transform: uppercase; color: #7a7a9c; flex: 0 0 auto; min-width: 58px;
 }
 .v2-gwmelrow { padding-left: 10px; border-left: 2px solid rgba(159, 122, 234, 0.45); }
+/* ONE CHANGE'S OWN LINE — the part's line row is the floor, so a change's sits
+   further in and lighter, and its label is the chord it plays over. */
+.v2-gwclrow { margin-left: 8px; border-left-style: dashed; border-left-color: rgba(159, 122, 234, 0.3); }
+.v2-gwclrow > .v2-gwrowlab { color: #d6bcfa; text-transform: none; letter-spacing: 0; font-size: .72rem; min-width: 44px; }
+/* A FIELD THIS CHANGE STATES ITSELF, against one it is inheriting — the same
+   mark the note-count cells carry, so "own" reads the same everywhere. */
+.v2-gwclrow .v2-mini.own .v2-mini-lab { color: #d6bcfa; }
+.v2-gwclrow .v2-mini.own .ambient-step-inp,
+.v2-gwclrow .v2-mini.own select.ambient-select { border-color: #9f7aea; color: #d6bcfa; }
+.v2-gwclrow .ambient-seg.v2-gwcfollow { flex: 0 0 auto; min-height: 30px; padding: 4px 9px; font-size: .72rem; }
+.v2-gwclrow .ambient-seg.v2-gwcfollow.on { border-color: #9f7aea; color: #d6bcfa; }
+.v2-gwclrow .ambient-seg.v2-gwcfollow[disabled] { opacity: .4; cursor: default; }
 .v2-gwrow .v2-mini { flex: 0 0 auto; }
 /* the ± steppers are 16px so focusing one cannot zoom an iPhone */
 .v2-gwkind { display: inline-flex; align-items: center; gap: 4px; }
@@ -16724,8 +16736,16 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 .v2-layer:not(.v2-ftt-rhythm) .v2-genrows .ambient-ctrl.v2-ft-rhythm,
 .v2-layer:not(.v2-ftt-notes) .v2-genrows .ambient-ctrl.v2-ft-notes,
 .v2-layer:not(.v2-ftt-form) .v2-genrows .ambient-ctrl.v2-ft-form,
+/* A TAB IS HIDDEN BY NAME HERE, so a new one that is not listed shows under
+   EVERY tab rather than its own — silently, and only on the tabs it does not
+   belong to. Added in the same change as ♪ Lines for exactly that reason. */
+.v2-layer:not(.v2-ftt-accomp) .v2-genrows .ambient-ctrl.v2-ft-accomp,
 .v2-layer:not(.v2-ftt-take) .v2-genrows .ambient-ctrl.v2-ft-take { display: none !important; }
-.v2-layer .v2-genrows .v2-fttabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }
+/* FIVE TABS WRAP RATHER THAN SHRINK — a fixed repeat(5) put "Repeats" and its
+   row count into 70px at phone width. `auto-fit` keeps each tab legible and
+   drops the fifth onto a second line when there is no room, which is the
+   no-horizontal-scroll rule applied to the tab strip itself. */
+.v2-layer .v2-genrows .v2-fttabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 4px; margin-top: 6px; }
 .v2-layer .v2-genrows .v2-fttab { display: flex; flex-direction: column; align-items: center; gap: 1px;
   min-height: 44px; min-width: 0; padding: 4px 2px; white-space: normal; text-align: center; }
 .v2-layer .v2-genrows .v2-fttab .v2-ftlab { font-size: 0.78rem; overflow-wrap: anywhere; }

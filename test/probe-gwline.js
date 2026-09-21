@@ -64,10 +64,11 @@ const ok = (name, cond, detail) => {
   // is also what seeds the line's kind. An earlier cut lit one by writing the
   // store first, which left the press CYCLING IT BACK OFF and every check
   // reading as though the row had never appeared.
-  // THE CHANGES PANEL LIVES IN ⚙ DEEP ▸ FINE-TUNE ▸ REPEATS. Its row is
-  // `.ambient-ctrl v2-ft v2-ft-form` inside `.v2-genrows`, so without opening
-  // the panel AND selecting that tab the whole block lays out at 0×0 and a
-  // control in it measures as missing — the trap this repo names.
+  // THE CHANGES PANEL LIVES IN ⚙ DEEP ▸ FINE-TUNE ▸ ♪ LINES (it was under
+  // "Repeats" until 2026-09-21). Its row is `.ambient-ctrl v2-ft v2-ft-accomp`
+  // inside `.v2-genrows`, so without opening the panel AND selecting that tab
+  // the whole block lays out at 0×0 and a control in it measures as missing —
+  // the trap this repo names.
   await page.evaluate(() => {
     window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
   });
@@ -82,7 +83,7 @@ const ok = (name, cond, detail) => {
   });
   await zz(700);
   await page.evaluate(() => {
-    const t = document.querySelector('.v2-layer .v2-fttab[data-ft="form"]');
+    const t = document.querySelector('.v2-layer .v2-fttab[data-ft="accomp"]');
     if (t) { t.scrollIntoView({ block: 'center' }); t.click(); }
   });
   await zz(900);
@@ -97,7 +98,10 @@ const ok = (name, cond, detail) => {
       const r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     };
-    const kind = card.querySelector('.v2-gwkind select');
+    // THE PART'S kind select — scoped, because each change's own line row
+    // carries one too now and a bare `.v2-gwkind select` is the duplicate-class
+    // trap waiting to happen.
+    const kind = card.querySelector('.v2-gwmelrow:not(.v2-gwclrow) .v2-gwkind select');
     return {
       row: !!row, shown: vis(row),
       kind: kind ? kind.value : null,
@@ -183,7 +187,7 @@ const ok = (name, cond, detail) => {
     out.walk = distinct();
     // …and the row can put it back to the deterministic sweep, through its
     // own select, as a person would
-    const sel = document.querySelector('.v2-layer .v2-gwkind select');
+    const sel = document.querySelector('.v2-layer .v2-gwmelrow:not(.v2-gwclrow) .v2-gwkind select');
     if (sel) {
       sel.value = 'series';
       sel.dispatchEvent(new Event('input', { bubbles: true }));

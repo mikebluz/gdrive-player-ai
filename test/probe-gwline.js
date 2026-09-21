@@ -60,16 +60,10 @@ const ok = (name, cond, detail) => {
     if (card.classList.contains('collapsed')) card.querySelector('.ambient-collapse').click();
   });
   await zz(1000);
-  // LIGHT A LINE ON ONE CHANGE FIRST, on the layer — ⚙ Deep clones the layer
-  // when it opens, so doing it first is what puts it in the draft too.
-  await page.evaluate(() => {
-    const E = _masterEng, L = (E.getCfg().layers || [])[0];
-    const g = L.part.ground || (L.part.ground = {});
-    const bag = g.chords || (g.chords = {});
-    (bag['0'] || (bag['0'] = {})).mel = { on: 1 };
-    E.getCfg(); window._v2.render(E);
-  });
-  await zz(900);
+  // NO LINE IS LIT HERE — the ♪ press below is the thing under test, and it
+  // is also what seeds the line's kind. An earlier cut lit one by writing the
+  // store first, which left the press CYCLING IT BACK OFF and every check
+  // reading as though the row had never appeared.
   // THE CHANGES PANEL LIVES IN ⚙ DEEP ▸ FINE-TUNE ▸ REPEATS. Its row is
   // `.ambient-ctrl v2-ft v2-ft-form` inside `.v2-genrows`, so without opening
   // the panel AND selecting that tab the whole block lays out at 0×0 and a
@@ -116,7 +110,23 @@ const ok = (name, cond, detail) => {
     };
   });
 
-  // ── A LINE LIT ON ONE CHANGE, the way its own ♪ does ───────────────────
+  // ── LIGHT ONE CHANGE'S LINE WITH ITS OWN ♪, under a real finger ────────
+  // NOT by writing the store: the press is what seeds the line's kind, and a
+  // test that sets state instead would step straight over the thing it is
+  // here to check.
+  const before = await look();
+  ok('with no line at all, the settings row is not drawn', before.row === false,
+    JSON.stringify({ row: before.row }));
+  {
+    const box = await page.evaluate(() => {
+      const x = document.querySelector('.v2-layer .v2-gwmel'); if (!x) return null;
+      x.scrollIntoView({ block: 'center' });
+      const r = x.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width };
+    });
+    if (box && box.w > 0) await page.touchscreen.tap(box.x, box.y);
+    await zz(1200);
+  }
   const perChange = await look();
   console.log('\n  a ♪ Line lit on ONE change:\n');
   console.log('   settings row shown: ' + perChange.shown);
@@ -132,6 +142,11 @@ const ok = (name, cond, detail) => {
   ok('…including Moves, the one that decides whether takes differ',
     !!perChange.kind && perChange.kinds.indexOf('walk') >= 0,
     JSON.stringify({ kind: perChange.kind, kinds: perChange.kinds }));
+  // A LINE THAT ONLY SWEEPS IS AN ARPEGGIO. Lighting one used to leave Moves
+  // on `series`, deterministic, so the part it belonged to replayed
+  // identically for ever — reported three times running.
+  ok('…and a newly lit line arrives on a kind that MOVES',
+    perChange.kind === 'walk', JSON.stringify(perChange.kind));
 
   // ── AND SETTING IT REACHES THE CHANGE'S OWN LINE ────────────────────────
   const dice = await page.evaluate(() => {
@@ -151,28 +166,36 @@ const ok = (name, cond, detail) => {
       }
       return s.size;
     };
-    const out = { series: distinct() };
-    // drive the row's own select, as a person would
+    const out = {};
+    const melAt = () => ((((Lat().part.ground || {}).parts || {})['0'] || {}).mel || {});
+    out.stored = melAt().kind || null;
+    // the part rung carries the KIND ONLY — never `on`, or every other change
+    // in the part would sprout a line nobody asked for
+    out.partOn = melAt().on;
+    out.walk = distinct();
+    // …and the row can put it back to the deterministic sweep, through its
+    // own select, as a person would
     const sel = document.querySelector('.v2-layer .v2-gwkind select');
     if (sel) {
-      sel.value = 'walk';
+      sel.value = 'series';
       sel.dispatchEvent(new Event('input', { bubbles: true }));
       sel.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    out.stored = ((((Lat().part.ground || {}).parts || {})['0'] || {}).mel || {}).kind || null;
-    out.walk = distinct();
+    out.series = distinct();
     return out;
   });
   await zz(600);
-  console.log('   distinct takes out of 5 — series ' + dice.series + ', walk ' + dice.walk +
-              '   (stored kind: ' + dice.stored + ')\n');
+  console.log('   distinct takes out of 5 — walk ' + dice.walk + ', series ' + dice.series +
+              '   (part rung: kind=' + dice.stored + ', on=' + dice.partOn + ')\n');
 
-  ok('on its default the change’s line is deterministic — the reported "same part"',
-    dice.series === 1, dice.series + ' distinct takes');
-  ok('the row writes the PART’s line, which the change inherits',
+  ok('the press seeds the PART’s kind, which the change inherits',
     dice.stored === 'walk', JSON.stringify(dice.stored));
-  ok('…and setting Moves to Walk gives the part dice at last',
+  ok('…and only the KIND — the part gains no line of its own',
+    dice.partOn === undefined, JSON.stringify(dice.partOn));
+  ok('…so the part rolls: five takes, five different',
     dice.walk === 5, dice.walk + ' distinct takes');
+  ok('…and the row can still put it back to the sweep',
+    dice.series === 1, dice.series + ' distinct takes on series');
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

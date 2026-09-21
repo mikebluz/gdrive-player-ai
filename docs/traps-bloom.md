@@ -806,6 +806,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **A NEWLY LIT ♪ LINE ARRIVES ON `walk`, NOT `series` (2026-09-21, user: "it's still just
+  recreating the part I just cleared with lines").** `series` is a DETERMINISTIC sweep of the chord,
+  so a Groundwork part with a line still replayed identically for ever — the same complaint arriving
+  a third time in different words. The kind is seeded at the PART rung and only `kind`, never `on`:
+  a change that lights its own line states `on: 1` at its own rung and inherits this through
+  `groundSet`'s layer → part → change merge, and the settings row edits this very field, so the
+  default stays adjustable. **Saved content is untouched** — the seed fires only when a line is
+  being lit and no rung states a kind already.
+  - **⌫ Clear KEEPS the generated settings** (its own tooltip says so), so clear + regenerate is
+    identical BY DESIGN on a material with no dice. That is the other half of this report.
 - **A LINE LIT ON A CHANGE HAD NO CONTROLS (2026-09-21, user: "where are the controls for the melody
   line that is added per part?" — asked alongside "i cleared the content and then re-generated, and
   it just created the same part").** Groundwork's per-change ♪ is three-state and can switch a line

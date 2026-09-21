@@ -10561,6 +10561,31 @@
       });
     });
   }
+  // ── A NEW LINE MOVES (2026-09-21) ──────────────────────────────────
+  // user, three times over: "Evolve is not rerollling this content" -> "i
+  // thought hitting new take just spun up a new take indefinitely" -> "it's
+  // still just recreating the part I just cleared with lines". All of it came
+  // back to one default: a ♪ Line arrived on `series`, a DETERMINISTIC sweep
+  // of the chord, so the part it belonged to replayed identically for ever.
+  // A line that only ever sweeps is an arpeggio; "Line" should move.
+  // WRITTEN AT THE PART RUNG, and only `kind` — never `on`. A change that
+  // lights its own line states `on: 1` at its own rung and takes this `kind`
+  // through `groundSet`'s layer -> part -> change merge, and the settings row
+  // edits this very field, so the default stays adjustable rather than baked
+  // into the change.
+  // EXISTING CONTENT IS NOT TOUCHED: this fires only when a line is being
+  // LIT and no rung states a kind already, so a saved part keeps whatever it
+  // has (including the `series` it has been playing).
+  function gwSeedMelKind(L, pi) {
+    try {
+      const cur = (gwPartSet(L, pi) || {}).mel;
+      if (cur && typeof cur.kind === 'string') return;      // something already says
+      const g = L.part.ground || (L.part.ground = {});
+      const bag = g.parts || (g.parts = {});
+      const rec = bag[String(pi | 0)] || (bag[String(pi | 0)] = {});
+      rec.mel = Object.assign({}, rec.mel || {}, { kind: 'walk' });
+    } catch (e) {}
+  }
   // A CHORD'S LINE BUTTON IS THREE-STATE, because absent and off are different
   // answers: \u21b3 follows its part, \u266a plays a line, \u2014 refuses one its part
   // would otherwise give it.
@@ -19697,7 +19722,7 @@
           const bag = g8.parts || (g8.parts = {});
           const rec = bag[String(pi)] || (bag[String(pi)] = {});
           if (rec.mel && rec.mel.on === 1) delete rec.mel;
-          else rec.mel = Object.assign({ rate: 4, kind: 'series', oct: 1, len: 80, vel: 70 }, rec.mel || {}, { on: 1 });
+          else rec.mel = Object.assign({ rate: 4, kind: 'walk', oct: 1, len: 80, vel: 70 }, rec.mel || {}, { on: 1 });
           commit(ctx);
           applyGate(ctx.card, L8);
           try { drawPartViz(ctx.card, L8, E); } catch (e) {}
@@ -19723,6 +19748,10 @@
           if (st8 === 'inherit') rec.mel = { on: pOn8 ? 0 : 1 };
           else if ((st8 === 'on') !== !!pOn8) rec.mel = { on: pOn8 ? 1 : 0 };
           else delete rec.mel;              // …and back to following the part
+          // …and if that LIT one, give the line a kind that moves (see
+          // `gwSeedMelKind`) — a change states only `on`, so without this its
+          // line falls to the deterministic default and the part cannot roll.
+          if (rec.mel && rec.mel.on === 1) gwSeedMelKind(L8, groundPartOfUI(ci));
           commit(ctx);
           applyGate(ctx.card, L8);
           try { drawPartViz(ctx.card, L8, E); } catch (e) {}

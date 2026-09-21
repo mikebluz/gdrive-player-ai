@@ -518,33 +518,35 @@
     { id: 'bassbump', shape: 'bass', label: 'Syncopated',
       set: { 'part.rhythm.pulses': 5, 'part.rhythm.steps': 16, 'part.rhythm.rotate': 0,
              'part.shape.lenRatio': 60 } },
+    { id: 'linescatter', shape: 'line', label: 'Scattered', speed: 8, density: 0.55,
+      set: { 'part.pitch.kind': 'chance', 'part.rhythm.kind': 'euclid' } },
     { id: 'pad', shape: 'sustain', label: 'Pad',
       set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 1, 'part.pitch.inv': 0 } },
     { id: 'organ', shape: 'sustain', label: 'Organ',
       set: { 'part.pitch.voices': 3, 'part.pitch.chordMode': '', 'part.pitch.spread': 0, 'part.pitch.inv': 0 } },
-    { id: 'arpup', shape: 'arp', label: 'Up', speed: 8,
-      set: { 'part.pitch.dir': 'up', 'part.pitch.octaves': 2, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
-    { id: 'harp', shape: 'arp', label: 'Harp', speed: 16,
-      set: { 'part.pitch.dir': 'updown', 'part.pitch.octaves': 3, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
-    { id: 'broken', shape: 'arp', label: 'Broken chord', speed: 8,
-      set: { 'part.pitch.dir': 'updown', 'part.pitch.octaves': 1, 'part.pitch.restart': 1, 'part.pitch.tones': 'triad' } },
-    { id: 'outside', shape: 'arp', label: 'Outside in', speed: 8,
-      set: { 'part.pitch.dir': 'converge', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
+    { id: 'arpup', shape: 'line', label: 'Up', speed: 8,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'up', 'part.pitch.octaves': 2, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'harp', shape: 'line', label: 'Harp', speed: 16,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'updown', 'part.pitch.octaves': 3, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'broken', shape: 'line', label: 'Broken chord', speed: 8,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'updown', 'part.pitch.octaves': 1, 'part.pitch.restart': 1, 'part.pitch.tones': 'triad' } },
+    { id: 'outside', shape: 'line', label: 'Outside in', speed: 8,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'converge', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
     // "Singable", NOT "Melody" (renamed 2026-09-17, label only — the id stays
     // `melody` for save-compat): ✨ Quick's shape is called Melody, and one word
     // for two things is the naming rule's own mistake. It is the stepwise,
     // moderate-span line beside Busy · Riff · Sparse.
-    { id: 'melody', shape: 'roll', label: 'Singable', speed: 8, density: 0.625,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 4, 'proximity': 60, 'part.pitch.stutter': 10,
+    { id: 'melody', shape: 'line', label: 'Singable', speed: 8, density: 0.625,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 4, 'proximity': 60, 'part.pitch.stutter': 10,
              'part.shape.lenRatio': 80, 'part.pitch.motif': '' } },
-    { id: 'busy', shape: 'roll', label: 'Busy', speed: 16, density: 0.6,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 7, 'proximity': 20, 'part.pitch.stutter': 0,
+    { id: 'busy', shape: 'line', label: 'Busy', speed: 16, density: 0.6,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 7, 'proximity': 20, 'part.pitch.stutter': 0,
              'part.shape.lenRatio': 60, 'part.pitch.motif': '' } },
-    { id: 'riff', shape: 'roll', label: 'Riff', speed: 8, density: 0.5,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 3, 'proximity': 40, 'part.pitch.stutter': 35,
+    { id: 'riff', shape: 'line', label: 'Riff', speed: 8, density: 0.5,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 3, 'proximity': 40, 'part.pitch.stutter': 35,
              'part.shape.lenRatio': 70, 'part.pitch.motif': 'bar' } },
-    { id: 'sparse', shape: 'roll', label: 'Sparse', speed: 4, density: 0.5,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 50, 'part.pitch.stutter': 0,
+    { id: 'sparse', shape: 'line', label: 'Sparse', speed: 4, density: 0.5,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 50, 'part.pitch.stutter': 0,
              'part.shape.lenRatio': 100, 'part.pitch.motif': '' } },
     { id: 'mixchg', shape: 'mixed', label: 'Chords on the changes',
       set: { 'part.pitch.mixAt': 'change', 'part.pitch.voices': 3, 'part.pitch.span': 5, 'proximity': 50 } },
@@ -579,20 +581,20 @@
       set: { 'part.rhythm.strike': 'half', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 85 } },
     { id: 'gchop', shape: 'ground', label: 'Chop',
       set: { 'part.rhythm.strike': 'comp', 'part.rhythm.antic': 0, 'part.shape.lenRatio': 18 } },
-    { id: 'arpdown', shape: 'arp', label: 'Down', speed: 8,
-      set: { 'part.pitch.dir': 'down', 'part.pitch.octaves': 2, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
-    { id: 'arpwide', shape: 'arp', label: 'Wide', speed: 16,
-      set: { 'part.pitch.dir': 'up', 'part.pitch.octaves': 3, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
-    { id: 'arpfold', shape: 'arp', label: 'Fold in', speed: 8,
-      set: { 'part.pitch.dir': 'downup', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
-    { id: 'rollpulse', shape: 'roll', label: 'Pulsing', speed: 16, density: 0.9,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 2, 'proximity': 70, 'part.pitch.stutter': 45,
+    { id: 'arpdown', shape: 'line', label: 'Down', speed: 8,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'down', 'part.pitch.octaves': 2, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'arpwide', shape: 'line', label: 'Wide', speed: 16,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'up', 'part.pitch.octaves': 3, 'part.pitch.restart': 0, 'part.pitch.tones': '' } },
+    { id: 'arpfold', shape: 'line', label: 'Fold in', speed: 8,
+      set: { 'part.pitch.kind': 'series', 'part.rhythm.kind': 'pulse',  'part.pitch.dir': 'downup', 'part.pitch.octaves': 2, 'part.pitch.restart': 1, 'part.pitch.tones': '' } },
+    { id: 'rollpulse', shape: 'line', label: 'Pulsing', speed: 16, density: 0.9,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 2, 'proximity': 70, 'part.pitch.stutter': 45,
              'part.shape.lenRatio': 45, 'part.pitch.motif': '' } },
-    { id: 'rollwander', shape: 'roll', label: 'Wandering', speed: 4, density: 0.4,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 9, 'proximity': 15, 'part.pitch.stutter': 0,
+    { id: 'rollwander', shape: 'line', label: 'Wandering', speed: 4, density: 0.4,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 9, 'proximity': 15, 'part.pitch.stutter': 0,
              'part.shape.lenRatio': 120, 'part.pitch.motif': '' } },
-    { id: 'rollstab', shape: 'roll', label: 'Stabs', speed: 8, density: 0.7,
-      set: { 'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 35, 'part.pitch.stutter': 0,
+    { id: 'rollstab', shape: 'line', label: 'Stabs', speed: 8, density: 0.7,
+      set: { 'part.pitch.kind': 'walk',  'part.rhythm.rotate': 0, 'part.pitch.span': 5, 'proximity': 35, 'part.pitch.stutter': 0,
              'part.shape.lenRatio': 20, 'part.pitch.motif': 'bar' } },
     { id: 'wide', shape: 'sustain', label: 'Wide',
       set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 3, 'part.pitch.inv': 1 } },
@@ -6043,7 +6045,7 @@
       return (b > 0 && b <= 64) ? b : 0;
     } catch (e) { return 0; }
   }
-  function rollRunFn(E, L) {
+  function rollRunFn(E, L, stampArg) {
     if (!L || !L.part) return null;
     const p = L.part;
     // A roll makes a LIVE part — that is what a Riff is. A recorded one would
@@ -6052,8 +6054,12 @@
     // A ROLL IS A RE-ROLL BY DEFINITION: it files the outgoing material so that
     // one comes back intact, but never restores its own — pressing 🎲 has to
     // roll, or the button stops meaning anything.
-    if (p.mat && p.mat !== 'roll') matSave(L);
-    p.mat = 'roll';
+    // THE STAMP IS A PARAMETER so the merged door can use the roll's dice
+    // without claiming to be the old `roll` material. Defaults to 'roll', so
+    // every existing caller is unchanged.
+    const stamp = (typeof arguments[2] === 'string' && arguments[2]) ? arguments[2] : 'roll';
+    if (p.mat && p.mat !== stamp) matSave(L);
+    p.mat = stamp;
     delete L.ring;                        // see makeArp — Ring out belongs to Sustain
     // MIRROR THE PART's length when there is one — see `partBarsFor`.
     p.bars = partBarsFor(E, L) || _pick([1, 1, 2, 2, 4]);
@@ -6125,9 +6131,23 @@
     return true;
   }
   // ── APPLYING A PRESET ───────────────────────────────────────────────────
+  // -- THE LINE MATERIALS ARE ONE DOOR (2026-09-21) -------------------------
+  // user: "can we consolidate some of these materials?" Arpeggiate, Roll a line
+  // and Scatter tones are all ONE NOTE AT A TIME; they differ only in how the
+  // next pitch is chosen - series steps through the chord in order, walk
+  // wanders, chance takes any tone of the set. That is exactly the axis the
+  // Lines panel already calls MOVES, so it becomes a knob and they become one
+  // material.
+  // NOTHING IS MIGRATED. A saved part keeps the `arp` / `roll` / `melody` /
+  // `scatter` stamp it has; this table resolves it to the merged door at every
+  // boundary that turns a stamp into a door (the picker, the Character list,
+  // the face). A rewrite-on-load would touch every project on disk to fix a
+  // label, and provenance mismatches fail silently.
+  const MAT_MERGE = { arp: 'line', roll: 'line', melody: 'line', scatter: 'line' };
+  const matDoorOf = (k) => (k && MAT_MERGE[k]) || k;
   const shapeKeyOf = (L) => {
     const p = L && L.part; if (!p || p.kind !== 'live') return null;
-    return p.mat === 'melody' ? 'roll' : p.mat;
+    return matDoorOf(p.mat);
   };
   const presetGet = (L, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), L);
   const presetPut = (L, path, v) => {
@@ -6634,6 +6654,13 @@
     makeArp: makeArpFn,
     makeSimple: makeSimpleFn,       // the table-driven doors
     matSimple: MAT_SIMPLE,          // …and the table, so the recipe has ONE source
+    makeLine: (E, L) => rollRunFn(E, L, 'line'),   // Play a line - arp + roll + scatter, one door
+    // PUBLISHED, because the PICKER and the CHARACTER LIST are in the other
+    // IIFE. Called bare from there it threw into genSync and every stamp
+    // resolved to nothing: the picker showed "Choose a material...", the
+    // Character list came out empty. The trap this file states in its own
+    // header, walked into while building the thing that avoids it.
+    matDoor: matDoorOf,
     makeBeat: makeBeatFn,           // ♦ Beat — a kit recipe, not a pitch one
     presets: PRESETS,
     draftOpen: draftOpenFn,
@@ -10212,7 +10239,7 @@
                 mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat', bass: '\u25e2 Bass' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -10236,10 +10263,10 @@
       : (r.kind === 'ground') ? 'ground'
       : (t.kind === 'confug') ? 'confug'
       : (t.kind === 'mixed') ? 'mixed'
-      : (t.kind === 'series') ? 'arp'
+      : (t.kind === 'series') ? 'line'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
       : (t.kind === 'anchor') ? 'anchor'
-      : (t.kind === 'chance') ? 'scatter'
+      : (t.kind === 'chance') ? 'line'
       // BOTH `fixed` MATERIALS ARE THE ROOT DEGREE; the RHYTHM separates them -
       // Repeat one note is a pulse, Bass a euclid. Before this an unstamped
       // euclid bass reported itself as "Repeat one note", which is the wrong
@@ -10397,7 +10424,7 @@
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat', bass: '\u25e2 Bass' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line' };
     // `.v2-genface` was the sub-label INSIDE ⚙ Deep's button and went with it;
     // the query is kept because ✨ Quick's own face still uses the same class
     // on some builds, and a missing node here is simply skipped.
@@ -10428,12 +10455,14 @@
       const SH = isKit3 ? [['beat', '\u2666 Beat \u2014 a pattern per drum']] :
         [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
         ['onenote', '\u25aa Repeat one note'], ['bass', '\u25e2 Bass'],
-        ['arp', '\u27f3 Arpeggiate'],
-        ['roll', '\ud83c\udfb2 Roll a line'], ['scatter', '\u273b Scatter tones'],
+        ['line', '\u266a Play a line'],
         ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes'],
         ['confug', '\u266b ConFugued']];
-      const key = pv.key;
-      const extra = (key === 'melody') ? [['melody', '\u266a Melody \u2014 from \u2728 Quick']] : [];
+      // THE MERGED DOOR IS WHAT THE SELECT SHOWS. A part still stamped `arp`
+      // must select \u266a Play a line, or the picker finds no matching option and
+      // silently shows the first one (the documented trap).
+      const key = V2.matDoor(pv.key);
+      const extra = [];
       const mine = SH.some((o) => o[0] === key) || !!extra.length;
       const list = (mine ? '' : '<option value="">Choose a material\u2026</option>') +
         SH.concat(extra).map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + '</option>').join('');
@@ -10519,9 +10548,13 @@
       // `beat` entry `shp` came out undefined, the list came out empty, and the
       // picker HID ITSELF — seven Characters in the table and no door to any of
       // them, silently.
-      const PK = { sustain: 'sustain', arp: 'arp', roll: 'roll', melody: 'roll', mixed: 'mixed',
-                   ground: 'ground', beat: 'beat', bass: 'bass' };
-      const shp = (L.part.kind === 'live') ? PK[matProv(L).key] : null;
+      // THE MERGED DOOR OWNS ALL THREE SETS OF CHARACTERS, and a part still
+      // stamped `arp` finds them: `matDoorOf` is the one place a stamp becomes
+      // a door, so this map no longer has to list the old names separately.
+      const PK = { sustain: 'sustain', mixed: 'mixed', ground: 'ground',
+                   beat: 'beat', bass: 'bass', line: 'line' };
+      const shpKey = V2.matDoor(matProv(L).key);
+      const shp = (L.part.kind === 'live') ? PK[shpKey] : null;
       const list = shp ? (V2.presets || []).filter((pr) => pr.shape === shp) : [];
       const st0 = V2.presetState ? V2.presetState(L) : { id: null, tuned: false };
       const sig = shp + '|' + st0.id + '|' + st0.tuned;
@@ -13752,6 +13785,7 @@
               // works by PRESSING the matching button — the one implementation
               // of confirm/adopt/stamp/roll they all share.
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="beat" title="♦ Beat — a pattern per drum: a euclid on each lane, so a kit generates like everything else.">\u2666 Beat</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="line" title="Play a line - one note at a time; Moves chooses how the next one is picked.">\u266a Play a line</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="bass" title="Bass - the root of each change, low and on the beat.">\u25e2 Bass</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="anchor" title="⚓ Pedal point — one note held against the whole progression, whatever the chords do.">\u2693 Hold a pedal note</button>' +
@@ -13822,6 +13856,22 @@
                 'These notes are written down. Touch any knob here and this draft hands the ' +
                 'part back to the rules, so you can hear what they make \u2014 ' +
                 '\u2713 Done keeps it, \u2715 Cancel puts the written notes back.</span></div>' +
+              // TWO CONTROLS, ONE FIELD, AND THAT IS THE ESTABLISHED SHAPE HERE:
+              // this is the material's own axis in its own words (three ways a
+              // line moves), and Advanced: recipe carries the same field at
+              // full grain (all ten pitch kinds) behind a fold - exactly the
+              // relationship "Three sliders, not nine dice" has with
+              // "Advanced: each die". Marked `v2-moves` so neither a handler
+              // nor a probe can pick up the wrong one: two elements sharing a
+              // `data-f` is the duplicate-class trap this file keeps naming.
+              gsel(L, 'part.pitch.kind', 'Moves',
+                   (L.part.pitch || {}).kind || 'walk',
+                   [['series', 'Run \u2014 through the chord in order'],
+                    ['walk', 'Wander \u2014 by steps, up and down'],
+                    ['chance', 'Scatter \u2014 any tone of the set']],
+                   'how the next note is chosen',
+                   'kind:live;voice:synth;pitch:series,walk,chance')
+                .replace('class="ambient-select', 'class="ambient-select v2-moves') +
               // ── ♦ BEAT'S KNOBS — HOW BUSY EACH DRUM IS ───────────────
               // One number per lane: hits per cycle, spread evenly by the same
               // euclid every other rhythm here uses. 0 silences that drum, which
@@ -21405,7 +21455,8 @@
           // a SHAPE press is not a preset — the stamp would name values the
           // part is about to stop having
           delete ctx.L.part.preset;
-          const info = (which === 'beat') ? V2.makeBeat(E, ctx.L)
+          const info = (which === 'line') ? V2.makeLine(E, ctx.L)
+            : (which === 'beat') ? V2.makeBeat(E, ctx.L)
             : (which === 'arp') ? V2.makeArp(E, ctx.L)
             : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
             : (which === 'ground') ? V2.makeGround(E, ctx.L)

@@ -35,6 +35,10 @@
   read over 24s is ONE cycle resolved against the chord at its start, so a bass that plainly moved
   across C·F·G in an 8s read reported a single pitch class — and the check called the material broken.
   Derive from the cycle you already have.
+- **A worktree server that fails to bind leaves the PREVIOUS worktree's build answering.** Port 3011
+  was still held by an earlier worktree's `node server.js`, so a whole probe run measured code from
+  two features ago and every failure pointed at the wrong cause. `curl` the served file for a string
+  only the new build has before believing a red run — and kill the old server when leaving a worktree.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

@@ -1292,6 +1292,17 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   seven Characters in the table with no door to any of them, silently. Add the entry in the same
   change as the material.
 
+- **MERGING TWO MATERIALS IS A BOUNDARY MAP, NOT A DATA MIGRATION.** `MAT_MERGE` / `V2.matDoor`
+  resolves an old `part.mat` stamp to the door that now owns it, at each of the three places a stamp
+  becomes a door (the picker's selected value, the Character list's `PK` lookup, the face). Nothing on
+  disk is rewritten — a rewrite-on-load touches every saved project to fix a label, and provenance
+  mismatches fail SILENTLY (a part quietly naming the wrong material, or a picker showing its first
+  option because none matched). Check every old stamp, not just the new one.
+- **A merged material's Characters must state the axis the merge turned into a knob**, or the
+  Character looks broken: an "Up" arpeggio applied to a wandering line stayed wandering. And the arp
+  ones must also state `rhythm.kind: 'pulse'` — `setSpeedFn` keeps whatever kind is already there, so
+  over the roll's euclid an arpeggio came out syncopated, which is not an arpeggio.
+
 ### Bloom stores — what exists, and the one thing to know about each
 
 All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/arch/harness green.

@@ -806,6 +806,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
+- **OPENING A PANEL IS A FUNCTION, NOT A BUTTON (2026-09-21, user: "now remove the hidden Quick and
+  Deep buttons and rewire the handlers").** Both generated panels opened from INSIDE a click branch
+  keyed on a button, so the only way to open one was to have that node in the DOM and synthesise a
+  press on it — which is why retiring the buttons first had to leave two hidden nodes standing, and
+  why a dozen probes and the gate were clicking a control no person can see. `V2.openGen` /
+  `V2.openQuick` are that behaviour lifted out; ✦ Generate's section button, the panel head's
+  ✨ Quick and every probe call them. **When a surface can only be opened by pressing a node, the
+  node cannot be removed — extract the opener first.**
+  - Removing the node also orphans whatever SYNCED it: `matSync` lit `.v2-genbtn` as the door in
+    force and `genSync` wrote `.v2-genface` inside it. Both went with it.
 - **✦ GENERATE OPENS ⚙ DEEP; THE PANEL IS NOT MOVED INTO THE SHEET (2026-09-21, user: "make Deep
   the default view, and just add Quick/Key/Notes as header buttons… we drop the Method and Deep
   buttons").** The section used to open a sheet whose only live content was a Method tab holding a

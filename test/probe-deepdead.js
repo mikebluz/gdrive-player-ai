@@ -78,8 +78,7 @@ const SHAPES = [['ground', 'held'], ['arp', 'arpwide'], ['roll', 'rollpulse'],
     }, pid);
     await zz(900);
     await page.evaluate(() => {
-      const b = document.querySelector('.v2-layer .v2-genbtn');
-      if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }
+      window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     });
     await zz(1300);
     // …and every fine-tune tab in turn, so a row behind a tab is still counted

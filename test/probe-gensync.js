@@ -237,8 +237,7 @@ const ok = (name, cond, detail) => {
     await page.evaluate(() => {
       const E = window.__E(), L = window.__L();
       try { window._v2.draftCancel(E, L); } catch (e) {}
-      const gb = document.querySelector('.v2-layer .v2-genbtn');
-      if (gb) gb.click();
+      window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     });
     await zz(1100);
     // press the panel's own ▶ Preview, capturing what sounds

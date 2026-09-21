@@ -1219,11 +1219,11 @@ const ok = (name, cond, detail) => {
     // name the layer, so they follow a press once ✓ Done writes it
     const done = async () => { const d = card().querySelector('.v2-shapepop .v2-gendone'); if (d) d.click();
       await wait(260); card().classList.remove('collapsed'); };
-    card().querySelector('.v2-genbtn').click(); await wait(280); card().classList.remove('collapsed');
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(280); card().classList.remove('collapsed');
     card().querySelector('.v2-shapepop .v2-rollrun').click(); await wait(350); card().classList.remove('collapsed');
     await done();
     const roll = st2();
-    card().querySelector('.v2-genbtn').click(); await wait(280); card().classList.remove('collapsed');
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(280); card().classList.remove('collapsed');
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="sustain"]').click(); await wait(400); card().classList.remove('collapsed');
     await done();
     const sus = st2();
@@ -2297,9 +2297,7 @@ const ok = (name, cond, detail) => {
       .find((x) => x.getAttribute('data-tab') === nm); if (t) { t.click(); await wait(200); } return !!t; };
     const openGen = async () => {
       await openTab('Method');
-      const gb = document.querySelector('.v2-secpop .v2-genbtn') ||
-                 document.querySelector('.v2-layer .v2-genbtn');
-      if (gb) gb.click();
+      window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
       await wait(300);
       return !!document.querySelector('.v2-layer.v2-genopen');
     };
@@ -2724,9 +2722,7 @@ const ok = (name, cond, detail) => {
         .find((x) => x.getAttribute('data-tab') === 'Method');
       if (t) t.click(); await wait(200);
       if (!card().classList.contains('v2-genopen')) {
-        const gb = document.querySelector('.v2-secpop .v2-genbtn') ||
-                   card().querySelector('.v2-genbtn');
-        if (gb) gb.click(); await wait(300);
+        window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(300);
       }
       return card().classList.contains('v2-genopen');
     };
@@ -2835,7 +2831,7 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     // the shapes moved into the ⚙ Shape… popover; it stays open across a
     // choice, so one press gets in and one gets out at the end
-    card().querySelector('.v2-genbtn').click(); await wait(280);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(280);
     card().classList.remove('collapsed');
     card().querySelector('.v2-shapepop .v2-rollrun').click(); await wait(420);
     card().classList.remove('collapsed');
@@ -3723,7 +3719,7 @@ const ok = (name, cond, detail) => {
     // same confirm flow as every shape, tuned by gated rows in the shared
     // panel. Every musical contract below is unchanged.
     const svCf9 = window.confirm; window.confirm = () => true;
-    card().querySelector('.v2-genbtn').click(); await wait(300);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(300);
     const o = { door: !!card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]') };
     const wasRhythm = L().part.rhythm.kind;
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
@@ -4567,7 +4563,7 @@ const ok = (name, cond, detail) => {
                Math.round(wrap().getBoundingClientRect().width) === 0;
     // …and the Generated door still opens ITS panel, not this one — the two
     // popovers share no class name (the duplicate-class trap, pre-armed).
-    card().querySelector('.v2-genbtn').click(); await wait(280);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(280);
     o.exclusive = card().classList.contains('v2-genopen') && !card().classList.contains('v2-autoopen');
     const gx = card().querySelector('.v2-gendone'); if (gx) gx.click();
     await wait(200);
@@ -4643,7 +4639,7 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     // the panel lives behind ⚙ Generated, and pressing it ADOPTS the shape
     const svCf = window.confirm; window.confirm = () => true;
-    const gb = card().querySelector('.v2-genbtn'); if (gb) gb.click();
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     await wait(300);
     const notes = () => (window._v2.takeNotesNow(E, L()) || []).length;
     const stored = () => JSON.stringify(L().part.ground || null);
@@ -5322,7 +5318,7 @@ const ok = (name, cond, detail) => {
       .filter((x) => x.getBoundingClientRect().height > 0)
       .map((x) => ((x.querySelector('label') || {}).textContent || '').split('\u00b7')[0].trim());
     const o = { rowShapes: card().querySelectorAll('.v2-matrow .v2-mkpart, .v2-matrow .v2-rollrun').length };
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     // RE-QUERY after every press: choosing a shape re-renders the card, so a
     // captured node is detached and clicking it does nothing (the documented
     // trap — it read as "Roll did not take" on a working panel).
@@ -5408,7 +5404,7 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(300);
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
-    card().querySelector('.v2-genbtn').click(); await wait(300);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(300);
     const ctl = (f2) => document.querySelector('.v2-layer .v2-shapepop .v2-f[data-f="' + f2 + '"]');
     const o = {};
     const steps0 = ctl('part.rhythm.steps');
@@ -5499,7 +5495,7 @@ const ok = (name, cond, detail) => {
     card().classList.remove('collapsed');
     if (h) h._sig = ''; window._v2.render(E); await wait(300);
     card().classList.remove('collapsed');
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     const rows = [...document.querySelectorAll('.v2-genrows .ambient-ctrl')]
       .filter((x) => x.getBoundingClientRect().height > 0);
     o.bare = rows.map((r) => {
@@ -5588,7 +5584,7 @@ const ok = (name, cond, detail) => {
     // PRESS THE DOOR — setting `v2-genopen` by hand leaves the module's own
     // GENPOP unset, so the first re-render shuts the panel and every later
     // measurement reads 0x0 (it did).
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     const pop = () => document.querySelector('.v2-layer .v2-shapepop');
     const rows = () => [...pop().querySelectorAll('.v2-genrows .ambient-ctrl')]
       .filter((x) => x.getBoundingClientRect().height > 0)
@@ -5765,7 +5761,7 @@ const ok = (name, cond, detail) => {
     card.classList.remove('collapsed');
     const o = {};
     // the shapes live behind ⚙ Shape… now
-    card.querySelector('.v2-genbtn').click(); await wait(300);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(300);
     const btn = document.querySelector('.v2-layer .v2-shapepop .v2-mkpart[data-mk="mixed"]');
     o.door = !!btn;
     o.sub = btn ? btn.textContent : '';
@@ -5979,7 +5975,7 @@ const ok = (name, cond, detail) => {
     // there, and they still have to say what they make
     const cardS = document.querySelector('.v2-layer');
     cardS.classList.remove('collapsed');
-    const gb = cardS.querySelector('.v2-genbtn'); if (gb) gb.click();
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     await wait(280);
     // SCOPED to the row and the SHAPE panel — the Groundwork panel is closed,
     // and sweeping `.v2-genshapes` unscoped picked up its (invisible) button.
@@ -8102,7 +8098,7 @@ const ok = (name, cond, detail) => {
     // the four shapes live in the ⚙ Shape panel; it re-renders on every choice,
     // so re-open and re-query for each press (the documented detached-node trap)
     const press = async (sel) => {
-      const opener = card().querySelector('.v2-genbtn'); if (opener) opener.click();
+      window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
       await wait(380);
       const el = card().querySelector(sel); if (!el) return { missing: true };
       const was = shape(); const n0 = asked.length, t0 = toasts.length;
@@ -8168,7 +8164,7 @@ const ok = (name, cond, detail) => {
     o.dflt = lit();
     // …Groundwork, through the Generated panel (its fifth shape now)
     const svCf8 = window.confirm; window.confirm = () => true;
-    card().querySelector('.v2-genbtn').click(); await wait(300);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(300);
     card().querySelector('.v2-shapepop .v2-mkpart[data-mk="ground"]').click(); await wait(500);
     card().classList.remove('collapsed');
     o.ground = lit(); o.mat = L().part.mat;
@@ -9156,8 +9152,7 @@ const ok = (name, cond, detail) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const card = () => document.querySelector('.v2-layer');
     if (!card().classList.contains('v2-genopen')) {
-      const gb = document.querySelector('.v2-secpop .v2-genbtn') || card().querySelector('.v2-genbtn');
-      if (gb) gb.click(); await wait(320);
+      window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     }
     const o = { opened: card().classList.contains('v2-genopen') };
     let el = card().querySelector('.v2-shapepop .v2-genrows [data-f="' + f + '"]');
@@ -16390,7 +16385,7 @@ const ok = (name, cond, detail) => {
     if (h) h._sig = ''; window._v2.render(E); await wait(260);
     const card = () => document.querySelector('.v2-layer');
     card().classList.remove('collapsed');
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     const pop = () => card().querySelector('.v2-shapepop');
     const o = {};
     pop().querySelector('[data-mk="ground"]').click(); await wait(420);
@@ -16453,7 +16448,7 @@ const ok = (name, cond, detail) => {
     o.noDraftAfterDone = !window._v2.draftOf(L());
     // …then open ⚙ Deep, change the shape (NO confirm may fire), and ✕ Cancel
     let asked = 0; window.confirm = () => { asked++; return true; };
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     o.draftOpen = window._v2.draftOf(L());
     const realBefore = JSON.stringify(window.__Lreal(E));
     const cardCv = card().querySelector('.v2-partviz .v2-vizcv');
@@ -16478,7 +16473,7 @@ const ok = (name, cond, detail) => {
       !card().classList.contains('v2-genopen');
     o.cancelStopsPreview = !window._v2.previewing(L());
     // …and the same change with ✓ Done stands
-    card().querySelector('.v2-genbtn').click(); await wait(320);
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(320);
     pop().querySelector('[data-mk="sustain"]').click(); await wait(420);
     const dn2 = pop().querySelector('.v2-gendone'); if (dn2) dn2.click(); await wait(420);
     o.doneKeeps = window.__Lreal(E).part.mat === 'sustain' && !window._v2.draftOf(L());

@@ -81,8 +81,7 @@ const ok = (name, cond, detail) => {
   }
   // open ⚙ Deep — harmony's only home
   await page.evaluate(() => {
-    const b = document.querySelector('.v2-layer .v2-genbtn');
-    if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
   });
   await zz(1200);
   // …and onto Fine-tune ▸ Notes. ⚙ Deep opens on Rhythm (`v2-ftt-rhythm`) and

@@ -235,7 +235,7 @@ const ok = (name, cond, detail) => {
     const evoCss = (getComputedStyle(document.documentElement).getPropertyValue('--evo') || '').trim();
     const rgb = (hx) => { const n = parseInt(hx.replace('#', ''), 16);
       return 'rgb(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ')'; };
-    card?.querySelector('.v2-genbtn')?.click();
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
     setTimeout(() => {
       card?.querySelector('.v2-fttab[data-ft="take"]')?.click();
       setTimeout(() => {

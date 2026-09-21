@@ -69,8 +69,7 @@ const ok = (name, cond, detail) => {
   // the panel AND selecting that tab the whole block lays out at 0×0 and a
   // control in it measures as missing — the trap this repo names.
   await page.evaluate(() => {
-    const b = document.querySelector('.v2-layer .v2-genbtn');
-    if (b) { b.scrollIntoView({ block: 'center' }); b.click(); }
+    window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
   });
   await zz(1400);
   await page.evaluate(() => {

@@ -99,9 +99,11 @@ const ok = (name, cond, detail) => {
       title: (card.querySelector('.v2-gentitle') || {}).textContent,
       headFits: head ? head.scrollWidth <= head.clientWidth + 1 : null,
       quick: vis(btn('v2-ghb-quick')), key: vis(btn('v2-ghb-key')), notes: vis(btn('v2-ghb-notes')),
-      // the two buttons the ask retires must not be on screen any more
-      oldQuick: vis(card.querySelector('.v2-autobtn')),
-      oldDeep: vis(card.querySelector('.v2-genbtn')),
+      // the two buttons the ask retired are GONE from the DOM now, not merely
+      // hidden — `V2.openGen` / `V2.openQuick` are the doors, so nothing is
+      // left pressing them
+      oldQuick: !!card.querySelector('.v2-autobtn'),
+      oldDeep: !!card.querySelector('.v2-genbtn'),
       // …and the draft the panel edits
       staged: !!window._v2.stagedOf((_masterEng.getCfg().layers || [])[0].id | 0),
       // one copy of the Key markup, not two
@@ -125,7 +127,7 @@ const ok = (name, cond, detail) => {
     JSON.stringify({ quick: m.quick, key: m.key, notes: m.notes }));
   ok('…and the head does not overflow at 390px', m.headFits === true,
     'scrollWidth vs clientWidth');
-  ok('the Method row’s ✨ Quick and ⚙ Deep buttons are gone from view',
+  ok('the Method row’s ✨ Quick and ⚙ Deep buttons are gone from the DOM',
     m.oldQuick === false && m.oldDeep === false,
     JSON.stringify({ quick: m.oldQuick, deep: m.oldDeep }));
   ok('the Key markup exists exactly ONCE — it was moved, not copied',

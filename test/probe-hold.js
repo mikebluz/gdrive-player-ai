@@ -114,7 +114,7 @@ const ok = (name, cond, detail) => {
     // touching going stale. The repaint is a querySelectorAll for that reason.
     L().part.shape.holdSteps = 3; E.getCfg();
     await repaint();
-    { const gb = document.querySelector('.v2-layer .v2-genbtn'); if (gb) gb.click(); }
+    { window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); }
     await wait(340);
     const all = [...document.querySelectorAll('.v2-layer .v2-f[data-f="part.shape.holdSteps"]')]
       .map((el) => {
@@ -147,8 +147,9 @@ const ok = (name, cond, detail) => {
     // nothing — so the tab shows the knob IN FORCE plus a button that flips
     // which that is. No second stored field: `holdSteps: 0` IS size-by-Length.
     await repaint();      // a rebuild closes i Why?, which sits OVER the sheet
-    { const gb = document.querySelector('.v2-layer.v2-genopen .v2-genbtn');
-      if (gb) { gb.click(); await wait(320); } }
+    { if (document.querySelector('.v2-layer.v2-genopen')) {
+        window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]);
+        await wait(320); } }
     // THE CARD'S OWN DOOR is the group head — `.v2-gototab` only exists INSIDE
     // an open sheet, to move between groups once you are there.
     const openShape = async () => {
@@ -215,7 +216,7 @@ const ok = (name, cond, detail) => {
     // ⚙ DEEP IS THE WHOLE RECIPE — it still shows BOTH, and there the caption
     // is what says which one wins. That is why lenHint still earns its place.
     await openShape();
-    { const gb = document.querySelector('.v2-layer .v2-genbtn'); if (gb) { gb.click(); await wait(420); } }
+    { window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); await wait(420); }
     { const el = document.querySelector('.v2-genrows [data-f="part.shape.lenRatio"]');
       const row = el && el.closest('.ambient-ctrl');
       const sub = row && row.querySelector('.v2-knob-sub');
@@ -225,8 +226,9 @@ const ok = (name, cond, detail) => {
     // from the STAGED CLONE, so a change made to the real layer below does not
     // reach them and reads as a gate leak. (It did; this is the guard.)
     for (let i = 0; i < 3 && document.querySelector('.v2-layer.v2-genopen'); i++) {
-      const d3 = document.querySelector('.v2-layer .v2-gendone') ||
-                 document.querySelector('.v2-layer.v2-genopen .v2-genbtn');
+      // (the ⚙ Deep BUTTON was the fallback here and is gone — ✓ Done is the
+      // way out of a staged panel, and ✕ Cancel is the other one)
+      const d3 = document.querySelector('.v2-layer .v2-gendone');
       if (!d3) break;
       d3.click(); await wait(380);
     }

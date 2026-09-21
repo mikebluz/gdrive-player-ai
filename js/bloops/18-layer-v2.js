@@ -10069,6 +10069,47 @@
   // THE GENERATED DOOR AND ITS PANEL, kept current. The door's own face names
   // the shape in force, so the row still answers "what is this" without being
   // opened — consolidating four buttons into one must not cost that.
+  // ── THE TWO GENERATED DOORS, AS FUNCTIONS (2026-09-21) ──────────────────
+  // user: "now remove the hidden Quick and Deep buttons and rewire the
+  // handlers". Opening either panel lived INSIDE a click branch keyed on a
+  // button, so the only way to open one was to have that button in the DOM
+  // and press it — which is why the last change had to leave two hidden nodes
+  // standing, and why a dozen probes clicked a control no person can see.
+  // The behaviour is the same, lifted out of the branch: close the other
+  // panels, take the draft, add the card's class, sync, and gate on the next
+  // frame (the staged drawing needs the panel on screen to size its canvas).
+  // `ctx` is `{ L, card }` exactly as `layerOf` returns, so every caller hands
+  // over the same shape.
+  function genPanelOpen(E, ctx) {
+    if (!ctx || !ctx.card || !ctx.L) return false;
+    BARPOP = null; ctx.card.classList.remove('v2-baropen');
+    AUTOPOP = null; ctx.card.classList.remove('v2-autoopen');
+    GENPOP = ctx.L.id | 0;
+    V2.draftOpen(E, ctx.L);                      // STAGED until ✓ Done
+    ctx.card.classList.add('v2-genopen');
+    try { genSync(ctx.card, ctx.L); } catch (e) {}
+    requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
+    return true;
+  }
+  function autoPanelOpen(E, ctx) {
+    if (!ctx || !ctx.card || !ctx.L) return false;
+    BARPOP = null; ctx.card.classList.remove('v2-baropen');
+    GENPOP = null; ctx.card.classList.remove('v2-genopen');
+    AUTOPOP = ctx.L.id | 0;
+    V2.draftOpen(E, ctx.L);                      // STAGED until ✓ Done
+    ctx.card.classList.add('v2-autoopen');
+    requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
+    return true;
+  }
+  // …and the same two by LAYER, for a caller that has no node to hand — the
+  // section button, and every probe that just needs the panel open. It finds
+  // the card the way the rest of this file does, by `data-v2id`.
+  const panelCtxOf = (L) => {
+    const card = L && document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
+    return card ? { L: L, card: card } : null;
+  };
+  const openGenFn = (E, L) => genPanelOpen(E, panelCtxOf(L));
+  const openQuickFn = (E, L) => autoPanelOpen(E, panelCtxOf(L));
   function genSync(card, L) {
     // ── THE HARMONY SENTENCES ARE READOUTS ────────────────────────────────
     // and nothing was rebuilding them. The four per-voice controls commit
@@ -10099,6 +10140,9 @@
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued' };
+    // `.v2-genface` was the sub-label INSIDE ⚙ Deep's button and went with it;
+    // the query is kept because ✨ Quick's own face still uses the same class
+    // on some builds, and a missing node here is simply skipped.
     const face = card.querySelector('.v2-genface');
     if (face) {
       const empty = L.part.kind === 'recorded' && !(L.part.notes || []).length;
@@ -11099,10 +11143,11 @@
     const genLit = MAT_NAME[pv2.key] ? true
       : (pv2.key === 'compose' || pv2.key === 'adopt') ? false
       : L.part.kind === 'live';        // a hand-built shape is still behind this door
-    [['.v2-genbtn', genLit]].forEach(([sel, on]) => {
-      const b2 = card.querySelector(sel);
-      if (b2) { b2.classList.toggle('on', !!on); b2.classList.toggle('v2-matlock', lk && !!on); }
-    });
+    // (THE LIT-DOOR TOGGLE WENT WITH THE DOOR. It marked ⚙ Deep's button as
+    // the one in force; ✦ Generate is a section now and the panel it opens
+    // says what the material is in its own zone 1. `genLit` is still computed
+    // above because the readout below reads the same provenance.)
+    void genLit;
     const nc = card.querySelector('.v2-notecount');
     if (nc && nc.textContent !== pv2.txt) nc.textContent = pv2.txt;
     try { genSync(card, L); } catch (e) {}
@@ -13820,15 +13865,13 @@
               // two lit doors for one state is the mode-or-status rule broken.
               // What it makes IS the ordinary model (▦ Chords is ⛰
               // Groundwork), so nothing here is a second mechanism.
-              // (✨ QUICK AND ⚙ DEEP LEFT THIS ROW, 2026-09-21. ✦ Generate opens
-              // the Deep panel itself now, so a button in a sheet that opened
-              // it was a door to a door; and Quick is a button in that panel's
-              // own head, beside Key and Notes. The ⚙ Deep button is kept in
-              // the DOM below, hidden, because it is the one thing every
-              // handler and probe presses to open the panel — removing the
-              // node would have meant rewiring all of them in the same change.)
-              '<button type="button" class="ambient-seg v2-autobtn" hidden title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them.">\u2728 Quick</button>' +
-              '<button type="button" class="ambient-seg v2-genbtn" hidden title="Generate">\u2699 Deep<span class="v2-matsub v2-genface">choose &amp; tune</span></button>' +
+              // (✨ QUICK AND ⚙ DEEP ARE GONE FROM THIS ROW, 2026-09-21.
+              // ✦ Generate opens the Deep panel itself and Quick is a button
+              // in that panel's own head, so both were doors to a door. They
+              // stood here HIDDEN for one change because opening either panel
+              // lived inside a click branch keyed on them — `V2.openGen` and
+              // `V2.openQuick` are that behaviour as functions now, so the
+              // nodes could go with nothing left pressing them.)
               // (⌫ CLEAR MOVED to the drawing's head, beside the 👁 View picker —
               // 2026-09-16, user: "this is the wrong place for Clear".)
               // GROUNDWORK IS A SHAPE IN THE PANEL NOW (2026-09-09, user:
@@ -17518,6 +17561,13 @@
   // there and the content that follows it is v2's to know about.
   // \u2702 Split — published so the gate can ask the ARITHMETIC directly rather
   // than inferring it from the notes the dialog happened to write.
+  // THE TWO GENERATED DOORS, published. ✦ Generate's section button opens the
+  // Deep panel and its head's ✨ Quick opens the other; both used to do it by
+  // finding a hidden button and synthesising a click on it, which is a door
+  // pretending to be a press. A probe that needs the panel open calls these
+  // too, rather than clicking a control no person can see.
+  V2.openGen = openGenFn;
+  V2.openQuick = openQuickFn;
   V2.splitWeights = splitWeights;
   V2.splitPitches = splitPitches;
   V2.splitNote = splitNoteFn;
@@ -18764,8 +18814,7 @@
           // it has to offer, and Deep generates rules a stored list ignores.
           if (want === 'Generate' && ctx.L.part && ctx.L.part.kind !== 'recorded') {
             secClose(ctx.card);
-            const gb = ctx.card.querySelector('.v2-genbtn');
-            if (gb) { gb.click(); return; }
+            if (genPanelOpen(E, ctx)) return;
           }
           if (want !== (secStOf(ctx.card) || {}).grp) secOpen(ctx.card, ctx.L, want, null);
           return;
@@ -18788,7 +18837,7 @@
           // by a route the card does not offer (the rule the section hop above
           // already follows).
           const wantGen = fh.getAttribute('data-fgen') === '1';
-          if (wantGen) { try { const gb = ctx.card.querySelector('.v2-genbtn'); if (gb) gb.click(); } catch (e) {} }
+          if (wantGen) { try { genPanelOpen(E, ctx); } catch (e) {} }
           // MARK WHAT YOU CAME FOR. Landing on the right tab still leaves you
           // scanning it — a tab can hold ten rows — so the row flashes.
           setTimeout(() => {
@@ -20292,8 +20341,7 @@
         const ghq = t.closest('.v2-ghb-quick');
         if (ghq) {
           const ctx = layerOf(ghq); if (!ctx) return;
-          const ab = ctx.card.querySelector('.v2-autobtn');
-          if (ab) ab.click();
+          autoPanelOpen(E, ctx);
           return;
         }
         const ghs = t.closest('.v2-ghb-key') || t.closest('.v2-ghb-notes');
@@ -20312,33 +20360,6 @@
           const ctx = layerOf(t); if (!ctx) return;
           const wrap = ctx.card.querySelector('.v2-ghpop-wrap');
           if (wrap) wrap.hidden = true;
-          return;
-        }
-        const go = t.closest('.v2-genbtn');
-        if (go) {
-          const ctx = layerOf(go); if (!ctx) return;
-          BARPOP = null; ctx.card.classList.remove('v2-baropen');
-          AUTOPOP = null; ctx.card.classList.remove('v2-autoopen');
-          GENPOP = ctx.L.id | 0;
-          V2.draftOpen(E, ctx.L);                    // STAGED until ✓ Done
-          ctx.card.classList.add('v2-genopen');
-          try { genSync(ctx.card, ctx.L); } catch (e) {}
-          // the staged drawing needs the panel on screen to size its canvas
-          requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
-          return;
-        }
-        // ✨ AUTO — open, close, and the two presses. Same shape as the
-        // Generated door: a CLASS on the card, not a created node, so a commit
-        // can leave the panel standing.
-        const ao = t.closest('.v2-autobtn');
-        if (ao) {
-          const ctx = layerOf(ao); if (!ctx) return;
-          BARPOP = null; ctx.card.classList.remove('v2-baropen');
-          GENPOP = null; ctx.card.classList.remove('v2-genopen');
-          AUTOPOP = ctx.L.id | 0;
-          V2.draftOpen(E, ctx.L);                    // STAGED until ✓ Done
-          ctx.card.classList.add('v2-autoopen');
-          requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
           return;
         }
         // \u2139 WHY? — fill, then show. NO MODULE STATE: the other popovers

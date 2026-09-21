@@ -134,8 +134,63 @@ const setup = async (page, line) => {
     ser.moved === 0, ser.moved + ' of 3 presses changed the drawing');
   ok('…and the press SAYS so rather than going quiet',
     /IDENTICAL/i.test(ser.toast), JSON.stringify(ser.toast.slice(0, 150)));
-  ok('…and names what would give it dice', /Walk/i.test(ser.toast),
-    JSON.stringify(ser.toast.slice(0, 150)));
+  // …and names the dice that ACTUALLY work on this material. Measured,
+  // distinct takes out of 6 on ⛰ Comp: Roam 6 · Walk line 6 · Twist 6 ·
+  // Slip 6, against Inversion 1 · Len vary 1 · Rhythm vary 1. Naming a knob
+  // that does nothing would send someone round the same loop again.
+  ok('…and names dice that actually work here',
+    /Roam/i.test(ser.toast) && /Walk/i.test(ser.toast) &&
+    /Twist/i.test(ser.toast) && /Slip/i.test(ser.toast),
+    JSON.stringify(ser.toast.slice(0, 180)));
+  ok('…and names none that do not', !/Inversion|Len vary/i.test(ser.toast),
+    JSON.stringify(ser.toast.slice(0, 180)));
+
+  // ── AND THE NAMED DICE MUST BE TRUE ──────────────────────────────────────
+  // The toast is a claim about the engine; this checks the engine keeps it.
+  const dice = await page.evaluate(() => {
+    const E = _masterEng, V = window._v2;
+    const Lat = () => (E.getCfg().layers || [])[0];
+    const clean = () => {
+      const L = Lat(); L.part.kind = 'live'; L.part.notes = [];
+      delete L.part.ground; delete L.part.takeb; delete L.part.ruleb; E.getCfg();
+      V.applyPreset(E, Lat(), 'comp'); E.getCfg();
+      // a preset does not reset what it does not state — clear every die by
+      // hand or each reading carries the last one's
+      const L2 = Lat();
+      delete L2.part.pitch.roam; delete L2.part.shape.slip;
+      delete L2.twist; delete L2.part.ground; E.getCfg();
+    };
+    const distinct = () => {
+      const s2 = new Set();
+      for (let t = 0; t < 6; t++) {
+        const L = Lat();
+        E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+        s2.add((V.withEdit(() => V.withTake(t, () => V.notesFor(L,
+          { E, cfg: E.getCfg(), key: 'v2:' + L.id, cycleStart: 0, cycleSec: 6 }))) || [])
+          .map((n) => Math.round(n.at * 1000) + ':' +
+            Math.round(69 + 12 * Math.log2((n.freq || 440) / 440))).join(' '));
+      }
+      return s2.size;
+    };
+    const out = {};
+    clean(); out.bare = distinct();
+    clean(); Lat().part.pitch.roam = 50; E.getCfg(); out.roam = distinct();
+    clean(); Lat().twist = 50; E.getCfg(); out.twist = distinct();
+    clean(); Lat().part.shape.slip = 50; E.getCfg(); out.slip = distinct();
+    clean(); (() => { const L = Lat();
+      const g = L.part.ground || (L.part.ground = {});
+      const bag = g.parts || (g.parts = {});
+      (bag['0'] || (bag['0'] = {})).mel = { rate: 4, kind: 'walk', oct: 1, len: 80, vel: 70, on: 1 };
+    })(); E.getCfg(); out.walk = distinct();
+    return out;
+  });
+  console.log('  distinct takes out of 6 on ⛰ Comp:');
+  console.log('   bare ' + dice.bare + '   Roam ' + dice.roam + '   Twist ' + dice.twist +
+              '   Slip ' + dice.slip + '   ♪ Walk ' + dice.walk + '\n');
+  ok('bare, it really has no dice', dice.bare === 1, dice.bare + ' distinct');
+  ok('…and every die the message names really rolls it',
+    dice.roam === 6 && dice.twist === 6 && dice.slip === 6 && dice.walk === 6,
+    JSON.stringify(dice));
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

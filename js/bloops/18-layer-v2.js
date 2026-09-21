@@ -9739,10 +9739,8 @@
       // it only works with Salt on: Salt is the one thing varying the part,
       // and Evolve was never the thing changing it.
       const sameTxt = (!ghosts.length && AHEAD > 0 && wouldVary && L.part.kind !== 'recorded')
-        ? ' · ⚠ every coming take is IDENTICAL — nothing in this content is rolled, ' +
-          'so ⟳ Evolve has nothing to change' +
-          ((L.part.rhythm || {}).kind === 'ground'
-            ? ' (a ♪ Line set to Walk is what gives Play the changes its dice)' : '')
+        ? ' · ⚠ every coming take is IDENTICAL — ' + noDiceSays(L) +
+          ', so ⟳ Evolve has nothing to change'
         : '';
       // WHY THE OUTLINES WENT, AND HOW TO GET THEM BACK. Tapping a note on a
       // live part FREEZES it so there is something to edit (captureShown, with
@@ -11269,6 +11267,26 @@
   // NO STORED NOTES. A written part still asks, every time, whatever made it —
   // failing open costs a tap, failing closed costs somebody's work, and a
   // plain note DRAG leaves no marker to tell an edited take from a rolled one.
+  // ── WHAT WOULD GIVE THIS CONTENT DICE ───────────────────────────────────
+  // user: "i thought hitting new take just spun up a new take indefinitely".
+  // It does — as soon as anything in the content is ROLLED. A freshly made
+  // ⛰ Play the changes part has nothing rolled at all: its chord tones come
+  // from the changes, its strike pattern is fixed, and every stochastic knob
+  // it owns ships at zero. So the take advances and the notes cannot.
+  // MEASURED, distinct takes out of 6 on ⛰ Comp: bare 1 · Roam 6 · ♪ Line
+  // Walk 6 · Twist 6 · Slip 6 · Rests 5 · Ghosts 4 — and Inversion, Len vary
+  // and Rhythm vary 1 apiece, which is why they are NOT named here. A list of
+  // things to try that do not work is worse than no list.
+  // ONE definition, because the drawing's readout and 🎲 New take's toast
+  // both say it and two copies would drift.
+  function noDiceSays(L) {
+    const r = (L && L.part && L.part.rhythm) || {};
+    if (r.kind === 'ground') {
+      return 'nothing in it is rolled — Roam, a ♪ Line set to Walk, Twist or Slip ' +
+             'each give ⛰ Play the changes dice';
+    }
+    return 'nothing in it is rolled — every die this material owns is at zero';
+  }
   function takeIsWork(L) {
     const p = L && L.part;
     if (!p) return false;
@@ -19979,10 +19997,7 @@
             if (wasSig && nowSig && nowSig === wasSig) {
               try {
                 showToast('\ud83c\udfb2 Take ' + ((V2.takeOf(L4) | 0) + 1) +
-                  ' \u2014 and it is IDENTICAL. Nothing in this content is rolled' +
-                  (((L4.part.rhythm || {}).kind === 'ground')
-                    ? ': \u266a Line set to Walk is what gives Play the changes its dice.'
-                    : ' \u2014 its rules have no dice to throw.'), { ms: 6000 });
+                  ' \u2014 and it is IDENTICAL: ' + noDiceSays(L4) + '.', { ms: 6000 });
               } catch (e) {}
             }
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

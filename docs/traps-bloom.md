@@ -806,7 +806,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   before and after now and toasts when they match, naming the ♪ Line as the way out on Groundwork.
   **A button that reports nothing reads as broken** — the same lesson as the Show-ahead line above,
   and it is worth reaching for before hunting a state bug.
-- **PLAY THE CHANGES HAS NO DICE OF ITS OWN (2026-09-20, user: "Evolve is not rerollling this
+- **PLAY THE CHANGES SHIPS WITH EVERY DIE AT ZERO (2026-09-20/21, user: "Evolve is not rerollling
+  this content" → "i thought hitting new take just spun up a new take indefinitely").** It is not
+  that the material CANNOT roll — measured, distinct takes out of 6 on ⛰ Comp: bare **1**, Roam 6,
+  ♪ Line set to Walk 6, Twist 6, Slip 6, Rests 5, Ghosts 4 — while Inversion, Len vary and Rhythm
+  vary give **1** apiece and are therefore never named as a way out. Every message about this comes
+  from ONE function (`noDiceSays`) so the drawing's readout and 🎲 New take's toast cannot drift.
+  **When measuring which knobs roll a part, clear each one by hand between readings** — a preset
+  does not reset what it does not state, so the first live die makes every later knob look live too
+  (it did: the first run of that sweep reported 11 of 12 knobs as dice).
+- **(the original entry) PLAY THE CHANGES HAS NO DICE OF ITS OWN (2026-09-20, user: "Evolve is not rerollling this
   content … also Show ahead doesn't seem to be working anymore").** Both reports and "Evolve only
   works when I turn Salt on" are ONE fact: a Groundwork part is deterministic — its chord tones come
   from the changes, its strike pattern is fixed — so every take is byte-identical (measured, takes

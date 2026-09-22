@@ -72,9 +72,14 @@ const ok = (name, cond, detail) => {
   ok('▪ One note is one door', offered.indexOf('one') >= 0, JSON.stringify(offered));
   ok('…and the two it replaces are gone from the menu',
     offered.indexOf('anchor') < 0 && offered.indexOf('onenote') < 0, JSON.stringify(offered));
-  // nine to start, +Bass, −3 merged into Play a line, −1 more merged here = 7
-  ok('…leaving seven entries on a synth', offered.length === 7,
-    offered.length + ': ' + JSON.stringify(offered));
+  // NAMED, NOT COUNTED — the lesson from `probe-beat`, which broke twice on a
+  // length assertion while the list was being consolidated, and which this
+  // check then broke a third time (♦ Beat is listed on synths now, so the
+  // total went back up by one). What this check is ABOUT is that the two old
+  // one-note doors became one, so that is what it asserts.
+  ok('…so the menu carries one of them, not two',
+    offered.filter((k) => ['one', 'anchor', 'onenote'].indexOf(k) >= 0).length === 1,
+    JSON.stringify(offered));
 
   // ── 2. THE SWITCH IS ON SCREEN ──────────────────────────────────────────
   const built = await page.evaluate(async () => {

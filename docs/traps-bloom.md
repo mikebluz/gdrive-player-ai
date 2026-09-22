@@ -1335,6 +1335,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   2026-09-22). Gate `bt` on `!inSteps`; leave `rhythm.beat` alone so switching back finds it intact.
   And SEED the other half when entering a form — a kit's grid is `rhythm.lanes` sized to the beat's
   own `per × bars`, not `cells`, so the single-row seeding left drum layers opening empty and silent.
+- **A CYCLE THAT HAS NOT BEGUN WRAPS TO ITS LAST STEP.** `startAt` is snapped to the SHARED BAR GRID,
+  so on a press it is stamped slightly in the FUTURE and the first frames run with `now < startAt`:
+  the cycle index floors to -1, `cs` lands a whole cycle early and the fraction comes out just under
+  1. The step grid lit its LAST column for the length of the pre-roll ("the playhead starts on the
+  last step for a split second", measured at step 15 of 16 fifty milliseconds out). Guard every
+  playhead on `now >= startAt` — the roll's own sweep always did; the step grid did not.
+- **DRIVE THE REAL PAINTER IN A PROBE, NEVER A COPY OF ITS ARITHMETIC.** probe-pattern recomputed the
+  step from `cycleWindowAt` and so measured its own copy: it passed while the grid on screen flashed,
+  and it could not see the fix that followed. `window._v2VizFrame(E)` runs the actual frame — stamp
+  the phase, set `E.timer`, clear the wrapper's `_phStep` cache, call it, and read `.playing` off the
+  DOM. Aim offsets at the MIDDLE of a step: the frame reads the AUDIBLE clock plus one screen frame,
+  which lags the clock the offset is measured from and puts an exact boundary on the step below.
 - **`cycleWindowAt(L, E, cfg, at, null)` ANCHORS THE LATTICE AT 0**, not at the layer's phase — the
   fallback is `startAt: 0`, the AudioContext epoch. `stepsPlayhead` passed `null` while the notes ran
   on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported

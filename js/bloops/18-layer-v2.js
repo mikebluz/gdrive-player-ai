@@ -11530,6 +11530,18 @@
     const cyc = w && w.cyc > 0 ? w.cyc : null;
     if (cs == null || cyc == null) return;
     let f = ((now - cs) / cyc) % 1; if (f < 0) f += 1;
+    // A CYCLE THAT HAS NOT BEGUN WAITS ON ITS FIRST STEP. `startAt` is snapped
+    // to the SHARED BAR GRID, so on a press it is stamped slightly in the
+    // FUTURE and the first frames run with `now < startAt` — the cycle index
+    // floors to -1, `cs` lands a whole cycle early, and the fraction comes out
+    // just under 1. The grid lit its LAST step for the length of the pre-roll
+    // and then jumped to the first: reported 2026-09-22 as "the playhead starts
+    // on the last step for a split second then playback starts", and measured
+    // at step 15 of 16 fifty milliseconds out.
+    // The roll's sweep has carried this guard all along (`nowT >= stp.startAt`);
+    // this is the same rule, and the step grid waits rather than clearing
+    // because a column sitting on step 1 is what "about to start" looks like.
+    if (ps && Number.isFinite(ps.startAt) && now < ps.startAt) f = 0;
     const i = Math.min(st - 1, Math.floor(f * st));
     if (wrap._phStep === i) return;
     wrap._phStep = i;

@@ -152,46 +152,61 @@ const ok = (name, cond, detail) => {
   ok('one kick drawn is one kick played — the whole point of the form',
     one.n === 1 && one.by[0] === 1, JSON.stringify(one));
 
-  // ── THE PLAYHEAD STARTS WHERE THE CYCLE STARTS ──────────────────────────
-  // "the playhead starts on step 4 or so". `stepsPlayhead` reads the LAYER's
-  // own cycle window and lights `floor(f × steps)`; measured here through the
-  // same call rather than through the rAF, so the arithmetic is the thing
-  // under test and not the frame timing.
+  // ── THE PLAYHEAD STARTS WHERE THE CYCLE STARTS ──────────────────────
+  // "the playhead starts on step 4 or so", and then "on the last step for a
+  // split second". Driven through the REAL frame (`window._v2VizFrame`) and
+  // read off the DOM, not by recomputing the arithmetic here — a probe that
+  // reimplements the thing under test measures its own copy, and this one did
+  // exactly that until the pre-roll fix landed and it could not see it.
   const ph = await page.evaluate(() => {
     const E = _masterEng, V = window._v2;
     const L = (E.getCfg().layers || [])[0];
     const cfg = E.getCfg();
+    const key = 'v2:' + (L.id | 0);
     const st = Math.max(1, (L.part.rhythm || {}).steps | 0);
-    // A REAL START: the transport stamps all three anchors at the moment ▶ is
-    // pressed, and every clock in the app is relative to them.
-    const t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-    E._progAnchor = t0; E._playStartAt = t0; E._barGridAnchor = t0;
-    // THE LAYER'S PHASE, AS A REAL START STAMPS IT — the emitter anchors each
-    // layer's lattice here, so this is the clock the notes are on and the one
-    // the grid must agree with.
-    E._v2Phase = E._v2Phase || {};
-    E._v2Phase['v2:' + (L.id | 0)] = { startAt: t0 };
-    const ps = E._v2Phase['v2:' + (L.id | 0)];
-    const at = (now) => {
-      let w = null;
-      try { w = V.cycleWindowAt(L, E, cfg, now, ps); } catch (e) { return null; }
-      if (!w || !(w.cyc > 0) || !Number.isFinite(w.cs)) return null;
-      let f = ((now - w.cs) / w.cyc) % 1; if (f < 0) f += 1;
-      return { step: Math.min(st - 1, Math.floor(f * st)),
-               lead: Math.round((now - w.cs) * 1000) / 1000 };
+    const cyc = V.cycleSec(L, cfg);
+    const card = document.querySelector('.v2-layer');
+    const wrap = card.querySelector('.v2-partsteps');
+    // A REAL START stamps all three anchors; the LAYER's phase is the clock its
+    // notes are on, and `startAt` is snapped to the shared bar grid — which is
+    // why it can sit in the future while the first frames already run.
+    const lit = (offset) => {
+      const t = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      E._progAnchor = t; E._playStartAt = t; E._barGridAnchor = t;
+      E._v2Phase = E._v2Phase || {};
+      E._v2Phase[key] = { startAt: t - offset, lastAt: null };
+      const sv = E.timer; E.timer = E.timer || 1;
+      if (wrap) wrap._phStep = null;                 // the per-frame cache
+      try { window._v2VizFrame(E); } finally { E.timer = sv; }
+      const on = wrap ? wrap.querySelector('.v2-lanecell.playing, .v2-cell.playing') : null;
+      return on ? (on.getAttribute('data-ci') | 0) : null;
     };
-    return { st, cyc: V.cycleSec(L, cfg), first: at(t0), early: at(t0 + 0.02),
-             quarter: at(t0 + V.cycleSec(L, cfg) / 4) };
+    return { st, cyc, haveWrap: !!wrap,
+             // THE MIDDLE OF A STEP, never its edge: the frame reads the
+             // AUDIBLE clock (plus one screen frame), which lags the clock this
+             // offset is measured from by a millisecond or two — enough to land
+             // an exact quarter-cycle on the step BELOW and fail for a reason
+             // that has nothing to do with the playhead.
+             atStart: lit(0.001), quarter: lit(cyc * ((Math.floor(st / 4) + 0.5) / st)),
+             pre: lit(-0.05), preFar: lit(-0.4) };
   });
   console.log('  playhead — steps=' + ph.st + ', cycle=' + (Math.round(ph.cyc * 100) / 100) + 's');
-  console.log('    at the press: ' + JSON.stringify(ph.first));
-  console.log('    +20ms:       ' + JSON.stringify(ph.early));
-  console.log('    a quarter in: ' + JSON.stringify(ph.quarter) + '\n');
+  console.log('    at the press:          step ' + ph.atStart);
+  console.log('    a quarter in:          step ' + ph.quarter);
+  console.log('    50ms BEFORE the cycle: step ' + ph.pre);
+  console.log('    400ms before:          step ' + ph.preFar + '\n');
+  ok('the frame lights a column on the ▦ Pattern grid at all',
+    ph.haveWrap && ph.atStart != null, JSON.stringify(ph));
   ok('the playhead starts on step 1, not part way in',
-    !!ph.first && ph.first.step === 0, JSON.stringify(ph.first));
+    ph.atStart === 0, 'step ' + ph.atStart);
   ok('…and a quarter of the cycle in, it is a quarter of the way along',
-    !!ph.quarter && ph.quarter.step === Math.floor(ph.st / 4),
-    JSON.stringify({ got: ph.quarter, want: Math.floor(ph.st / 4) }));
+    ph.quarter === Math.floor(ph.st / 4), 'step ' + ph.quarter + ', want ' + Math.floor(ph.st / 4));
+  // A CYCLE THAT HAS NOT BEGUN WAITS ON ITS FIRST STEP. Wrapping into the cycle
+  // BEFORE the anchor lights the last step for the length of the pre-roll,
+  // which reads as the grid running backwards for a frame.
+  ok('…and during the pre-roll it waits on step 1, it does not flash the last',
+    ph.pre === 0 && ph.preFar === 0,
+    'at 50ms: ' + ph.pre + ', at 400ms: ' + ph.preFar + ' (last step is ' + (ph.st - 1) + ')');
 
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

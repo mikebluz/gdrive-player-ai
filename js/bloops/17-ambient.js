@@ -23819,7 +23819,23 @@
         && typeof _makeReverbIR === 'function';
     }
     function _ambEnsureReverb() {
-      if (_E.reverb) return _E.reverb;
+      // THE CACHED PATH STILL RE-CLAIMS THE CORE SEND BUS. Building the reverb
+      // and OWNING the summed send are two different things: the bus is global,
+      // anything else can take it (an offline render does, every bounce), and
+      // it is handed back by being claimed again — not by the claimant letting
+      // go. Returning here the moment `_E.reverb` exists meant the only code
+      // that ever re-claimed was a FIRST build, so once the bus went the wash
+      // never came back for the life of the session, with every control still
+      // reading correctly. `connectSend` is a no-op when the wire is already
+      // standing, so this costs nothing in the common case.
+      if (_E.reverb) {
+        try {
+          if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()) {
+            _coreVoices.connectSend(_E.reverb);
+          }
+        } catch (e) {}
+        return _E.reverb;
+      }
       if (typeof Tone === 'undefined') return null;
       const conv = _ambUseConvReverb();
       try {

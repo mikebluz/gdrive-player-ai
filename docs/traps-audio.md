@@ -85,6 +85,23 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
 - **The worklet must always stay pulled** (keep-pull sink on output 16) and `init()` must reset ALL
   core globals, or golden loses determinism. That send bus is GLOBAL — one summed send feeding ONE
   reverb, re-claimed by whichever engine builds strips.
+- **THE CORE REVERB-SEND BUS IS HANDED BACK BY BEING CLAIMED AGAIN, never by the holder letting go.**
+  Output 16 is one global sum feeding ONE reverb, so anything that claims it takes it from whoever
+  had it. `_ambEnsureReverb` returned at the door once `_E.reverb` existed, so the ONLY code that
+  ever claimed the bus was a FIRST build — once it went, the wash never came back for the life of
+  the session, with the send slider, the send param and the reverb node all still reading correctly.
+  The cached path re-claims now. Symptom to recognise: "turning up the Reverb send makes no
+  difference", with everything in the graph looking right.
+- **MEASURE AN EFFECT IN dB AT THE MASTER OUTPUT, not by reading the graph.** "Makes no difference in
+  sound" is a claim about sound, and every intermediate value can be correct while the wash is gone.
+  Tap `Tone.getDestination().input` with an AnalyserNode and compare RMS with the send at 0 and 100
+  (probe-reverb-send): a working send is +3..+5 dB, a dead one ±0.1. Two traps in that measurement —
+  a core-strip layer's dry signal does NOT pass `_E.busNode()` (tapping there reads zero with the
+  layer plainly sounding), and a NEW LAYER IS EMPTY, so pick a material or everything reads zero for
+  a reason that has nothing to do with the effect.
+- **Reverb Size 0 and character Gated are inaudible BY DESIGN** — measured +0.7 dB and +0.6 dB
+  against lush's +4.0 at the same send. Both are legitimate settings that look exactly like a broken
+  send, and Size/Damp/Type are PER AREA, so loading or switching an area can set them under you.
 - **DSP hygiene:** every RECURSIVE write (biquad state, delay/chorus feedback) goes through `flush()` —
   strips process silence 24/7 and WASM has no FTZ, so unflushed feedback decays into subnormals.
   High-Q filters route through `df2t_sat`/`g_sat`. The DC blocker runs only on the ASYMMETRIC dist

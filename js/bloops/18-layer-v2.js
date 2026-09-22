@@ -14402,7 +14402,6 @@
                 '<select id="' + uid(L, 'speed') + '-gen" class="ambient-select v2-speed"></select>' +
                 '<span class="ambient-hint"></span></div>' +
               (function (rr0) {
-                const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
                 // A TYPED NUMBER, NOT A SLIDER (2026-09-20, user: "all 'How
                 // many' onset inputs should be user-supplied numeric inputs
                 // (not a range of options)"). An onset COUNT is a number you
@@ -14416,8 +14415,30 @@
                 // wrote a number nothing looked at — the dead-control shape
                 // this panel keeps having to weed out. ♦ Beat asks the same
                 // question per lane instead.
-                return gst(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, gN,
-                    'onsets in the cycle \u2014 up to the Grid', 'kind:live;voice:synth;rhythm:euclid,drawn') +
+                // \u2500\u2500 HOW MANY IS "N OF THE RESOLUTION" (2026-09-22) \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+                // user: "Resolution and How many aren't really squaring".
+                // Three ways they did not, all of them this row's:
+                //   \u00b7 THE CEILING WAS `min(32, steps)` while normalize clamps
+                //     to `steps` and \u229e Resolution goes to 64. At \u229e 48 the
+                //     stepper's max said 32 with 48 sitting in it \u2014 a control
+                //     showing a number it claims is out of range.
+                //   \u00b7 THE HINT NAMED THE WRONG THINGS. "onsets in the cycle"
+                //     stopped being true for a filled part the moment \u25eb Fill
+                //     began tiling per BAR, and "up to the Grid" named a
+                //     control that is now called Resolution.
+                //   \u00b7 NOTHING SAID THEY MOVE TOGETHER. \u229e Resolution scales
+                //     this number (that is what "scales the part" means, and
+                //     what \u2666 Beat does to its lanes) so the value changes under
+                //     you; unstated, that reads as one control fighting the
+                //     other rather than as the ratio it is.
+                // It is ONE RELATIONSHIP \u2014 this many of that grid \u2014 so the row
+                // states the pair and the unit it is counted in.
+                const stH = Math.max(1, rr0.steps | 0);
+                const perBarH = (L.part.barsMode === 'fill');
+                return gst(L, 'part.rhythm.pulses', 'How many', rr0.pulses, 1, stH,
+                    'of ' + stH + ' a ' + (perBarH ? 'bar' : 'cycle') +
+                      ' \u2014 moves with \u229e Resolution',
+                    'kind:live;voice:synth;rhythm:euclid,drawn') +
                   gsl(L, 'part.rhythm.chance', 'Chance', rr0.chance, 0, 100,
                       'how often a step sounds', 'kind:live;rhythm:chance');
               })(L.part.rhythm || {}) +
@@ -14554,14 +14575,20 @@
               // ── RHYTHM — when the notes land, and for how long
               ftrows('rhythm',
               (function (rr0) {
-                const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
+                const stH = Math.max(1, rr0.steps | 0);
                 // ⊞ Resolution is NOT here — it sits with the MAIN knobs,
                 // beside the kit's, because "like Beat" means reachable in the
                 // same place and not behind a Fine-tune tab (measured: it was
                 // in the DOM with a 0×0 rect, the documented tell).
-                return
-                  gst(L, 'part.rhythm.rotate', 'Push', rr0.rotate, 0, gN - 1,
-                      'steps late', 'kind:live;rhythm:euclid,drawn');
+                // PUSH IS COUNTED IN THE SAME STEPS, so its ceiling is the
+                  // Resolution too — `gN`'s cap of 32 stranded the same value
+                  // above its own max at ⊞ 48 and ⊞ 64, and `scaleRes` moves
+                  // rotate with the grid exactly as it moves the pulses.
+                // A BARE `return` ON ITS OWN LINE RETURNS UNDEFINED — automatic
+                // semicolon insertion, and the row simply vanished from the
+                // card (measured: no `part.rhythm.rotate` in the DOM at all).
+                return gst(L, 'part.rhythm.rotate', 'Push', rr0.rotate, 0, Math.max(0, stH - 1),
+                      'steps late, of ' + stH, 'kind:live;rhythm:euclid,drawn');
               })(L.part.rhythm || {}) +
               gsl(L, 'part.rhythm.syncop', 'Syncopate', num((L.part.rhythm || {}).syncop, 0), 0, 100,
                   'straight → offbeat', 'kind:live;voice:synth;rhythm:chance') +
@@ -16807,10 +16834,18 @@
   const EXT_OPTS = () => fromWhitelist('ext', EXT_LAB);
   const BARROWS = [
     { g: 'rhythm', f: 'kind', lab: 'Rhythm', sel: () => RHYTHM_OPTS, hint: 'when notes happen' },
-    { g: 'rhythm', f: 'pulses', lab: 'How many', sl: 1, hi: (r) => Math.min(64, Math.max(2, (r.rhythm.steps | 0) || 16)),
-      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'onsets in the bar' },
-    { g: 'rhythm', f: 'steps', lab: 'Steps', st: [2, 64],
-      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'how many steps the cycle is cut into' },
+    // THE SAME PAIR, THE SAME WORDS as the card's own rows — this panel states
+    // a stretch's rules and a second vocabulary for one axis reads as a second
+    // mechanism. "Steps" was this control's old name everywhere; ⊞ Resolution
+    // is its name now, and How many is counted OF it (ceiling `steps`, which is
+    // what normalize clamps to — `min(64, …)` let the row show a number it
+    // called out of range).
+    { g: 'rhythm', f: 'pulses', lab: 'How many', sl: 1, hi: (r) => Math.max(1, (r.rhythm.steps | 0) || 16),
+      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn',
+      hint: 'onsets, of the Resolution below — they move together' },
+    { g: 'rhythm', f: 'steps', lab: 'Resolution', st: [2, 64],
+      when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn',
+      hint: 'how finely the bar is cut — the pattern scales with it' },
     { g: 'rhythm', f: 'rotate', lab: 'Push', st: [0, 63],
       when: (r) => r.rhythm.kind === 'euclid' || r.rhythm.kind === 'drawn', hint: 'shift the pattern along' },
     { g: 'rhythm', f: 'n', lab: 'How many', sl: 1, hi: () => 32,

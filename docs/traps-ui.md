@@ -200,6 +200,17 @@
 - **A card fold is a CLASS (`v2-so-<id>`) and a card rebuild dropped it** — ▸ Fine-tune holds Steps, whose
   commit rebuilds the card, so the fold shut under the finger. `V2.render` now carries `v2-so-*` across.
   Anything that lands on a row INSIDE a fold (🔍 Find) must press the fold's own button, or it marks a 0×0 row.
+- **A BARE `return` ON ITS OWN LINE RETURNS UNDEFINED, and a row just disappears.** These builders are
+  `return <a> + <b> + …` expressions spanning many lines; automatic semicolon insertion ends the
+  statement at the newline, so the whole fragment evaluates to nothing and the control is not in the
+  DOM at all — not hidden, ABSENT. Measured 2026-09-22 after moving one row out of a closure: Push
+  vanished and `querySelector('[data-f="part.rhythm.rotate"]')` answered null. Keep the first operand
+  on the `return` line. A reachability check catches this; a value check never will, because there is
+  no element to read.
+- **A CONTROL'S CEILING MUST BE THE ONE NORMALIZE ENFORCES.** How many was capped at `min(32, steps)`
+  while normalize clamps `pulses` to `steps` and ⊞ Resolution reaches 64 — so at ⊞ 48 the stepper
+  displayed 48 inside a control whose `max` said 32. Two numbers for one limit is how a pair of
+  controls stops squaring; derive the UI bound from the same expression the normalizer uses.
 - **A duplicate class makes `querySelector` answer for the wrong surface.** The drawing is one of these:
   `.v2-vizcv` exists in BOTH the card body and the section sheet, and the first in DOM order can be
   the stale hidden copy nothing has redrawn — a probe reading it got the PREVIOUS draw and "the

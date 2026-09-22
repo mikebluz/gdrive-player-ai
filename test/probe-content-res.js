@@ -158,6 +158,65 @@ const ok = (name, cond, detail) => {
     at16.beats.slice(0, 6).every((b) => Math.abs(b - Math.round(b)) < 0.02),
     JSON.stringify(at16.beats.slice(0, 6)));
 
+  // ── RESOLUTION AND HOW MANY SQUARE ──────────────────────────────────────
+  // user, 2026-09-22: "Resolution and How many aren't really squaring". They
+  // are one relationship — this many OF that grid — and three things hid it:
+  // How many's ceiling was min(32, steps) while normalize clamps to steps and
+  // ⊞ Resolution reaches 64, so at ⊞ 48 the stepper showed a value above its
+  // own max; its hint named "the cycle" (wrong for a filled part since ◫ Fill
+  // began tiling per bar) and "the Grid" (a control now called Resolution);
+  // and nothing said the two move together, though ⊞ Resolution scales this
+  // number by design.
+  // PUSH LIVES IN FINE-TUNE, so open it — a row that is not on screen answers
+  // `null` and would read as the ceiling never having been fixed.
+  await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const z = c.querySelector('.v2-gzbar[data-gz="3"]');
+    if (z && !c.classList.contains('v2-gz-3')) z.click();
+  });
+  await zz(700);
+  await page.evaluate(() => {
+    const t = document.querySelector('.v2-layer .v2-fttab[data-ft="rhythm"]');
+    if (t) t.click();
+  });
+  await zz(700);
+  const pair = async (res) => {
+    await setRes(res);
+    return page.evaluate(() => {
+      const hm = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.pulses"]');
+      const rs = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.steps"]');
+      const push = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.rotate"]');
+      const hintOf = (el) => { const row = el && el.closest('.ambient-ctrl');
+        const h = row && row.querySelector('.ambient-hint'); return h ? h.textContent.trim() : null; };
+      return {
+        res: rs ? (rs.value | 0) : null,
+        many: hm ? (hm.value | 0) : null,
+        manyMax: hm ? (hm.getAttribute('max') | 0) : null,
+        manyHint: hintOf(hm),
+        pushMax: push ? (push.getAttribute('max') | 0) : null,
+      };
+    });
+  };
+  const p16 = await pair(16), p48 = await pair(48), p64 = await pair(64);
+  console.log('  ⊞ 16: ' + JSON.stringify(p16));
+  console.log('  ⊞ 48: ' + JSON.stringify(p48));
+  console.log('  ⊞ 64: ' + JSON.stringify(p64) + '\n');
+
+  ok('How many is capped at the Resolution, not a fixed 32',
+    p48.manyMax === 48 && p64.manyMax === 64,
+    JSON.stringify({ at48: p48.manyMax, at64: p64.manyMax }));
+  ok('…so its value is never above its own maximum',
+    p48.many <= p48.manyMax && p64.many <= p64.manyMax,
+    JSON.stringify({ at48: p48.many + '/' + p48.manyMax, at64: p64.many + '/' + p64.manyMax }));
+  ok('…and Push is counted in the same steps',
+    p48.pushMax === 47 && p64.pushMax === 63,
+    JSON.stringify({ at48: p48.pushMax, at64: p64.pushMax }));
+  // THE ROW SAYS WHAT IT IS COUNTING OF, and that the two move together.
+  ok('How many states the pair, in the unit the part is counted in',
+    /of 48 a bar/.test(p48.manyHint || ''), JSON.stringify(p48.manyHint));
+  ok('…and says it moves with Resolution',
+    /moves with .*Resolution/.test(p48.manyHint || ''), JSON.stringify(p48.manyHint));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

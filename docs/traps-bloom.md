@@ -1352,6 +1352,15 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported
   as "the playhead starts on step 4 or so" and measured at step 26 of 32. Pass the phase state, the
   way the roll's own sweep already does.
+- **A GRID THAT DIVIDES THE CYCLE CANNOT LAND ON A BEAT unless the cycle is a whole number of bars.**
+  ◢ Bass is 4 pulses over 16 steps; on an 8.13-bar part a step is 8.13/16 = 0.508 bars ≈ 2.03 beats,
+  so the four notes sit two bars apart and nothing is on a beat ("why is default generated bass
+  content not lined up with whole beats"). Every Character is written in per-BAR units — Roots is
+  four to the bar, Pumping eighths — the same unit ♦ Beat's lanes use, so `onsetsOf` solves the
+  pattern over ONE BAR and TILES it whenever `barsMode === 'fill'`. Gated on that mode because it is
+  the layer already asking ("keep that pulse per BAR when the part gets longer"); a `stretch` part
+  wants one pattern over the whole cycle and must not move. `perturb` is still asked for every slot,
+  hit or miss — skipping the misses shifts the draw stream and silently changes the take.
 - **`rhythm.steps` MEANS TWO DIFFERENT LENGTHS, AND THE FORM DECIDES WHICH.** In ⌗ Roll it is the
   euclid's resolution; the moment `form === 'steps'` normalize re-sizes it to the SEQUENCER's grid
   (`bars × gridPerBar`), which on a long part is far larger. So anything that SEEDS the grid must let

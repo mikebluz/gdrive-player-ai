@@ -2232,11 +2232,58 @@
       for (let i = 0; i < st; i++) if (perturb(!!cells[i])) out.push(i / st);
       return out;                                        // an empty grid is a rest, and says so on the card
     }
+    // ── ◫ FILL MEANS PER BAR, SO THE GRID IS A BAR (2026-09-22) ──────
+    // user: "why is default generated bass content not lined up with whole
+    // beats". Because the grid divided the CYCLE: ◢ Bass is 4 pulses over 16
+    // steps, and on an 8.13-bar part one step is 8.13/16 = 0.508 bars ≈ 2.03
+    // beats, so no onset can land on a beat and the four notes sit 2 bars
+    // apart. The Characters are written in per-BAR units — "Roots" is four to
+    // the bar, "Pumping" is eighths — exactly as ♦ Beat's lanes are, and they
+    // only mean what their names say when the pattern is solved over ONE BAR
+    // and TILED.
+    // GATED ON `barsMode === 'fill'`, which is the layer already asking for
+    // this in its own words: "keep that pulse per BAR when the part gets
+    // longer, which is what an ostinato means". A `stretch` part is asking for
+    // the opposite — one pattern spread over the whole cycle — and is
+    // untouched, so nothing that did not request this changes.
+    // A FRACTIONAL LAST BAR TRUNCATES, which is what a loop running out of
+    // room does; 8.13 bars plays eight bars of the figure and an eighth of a
+    // ninth.
+    const fbars = Math.max(1, +part.bars || 1);
+    const fill = part.barsMode === 'fill' && fbars > 1 + 1e-9;
     if (r.kind === 'euclid') {
       const pat = euclidCells(r.pulses, r.steps, r.rotate);
-      if (pat) { for (let i = 0; i < r.steps; i++) if (perturb(!!pat[i])) out.push(i / r.steps); return out; }
+      if (pat) {
+        const st = Math.max(1, r.steps | 0);
+        if (fill) {
+          for (let b = 0; b < fbars - 1e-9; b++) {
+            for (let i = 0; i < st; i++) {
+              // `perturb` is asked for EVERY slot, hit or not, exactly as the
+              // untiled branch does — it spends a draw either way, and skipping
+              // the misses would shift the stream and give a different take.
+              const on = perturb(!!pat[i]);
+              const atBar = b + i / st;
+              if (atBar >= fbars - 1e-9) break;
+              if (on) out.push(atBar / fbars);
+            }
+          }
+          return out;
+        }
+        for (let i = 0; i < st; i++) if (perturb(!!pat[i])) out.push(i / st);
+        return out;
+      }
     }
     const n = Math.max(1, r.n | 0);                       // pulse (and the euclid fallback)
+    if (fill) {
+      for (let b = 0; b < fbars - 1e-9; b++) {
+        for (let i = 0; i < n; i++) {
+          const atBar = b + i / n;
+          if (atBar >= fbars - 1e-9) break;
+          out.push(atBar / fbars);
+        }
+      }
+      return out;
+    }
     for (let i = 0; i < n; i++) out.push(i / n);
     return out;
   }

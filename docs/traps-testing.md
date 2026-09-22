@@ -39,6 +39,15 @@
   was still held by an earlier worktree's `node server.js`, so a whole probe run measured code from
   two features ago and every failure pointed at the wrong cause. `curl` the served file for a string
   only the new build has before believing a red run — and kill the old server when leaving a worktree.
+- **Measure the CLAIM, not the outcome, when the outcome is clamped.** A check that a gesture is
+  REFUSED cannot be written against the value it would have changed: with nothing to pan the clamp is
+  `[0,0]`, so the window reads 0 whether the gesture was declined or taken and driven into a wall.
+  Found by poisoning — the guard was removed and the check stayed green. Assert on the mark the code
+  leaves when it acts (`_dragged`), not on the state it would have moved.
+- **Scroll a canvas into view and RE-READ its box before driving a touch at it.** A taller card (a
+  progression adds rows) moves it after the geometry was read, and the touch then lands outside the
+  element: `pointerdown` count 0, then a `pointercancel` as the browser takes it as a page scroll —
+  indistinguishable from the gesture handler not working.
 - **A poison that PASSES is a finding, not a dud.** It means either the cause you wrote down is not
   the one you fixed, or something else already owns the rule. Shipping a check that passes its own
   poison is worse than shipping none — the next person reads green and believes it.

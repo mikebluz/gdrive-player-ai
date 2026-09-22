@@ -19057,6 +19057,28 @@
       // canvas at the OLD coordinates misses the note by ~27px and the drag
       // silently never arms — measured, and it is why "still jumping around"
       // survived the first attempt at this.
+      // ── AND THE TRACKPAD / WHEEL (2026-09-21) ────────────────────────────
+      // A two-finger horizontal swipe is how a long timeline is read on a
+      // laptop, and it costs one listener. NON-PASSIVE, because it has to
+      // refuse the browser's own horizontal scroll — but ONLY when it is
+      // actually panning, so a plain vertical wheel over the drawing still
+      // scrolls the page.
+      // SHIFT+WHEEL TOO, which is the same gesture on a mouse.
+      h.addEventListener('wheel', (ev) => {
+        const cvw = ev.target.closest && ev.target.closest('.v2-vizcv'); if (!cvw) return;
+        const dx = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX
+                 : (ev.shiftKey ? ev.deltaY : 0);
+        if (!dx) return;
+        const ctxW = layerOf(cvw); if (!ctxW) return;
+        const LW = ctxW.L; if (!LW || !LW.part) return;
+        const bgW = cvw._barsGeo;
+        const maxBW = bgW ? Math.max(0, (bgW.barsF || 1) - (bgW.vbars || 1)) : 0;
+        if (!bgW || maxBW <= 1e-6) return;          // nothing to pan — leave the page alone
+        const perBarW = Math.max(1e-6, (bgW.w || 1) / Math.max(1e-6, bgW.vbars || 1));
+        if (ev.cancelable) ev.preventDefault();
+        vnavSet(LW, { bar0: clamp((vnavOf(LW).bar0 || 0) + dx / perBarW, 0, maxBW) });
+        try { drawPartViz(ctxW.card, LW, E); } catch (e) {}
+      }, { passive: false });
       h.addEventListener('pointerdown', (ev) => {
         let cvd = ev.target.closest && ev.target.closest('.v2-vizcv'); if (!cvd) return;
         // `layerOf`, not `layersOf` — the latter is ENGINE-side and this
@@ -19089,7 +19111,56 @@
           // it, release commits — direct drawing, not tap-then-edit. Empty
           // space outside draw mode still belongs to the click handler
           // (bar select), and the ruler strip is nobody's target.
-          if (modeOf(L) !== 'draw' || py < pg0.top) return;
+          if (modeOf(L) !== 'draw' || py < pg0.top) {
+            // ── DRAG THE PICTURE SIDEWAYS (2026-09-21) ───────────────────
+            // user: "user needs to be able to navigate the entire part, so
+            // have the content visualization sidescrollable by user". The
+            // window already panned — `vnav.bar0`, and the ◀ ▶ pair moves it —
+            // but only a third of a screen per press, which is no way to read
+            // a long part.
+            // THE GESTURE IS CLAIMED ONLY WHEN THERE IS SOMEWHERE TO GO. With
+            // the whole part on screen `maxB` is 0 and this returns, so a
+            // swipe over the canvas scrolls the PAGE exactly as it always did.
+            // That matters on a phone: the drawing is ~150px tall and taking
+            // every vertical swipe over it would trap the finger. You lose
+            // page-scroll over the canvas only when the content genuinely
+            // overflows — which is the moment you wanted to pan it.
+            const bgP = cvd._barsGeo;
+            const maxBP = bgP ? Math.max(0, (bgP.barsF || 1) - (bgP.vbars || 1)) : 0;
+            if (!bgP || maxBP <= 1e-6) return;
+            const perBar = Math.max(1e-6, (bgP.w || 1) / Math.max(1e-6, bgP.vbars || 1));
+            const startB = vnavOf(L).bar0 || 0;
+            const sx = ev.clientX;
+            let far = 0;
+            // `DRAG` IS WHAT THE TOUCHMOVE GUARD READS (it refuses the browser's
+            // pan while a gesture is ours). No `win` and no `idx`, so the
+            // drawing's own `DRAG` checks — all guarded on those — ignore it,
+            // and `11527`'s "do not rebuild mid-drag" correctly does not.
+            DRAG = { id: L.id | 0, pan: 1, moved: 0 };
+            const mvP = (e2) => {
+              const dx = (e2.clientX || 0) - sx;
+              if (Math.abs(dx) > far) far = Math.abs(dx);
+              DRAG.moved = far;
+              // DRAG THE CONTENT, NOT THE WINDOW: pulling left must bring
+              // LATER bars in, the way a map moves under the hand.
+              vnavSet(L, { bar0: clamp(startB - dx / perBar, 0, maxBP) });
+              try { drawPartViz(card, L, E); } catch (e) {}
+            };
+            const upP = () => {
+              window.removeEventListener('pointermove', mvP);
+              window.removeEventListener('pointerup', upP);
+              window.removeEventListener('pointercancel', upP);
+              DRAG = null;
+              // …AND A PAN MUST NOT ALSO SELECT A BAR. The click handler
+              // already honours `_dragged` for exactly this reason on the note
+              // drag; a pan is the same gesture ending the same way.
+              if (far > 4) cvd._dragged = Date.now();
+            };
+            window.addEventListener('pointermove', mvP);
+            window.addEventListener('pointerup', upP);
+            window.addEventListener('pointercancel', upP);
+            return;
+          }
           const made = penAdd(E, L, cvd, px, py);
           if (!made || made.idx < 0) return;
           mode = 'pen'; pen = 1; locked = made.locked; idx = made.idx;

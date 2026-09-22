@@ -1352,6 +1352,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported
   as "the playhead starts on step 4 or so" and measured at step 26 of 32. Pass the phase state, the
   way the roll's own sweep already does.
+- **⊞ RESOLUTION IS ONE WORD OVER TWO STORES** — `rhythm.steps` for a pitched content,
+  `rhythm.beat.per` for a kit: two engines, one axis, one label, one note-value table (`RES_LAB`).
+  It SCALES the pattern rather than re-quantising it: `pulses`/`rotate` move with the grid
+  (`scaleRes`, floored at 1 so nothing is rounded into silence), or the control is a quantiser and
+  the density never changes. Its UNIT is not constant — ◫ Fill solves over one bar and tiles, so the
+  grid is per BAR there, and per CYCLE on a `stretch` part; the hint reads `barsMode` and says which.
+  And it belongs with the MAIN knobs, not in Fine-tune: "like Beat" includes being in the same place.
 - **A GRID THAT DIVIDES THE CYCLE CANNOT LAND ON A BEAT unless the cycle is a whole number of bars.**
   ◢ Bass is 4 pulses over 16 steps; on an 8.13-bar part a step is 8.13/16 = 0.508 bars ≈ 2.03 beats,
   so the four notes sit two bars apart and nothing is on a beat ("why is default generated bass

@@ -7268,6 +7268,29 @@
     // A LANE THAT WAS SOUNDING KEEPS SOUNDING (the floor of 1): rounding 1
     // pulse down to 0 at a coarser grid would silence a drum as a side effect
     // of a grid change, and silence nobody asked for reads as a broken knob.
+    // …AND THE SAME FOR EVERY OTHER CONTENT. `rhythm.steps` is that content's
+    // ⊞ Resolution, and `pulses` is a count WITHIN it — so moving the grid on
+    // its own re-quantises and leaves the density exactly where it was, which
+    // is a quantiser and not the control that was asked for. The pattern moves
+    // with the grid instead: ⊞ 32 from ⊞ 16 is the same figure at twice the
+    // speed, ⊞ 8 at half.
+    // `chance` HAS NO PULSES TO SCALE and needs none — it draws per step, so a
+    // finer grid is already proportionally busier at the same Chance.
+    // A DRAWN GRID IS RE-SEEDED BY THE CALLER (the knobs' existing contract),
+    // so only the numbers that seed it are touched here.
+    scaleRes: (L, prevSteps) => {
+      const r = L && L.part && L.part.rhythm;
+      const from = Math.max(1, prevSteps | 0);
+      const to = Math.max(1, (r && r.steps | 0) || 0);
+      if (!r || !to || from === to) return false;
+      if (r.kind === 'euclid' || r.kind === 'drawn') {
+        const pu = r.pulses | 0;
+        if (pu > 0) r.pulses = clamp(Math.max(1, Math.round(pu * to / from)), 1, to);
+        const ro = r.rotate | 0;
+        if (ro > 0) r.rotate = clamp(Math.round(ro * to / from), 0, Math.max(0, to - 1));
+      }
+      return true;
+    },
     beatScalePer: (L, prevPer) => {
       const b = L && L.part && L.part.rhythm && L.part.rhythm.beat;
       const from = BEAT_PERS.indexOf(prevPer | 0) >= 0 ? (prevPer | 0) : BEAT_PER_BAR;
@@ -13051,6 +13074,13 @@
   // layer id in memory and never stored: it says what your finger does next,
   // and a project that reopened in ♪ Tune mode would be answering a question
   // nobody had asked yet. Same idiom as the card's other per-layer view state.
+  // ⊞ RESOLUTION'S NOTE NAMES — ONE TABLE, both the kit's grid and every other
+  // content's. "32 steps" is arithmetic; "thirty-seconds" is what a player
+  // hears, and two copies of this is how the two controls come to name the
+  // same number differently.
+  const RES_LAB = { 4: 'quarters', 8: 'eighths', 12: 'eighth triplets',
+    16: 'sixteenths', 24: 'sixteenth triplets', 32: 'thirty-seconds',
+    48: '32nd triplets', 64: 'sixty-fourths' };
   const CELLMODE = new Map();
   const cellModeOf = (L) => CELLMODE.get(L && (L.id | 0)) || 'hit';
   // THE VALUES A TAP WALKS. Coarse on purpose — four chances and a handful of
@@ -14300,6 +14330,34 @@
               // eight labelled rows would be the panel this card keeps having to
               // shrink, and "how busy is the hat" is one number, not a section.
               // Gated `voice:kit`: on a synth these write lanes nothing reads.
+              // ── ⊞ RESOLUTION, FOR EVERY OTHER CONTENT (2026-09-22) ────
+              // user: "all Contents should have Resolution like Beat that
+              // scales the part". Same word, same place on the card, same
+              // behaviour — the only difference is which store holds it
+              // (`rhythm.steps` here, `beat.per` on a kit: two engines, one
+              // axis). It WAS "Steps", a bare 2–64 stepper hinted "per cycle",
+              // buried in Fine-tune.
+              // THE UNIT IS STATED AND IT IS NOT ALWAYS THE SAME: ◫ Fill solves
+              // the pattern over ONE BAR and tiles it, so for those the grid is
+              // per bar; a `stretch` part still spreads one pattern over the
+              // cycle. The old flat "per cycle" became wrong for every filled
+              // part the moment Fill started tiling.
+              (function (rr1) {
+                const perBar = (L.part.barsMode === 'fill');
+                const st0 = Math.max(1, rr1.steps | 0);
+                // THE CURRENT VALUE IS ALWAYS AN OPTION, even when it is not one
+                // of the musical ones — a <select> whose value matches no option
+                // silently shows the FIRST, which would read as the grid having
+                // jumped to 4 on its own (the documented trap).
+                const opts = V2.BEAT_PERS.indexOf(st0) >= 0
+                  ? V2.BEAT_PERS.slice() : V2.BEAT_PERS.concat([st0]).sort((a, b) => a - b);
+                return gsel(L, 'part.rhythm.steps', 'Resolution', String(st0),
+                    opts.map((n) => [String(n), n + ' a ' + (perBar ? 'bar' : 'cycle') +
+                      (RES_LAB[n] ? ' — ' + RES_LAB[n] : '')]),
+                    'how finely a ' + (perBar ? 'bar' : 'cycle') +
+                      ' is cut — the pattern scales with it, so twice the grid is twice the speed',
+                    'kind:live;voice:synth;rhythm:euclid,drawn,chance;form:roll');
+              })(L.part.rhythm || {}) +
               (function (bl) {
                 // ── ⊞ RESOLUTION — THE GROOVE'S SPEED (2026-09-22) ──────
                 // user: "there should be a Resolution parameter so the user
@@ -14311,11 +14369,8 @@
                 // arithmetic and "32nds" is what a drummer hears. The number
                 // rides along because it is the unit the lane knobs count in.
                 const per0 = V2.beatPerOf((L.part.rhythm || {}).beat);
-                const PERLAB = { 4: 'quarters', 8: 'eighths', 12: 'eighth triplets',
-                  16: 'sixteenths', 24: 'sixteenth triplets', 32: 'thirty-seconds',
-                  48: '32nd triplets', 64: 'sixty-fourths' };
                 return gsel(L, 'part.rhythm.beat.per', 'Resolution', String(per0),
-                     V2.BEAT_PERS.map((n) => [String(n), n + ' a bar — ' + PERLAB[n]]),
+                     V2.BEAT_PERS.map((n) => [String(n), n + ' a bar — ' + RES_LAB[n]]),
                      'how fine a bar is cut — the pattern scales with it, so twice the grid is twice the speed',
                      'kind:live;voice:kit') +
                   '<div class="ambient-ctrl v2-beatrow" data-v2when="kind:live;voice:kit">' +
@@ -14500,10 +14555,11 @@
               ftrows('rhythm',
               (function (rr0) {
                 const gN = Math.min(32, Math.max(2, (rr0.steps | 0) || 16));
-                // "Steps", NOT "Grid": `part.grid` is a note VALUE per BAR.
-                // Gated `form:roll` because in ▦ Steps it is Grid × Bars.
-                return gst(L, 'part.rhythm.steps', 'Steps', rr0.steps, 2, 64,
-                    'per cycle', 'kind:live;rhythm:euclid,drawn;form:roll') +
+                // ⊞ Resolution is NOT here — it sits with the MAIN knobs,
+                // beside the kit's, because "like Beat" means reachable in the
+                // same place and not behind a Fine-tune tab (measured: it was
+                // in the DOM with a 0×0 rect, the documented tell).
+                return
                   gst(L, 'part.rhythm.rotate', 'Push', rr0.rotate, 0, gN - 1,
                       'steps late', 'kind:live;rhythm:euclid,drawn');
               })(L.part.rhythm || {}) +
@@ -19213,6 +19269,9 @@
         // was once the field is written.
         const prevPer = (path === 'part.rhythm.beat.per')
           ? V2.beatPerOf((ctx.L.part.rhythm || {}).beat) : 0;
+        // …and the grid ⊞ Resolution is leaving, for the same reason.
+        const prevSteps = (path === 'part.rhythm.steps')
+          ? Math.max(1, (ctx.L.part.rhythm || {}).steps | 0) : 0;
         setPath(ctx.L, path, (f.tagName === 'SELECT' || f.type === 'text') ? raw : (parseFloat(raw) || 0));
         if (path === 'part.bars') { try { V2.applyBarsMode(ctx.L, prevBars); } catch (e) {} }
         // MOVING THE GRID MOVES THE GROOVE — the pulses are counts per bar, so
@@ -19220,6 +19279,15 @@
         // grid, which is not what "Resolution" was asked for.
         if (path === 'part.rhythm.beat.per') {
           try { V2.beatScalePer(ctx.L, prevPer); } catch (e) {}
+          try { E.getCfg(); } catch (e) {}
+        }
+        // THE SAME RULE FOR EVERY OTHER CONTENT. `pulses` is a count within the
+        // grid, so leaving it alone while the grid doubles halves the density —
+        // the opposite of "Resolution that scales the part". Pulses and the
+        // push move with it, floored at 1 so a pattern that was sounding cannot
+        // be rounded into silence by a grid change.
+        if (path === 'part.rhythm.steps' && prevSteps > 0) {
+          try { V2.scaleRes(ctx.L, prevSteps); } catch (e) {}
           try { E.getCfg(); } catch (e) {}
         }
         // THE KNOBS REDRAW AN EDITED PATTERN — v1's own contract for a

@@ -2997,11 +2997,14 @@
       // cannot drift again.
       try {
         if (_ambProgNameIsList(prog.name) && Array.isArray(prog.chords)) {
-          const segs = String(prog.name).split(' — ').length;
-          if (segs !== prog.chords.length) {
-            const fresh = _ambProgNameFromChords(prog.chords);
-            if (fresh) prog.name = fresh;
-          }
+          // COMPARE THE WHOLE LIST, not just how many entries it has. Keyed on
+          // the COUNT, the name followed an added or removed chord but not a
+          // CHANGED one: edit C to Am and the list still read "C — Em — F"
+          // for ever, because three is still three. Regenerating and comparing
+          // costs one string and is exact; an accurate list is still left
+          // byte-identical, so this cannot churn.
+          const fresh = _ambProgNameFromChords(prog.chords);
+          if (fresh && fresh !== prog.name) prog.name = fresh;
         }
       } catch (e) {}
       // PART CHAIN — the order the parts are PLAYED in, as indices into the
@@ -42291,8 +42294,26 @@
             '<span class="cad-bar"><i style="width:' + pct.toFixed(2) + '%"></i></span>' +
             '</div>';
         }).join('');
+        // THE TITLE MUST NOT CONTRADICT THE ROWS BENEATH IT. `partName()` is a
+        // STORED name; the rows name each chord through the view shift, so under
+        // a key transpose the header said "C — Em — F" over rows reading
+        // "D · F#m · G" (measured, +2 semitones). A name someone CHOSE is still
+        // shown untouched — only an auto-generated LIST is renamed, by the same
+        // test normalize already uses to decide that.
+        const _title = (function () {
+          const nm0 = partName();
+          try {
+            if (_ambProgNameIsList(nm0)) {
+              const shifted = (c2.prog.chords || []).slice(r.from, r.to)
+                .map((ch) => _ambChordShift(ch, _ambProgViewShift(E, c2, c2.prog.chords)));
+              const fresh = _ambProgNameFromChords(shifted);
+              if (fresh) return fresh;
+            }
+          } catch (e) {}
+          return nm0;
+        })();
         ov.innerHTML = '<div class="sm-modal ambient-cad-modal">' +
-          '<div class="sm-title">Cadence — ' + esc(partName()) + '</div>' +
+          '<div class="sm-title">Cadence — ' + esc(_title) + '</div>' +
           '<div class="ambient-hint cad-sub">How long each chord is held, in bars. '
             + lens.length + ' chord' + (lens.length === 1 ? '' : 's') + '.</div>' +
           '<div class="cad-list">' + rows + '</div>' +

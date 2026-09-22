@@ -1303,6 +1303,19 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   ones must also state `rhythm.kind: 'pulse'` — `setSpeedFn` keeps whatever kind is already there, so
   over the roll's euclid an arpeggio came out syncopated, which is not an arpeggio.
 
+- **A STORED NAME CANNOT NAME A LIVE THING.** `prog.name` is a string; the chords it names are
+  displayed through `_ambProgViewShift` (key transpose + section offset), so under any transpose the
+  name and the chords are different strings for the same music — reported as the Cadence header
+  saying "C — Em — F" over rows reading D · F♯m · G. Any surface that prints the name beside the
+  chords must regenerate it from the SHIFTED chords (guarding a name someone chose with
+  `_ambProgNameIsList`). And normalize's auto-refresh was keyed on the chord COUNT, so it followed an
+  added chord but never a CHANGED one — compare the whole regenerated list.
+- **THE CONTENT DRAWING SPANS THE LAYER'S CYCLE, NEVER THE ARRANGEMENT PART.** `barsF` is
+  `cycBars || L.part.bars`, and `cycBars` is set only while PLAYING. So a 3-bar layer over a 5-bar
+  part draws 3 bars stopped, and the chords in bars 4–5 are not merely off screen but unreachable:
+  the ◀ ▶ pair hides itself when the CYCLE fits, and the drag-pan declines for the same reason.
+  A part longer than its layer's cycle has content no surface admits exists.
+
 ### Bloom stores — what exists, and the one thing to know about each
 
 All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/arch/harness green.

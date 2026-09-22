@@ -1352,6 +1352,17 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported
   as "the playhead starts on step 4 or so" and measured at step 26 of 32. Pass the phase state, the
   way the roll's own sweep already does.
+- **PER-CYCLE RANDOMNESS NEEDS `part.vary`; WITHOUT IT EVERY DIE IS ONE THROW, FOREVER.** `cycIdx`
+  seeds every per-hit draw (rests, ghosts, chance, pitch vary) and it only advances per cycle when
+  the part re-decides each pass — otherwise it is `take + epoch`, constant. A probability measured
+  without it reads 0/200 or 200/200 and looks like a dead control; it is the Live/Deep rule doing
+  exactly what it says. Set it before measuring anything stochastic, and say so in the UI: these
+  controls are properties of a TAKE until that switch is on.
+- **A KIT'S PROBABILITY AND PITCH ARE PER CELL** (`rhythm.cellFx["<lane>:<step>"] = {c, t}`, sparse,
+  absent by default — the `pitch.stepFx` idiom). Rests is ONE value for the whole layer and cannot
+  say "this hat two bars in three"; before `cellFx` a drum's pitch was `36 + VDRUM[lane]`, fixed, with
+  no surface at all. Do NOT widen `lanes` to carry these: it is a grid of flags that four surfaces
+  read and write, and every one of them would have to decide what a 0.6 means.
 - **A BEAT'S NUMBERS ARE PER BAR — so is anything that reads or bounds them.** ⊞ Resolution
   (`rhythm.beat.per`, absent = 16) is the per-bar grid, and it is the ceiling normalize clamps each
   lane's `p`/`r` to; clamping to `rhythm.steps` instead was only ever right because the two happened

@@ -947,6 +947,13 @@
     L.restProb = clamp(Number.isFinite(L.restProb) ? L.restProb : 0, 0, 100);
     L.ghosts = clamp(Number.isFinite(L.ghosts) ? L.ghosts : 0, 0, 100);
     L.lenVary = clamp(Number.isFinite(L.lenVary) ? L.lenVary : 0, 0, 100);
+    // PITCH VARY — a kit's stochastic pitch, in SEMITONES rather than a percent
+    // because a drum's pitch has a unit and "40% pitch" names nothing. Applied
+    // per HIT, seeded like every other per-hit draw, so a take replays. It is
+    // the stochastic half of the pitch answer; `cellFx.t` is the deliberate
+    // half, and they add. Pruned at 0 — absent by default.
+    if (Number.isFinite(L.pitchVary) && L.pitchVary > 0) L.pitchVary = clamp(L.pitchVary, 0, 12);
+    else delete L.pitchVary;
     // PLACEMENT. Register is on the instrument and `walk.span` already IS v1's
     // Range; what was missing is PROXIMITY — how far consecutive notes are
     // allowed to move. A live-PITCH treatment: it shapes the relationship
@@ -1277,6 +1284,41 @@
         while (out2.length < r.steps) out2.push(0);
         r.lanes[li] = out2;
       }
+      // ── WHAT ONE CELL SAYS FOR ITSELF — CHANCE AND TUNE (2026-09-22) ──
+      // user: "how can user introduce probability and stochastic improvisation
+      // to pattern beats, including pitch changes (changing pitch of pitched
+      // drum sounds)".
+      // A cell was 0 or 1, and the only probability a kit had was Rests — ONE
+      // value for the whole layer, so "this hat sounds two bars in three" could
+      // not be said at all. And a drum's pitch was `36 + VDRUM[lane]`, fixed:
+      // there was no surface for a tuned tom, let alone a moving one.
+      //   cellFx = { "<lane>:<step>": { c: chance%, t: semitones } }
+      // A SPARSE OBJECT keyed by lane and step, the idiom `pitch.stepFx`
+      // already uses and for the same reason: a layer that names one step
+      // stores one entry. ADDITIVE AND ABSENT BY DEFAULT — every entry that
+      // says nothing (chance 100, tune 0) is pruned, so an untouched project
+      // stores nothing and plays byte for byte as it did.
+      // NOT FOLDED INTO THE CELL ITSELF: `lanes` is a grid of flags that four
+      // other surfaces read and write, and widening it would make every one of
+      // them decide what a 0.6 means.
+      if (r.cellFx && typeof r.cellFx === 'object' && !Array.isArray(r.cellFx)) {
+        const keep = {};
+        Object.keys(r.cellFx).forEach((k) => {
+          const m = /^(\d+):(\d+)$/.exec(String(k));
+          if (!m) return;
+          const li = m[1] | 0, ci = m[2] | 0;
+          if (li < 0 || li >= _V2_LANES || ci < 0 || ci >= keepN) return;
+          const v = r.cellFx[k];
+          if (!v || typeof v !== 'object') return;
+          const e2 = {};
+          const c2 = Number.isFinite(v.c) ? clamp(v.c | 0, 0, 100) : 100;
+          const t2 = Number.isFinite(v.t) ? clamp(v.t | 0, -24, 24) : 0;
+          if (c2 !== 100) e2.c = c2;
+          if (t2 !== 0) e2.t = t2;
+          if (Object.keys(e2).length) keep[li + ':' + ci] = e2;
+        });
+        if (Object.keys(keep).length) r.cellFx = keep; else delete r.cellFx;
+      } else if (r.cellFx !== undefined) delete r.cellFx;
       // ── ♦ BEAT: THE RULES BEHIND A KIT (2026-09-21) ────────────────
       // user: "what about drums? we should probably have a Beat material type".
       // Drums were the ONE layer type with no generator: the kit emitter read
@@ -1312,7 +1354,13 @@
         // PRUNED AT SIXTEENTHS, so an untouched project stores nothing new.
         if (per !== BEAT_PER_BAR) r.beat.per = per;
         if (vr > 0) r.beat.vary = vr;
-        if (!outB.some((e) => e.p > 0)) delete r.beat;     // nothing stated = no rules
+        // NOTHING STATED = NO RULES — except that VARY IS ONE FIELD for both
+        // forms. It means "how much the pattern re-decides on each take"
+        // whether the pattern came from the euclid or from the drawn grid, so
+        // dropping the whole `beat` object on a hand-drawn kit would delete the
+        // only home that one word has (the two-vocabularies rule: one axis, one
+        // name). Kept when Vary or a grid is stated, pruned otherwise.
+        if (!outB.some((e) => e.p > 0) && !(vr > 0) && per === BEAT_PER_BAR) delete r.beat;
       } else if (r.beat !== undefined) delete r.beat;
 
       const t = (p.pitch && typeof p.pitch === 'object') ? p.pitch : (p.pitch = {});
@@ -3663,19 +3711,50 @@
       const st = bl ? btSt : Math.max(1, p.rhythm.steps | 0);
       const slot = cyc / st;
       const durMs = Math.max(20, Math.round(slot * 1000 * (p.shape.lenRatio / 100)));
+      // VARY IS ONE WORD FOR BOTH FORMS. `beatLanes` already re-decides the
+      // euclid per take; a DRAWN grid had nothing, so ▦ Pattern could not take
+      // a take at all — 🎲 New take redrew the same bar for ever, which is the
+      // very complaint ♦ Beat's Vary was built to answer. Same asymmetric rule,
+      // verbatim: a hit is dropped at 0.40× and a silent slot added at 0.22×,
+      // so it thins more than it thickens and the pattern stays itself.
+      const dvary = (!bl && p.rhythm.beat) ? clamp(p.rhythm.beat.vary | 0, 0, 100) / 100 : 0;
+      const cfx = (p.rhythm.cellFx && typeof p.rhythm.cellFx === 'object') ? p.rhythm.cellFx : null;
+      const pvar = Math.max(0, Math.min(12, +L.pitchVary || 0));
       for (let li = 0; li < _V2_LANES; li++) {
         const row = lanes[li] || [];
         for (let i = 0; i < st; i++) {
-          if (!row[i]) continue;
           const sd = (L.id | 0) * 9176 ^ (cycIdx * 2246822519) ^ (li * 7919) ^ (i * 40503);
+          let on = row[i] ? 1 : 0;
+          if (dvary > 0) {
+            if (on && vRnd(sd, 61) < dvary * 0.40) on = 0;
+            else if (!on && vRnd(sd, 67) < dvary * 0.22) on = 1;
+          }
+          if (!on) continue;
+          // WHAT THIS CELL SAYS FOR ITSELF. Chance is a per-STEP probability —
+          // the thing Rests could not express, because one number for the whole
+          // layer cannot say "this hat two bars in three". Drawn FIRST and
+          // independently of Rests, so the two compose rather than one hiding
+          // the other.
+          const fx = cfx ? cfx[li + ':' + i] : null;
+          if (fx && Number.isFinite(fx.c) && fx.c < 100 &&
+              vRnd(sd, 101) * 100 >= fx.c) continue;
           if (rest > 0 && vRnd(sd, 11) * 100 < rest) continue;
           let dm = durMs;
           if (lvar > 0) dm = Math.max(20, Math.round(durMs * (1 + (vRnd(sd, 23) * 2 - 1) * (lvar / 100) * 0.6)));
           const at0 = cs + i * slot;
-          out.push({ at: at0, freq: midiToFreq(36 + _V2_VDRUM[li]), durMs: dm, lane: li });
+          // A DRUM'S PITCH IS A NUMBER NOW: its lane's semitone, plus what the
+          // cell states, plus the stochastic spread. `midiToFreq` takes a
+          // FRACTION, so Pitch vary detunes continuously rather than stepping.
+          let semi = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0);
+          if (pvar > 0) semi += (vRnd(sd, 83) * 2 - 1) * pvar;
+          out.push({ at: at0, freq: midiToFreq(semi), durMs: dm, lane: li });
           if (ghost > 0 && vRnd(sd, 37) * 100 < ghost * 0.6) {
             const gAt = at0 + slot * 0.5;
-            if (gAt < cs + cyc) out.push({ at: gAt, freq: midiToFreq(36 + _V2_VDRUM[li]), durMs: Math.max(20, Math.round(dm * 0.45)), lane: li, ghost: 1 });
+            // A GHOST TAKES ITS OWN DRAW from the same spread — it is a
+            // separate hit, and two hits at one pitch is not what "vary" means.
+            let gs = semi;
+            if (pvar > 0) gs = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0) + (vRnd(sd, 89) * 2 - 1) * pvar;
+            if (gAt < cs + cyc) out.push({ at: gAt, freq: midiToFreq(gs), durMs: Math.max(20, Math.round(dm * 0.45)), lane: li, ghost: 1 });
           }
         }
       }
@@ -8509,6 +8588,26 @@
         '</select></label>' +
       '</div>' +
       '<span class="v2-vizlab v2-stepslab ambient-hint"></span>' +
+      // ── WHAT A TAP EDITS (2026-09-22) ────────────────────────────────
+      // user: "how can user introduce probability and stochastic improvisation
+      // to pattern beats, including pitch changes".
+      // A MODE, not a second grid and not a popover. The cells are 22px on a
+      // phone (v1's kit sizing, kept because eight lanes have to fit), so a
+      // long-press menu per cell is a target nobody finds and a second grid is
+      // the card growing by a screen. One row says what a tap means, and the
+      // cells show what they hold in that mode — so the picture is always the
+      // answer to the question the row is asking.
+      // KIT ONLY: chance and tune are per-DRUM-cell; the single-row grid has
+      // `pitch.stepFx` for the same job and its own door onto it.
+      (kit
+        ? '<span class="ambient-seg-row v2-cellmodes" role="group" aria-label="What a tap edits">' +
+            [['hit', '■ Hit', 'Tap a cell to turn that drum on or off.'],
+             ['chance', '░ Chance', 'Tap a cell to set how often it sounds — 100, 75, 50, 25%. A cell that is not certain is drawn faded.'],
+             ['tune', '♪ Tune', 'Tap a cell to move that hit in semitones — the door for pitched drums. The number on the cell is its offset.']]
+              .map(([m, lab, tip]) => '<button type="button" class="ambient-seg v2-cellmode' +
+                (cellModeOf(L) === m ? ' on' : '') + '" data-cellmode="' + m + '" title="' + esc(tip) + '">' + lab + '</button>').join('') +
+          '</span>'
+        : '') +
       (kit
         ? '<div class="v2-stepsgrid v2-stepslanes"' + pAttr + '>' + lanesHtml(L) + '</div>'
         : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>') +
@@ -12893,18 +12992,51 @@
   // per lane, the lane NAME as a `.ambient-euclid-drumlbl` label, and the same
   // cell classes. Eight lanes at 390px is why v1's kit cells sit at 22px rather
   // than the 30px touch floor; matched here for the same reason.
+  // WHICH MODE THE GRID IS IN — A VIEW STATE, NOT A SETTING, so it is keyed by
+  // layer id in memory and never stored: it says what your finger does next,
+  // and a project that reopened in ♪ Tune mode would be answering a question
+  // nobody had asked yet. Same idiom as the card's other per-layer view state.
+  const CELLMODE = new Map();
+  const cellModeOf = (L) => CELLMODE.get(L && (L.id | 0)) || 'hit';
+  // THE VALUES A TAP WALKS. Coarse on purpose — four chances and a handful of
+  // musical intervals, because this is a 22px cell being tapped, not a number
+  // being typed. Chance descends so the FIRST tap thins (which is what the
+  // control is for); tune walks up through the intervals a drum is actually
+  // re-pitched by, then down, then home.
+  const CELL_CHANCES = [100, 75, 50, 25];
+  const CELL_TUNES = [0, 2, 3, 5, 7, 12, -2, -3, -5, -7, -12];
   function lanesHtml(L) {
     const r = L.part.rhythm || {}, st = Math.max(1, r.steps | 0), lanes = r.lanes || [];
+    // WHAT EACH CELL SAYS FOR ITSELF — drawn ON the cell, in every mode, not
+    // only while its mode is picked: a beat whose hats thin out two bars in
+    // three has to look like that on the grid, or the setting is invisible the
+    // moment you switch back to ■ Hit (the drum-solo rule).
+    const cfx = (r.cellFx && typeof r.cellFx === 'object') ? r.cellFx : null;
     let h = '<div class="ambient-euclid-grid v2-lanes">';
     for (let li = 0; li < V2.LANES; li++) {
       const row = lanes[li] || [];
       h += '<div class="ambient-euclid-row ambient-euclid-kitrow">' +
 '<span class="ambient-euclid-drumlbl" title="' + esc(V2.LANE_NAMES[li]) + '">' + esc(V2.LANE_NAMES[li]) + '</span>' +
         '<div class="ambient-slice-grid ambient-euclid-cells v2-lanecells" data-lane="' + li + '" style="--eucols:' + Math.min(st, 16) + '">' +
-          Array.from({ length: st }, (_, i) =>
-            '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-lanecell' + (row[i] ? ' on' : '') +
-            '" data-lane="' + li + '" data-ci="' + i + '" aria-pressed="' + (row[i] ? 'true' : 'false') +
-            '" title="' + esc(V2.LANE_NAMES[li]) + ' — step ' + (i + 1) + '"></button>').join('') +
+          Array.from({ length: st }, (_, i) => {
+            const fx = cfx ? cfx[li + ':' + i] : null;
+            const ch = (fx && Number.isFinite(fx.c)) ? (fx.c | 0) : 100;
+            const tu = (fx && Number.isFinite(fx.t)) ? (fx.t | 0) : 0;
+            // FADED IN PROPORTION, never hidden — a 25% cell is still a cell
+            // you drew. `--cellch` rides as a style so the stylesheet owns the
+            // look and this owns the number.
+            const sty = (row[i] && ch < 100) ? ' style="--cellch:' + (0.30 + 0.70 * (ch / 100)).toFixed(2) + '"' : '';
+            const says = esc(V2.LANE_NAMES[li]) + ' — step ' + (i + 1) +
+              (ch < 100 ? ', sounds ' + ch + '% of the time' : '') +
+              (tu !== 0 ? ', tuned ' + (tu > 0 ? '+' : '') + tu : '');
+            return '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-lanecell' +
+              (row[i] ? ' on' : '') + (row[i] && ch < 100 ? ' v2-cellmaybe' : '') +
+              (row[i] && tu !== 0 ? ' v2-celltuned' : '') + '"' + sty +
+              ' data-lane="' + li + '" data-ci="' + i + '" aria-pressed="' + (row[i] ? 'true' : 'false') +
+              '" title="' + says + '">' +
+              (row[i] && tu !== 0 ? '<span class="v2-celltune">' + (tu > 0 ? '+' : '') + tu + '</span>' : '') +
+              '</button>';
+          }).join('') +
         '</div>' +
       '</div>';
     }
@@ -14516,6 +14648,15 @@
                     'ordered → jumps about', 'kind:live;voice:synth;pitch:series') +
                 gsl(L, 'part.pitch.drift', 'Pitch vary', num((L.part.pitch || {}).drift, 0), 0, 100,
                     'octave drift', 'kind:live;voice:synth;pitch:fixed,series,walk,chance') +
+                // THE SAME WORD FOR THE SAME AXIS on a kit — the two are gated
+                // to different instruments and never show together, so one
+                // name stays one meaning (pitch scatter) rather than becoming
+                // two mechanisms. The UNIT differs because a drum's pitch has
+                // one: semitones, not octave drift, so the hint says so.
+                // Stochastic by nature; ♪ Tune on the grid is the deliberate
+                // counterpart, and the two add.
+                gsl(L, 'pitchVary', 'Pitch vary', num(L.pitchVary, 0), 0, 12,
+                    '± semitones per hit — tuned drums wander', 'kind:live;voice:kit') +
                 gsl(L, 'part.rhythm.vary', 'Vary', num((L.part.rhythm || {}).vary, 0), 0, 100,
                     'hits dropped or added off the pattern', 'kind:live;rhythm:euclid,drawn') +
                 gsl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
@@ -20509,6 +20650,14 @@
         // A KIT LANE CELL. Same in-place toggle as the melodic grid; there is no
         // generator behind a lane, so no snapshot step and no restore button —
         // what you draw IS the pattern.
+        // ■ HIT · ░ CHANCE · ♪ TUNE — what a tap on the grid edits.
+        const cm = t.closest && t.closest('.v2-cellmode');
+        if (cm) {
+          const ctx = layerOf(cm); if (!ctx) return;
+          CELLMODE.set(ctx.L.id | 0, cm.getAttribute('data-cellmode') || 'hit');
+          h._sig = ''; V2.render(E);
+          return;
+        }
         const lc = t.closest('.v2-lanecell');
         if (lc) {
           const ctx = layerOf(lc); if (!ctx) return;
@@ -20516,6 +20665,34 @@
           const r2 = ctx.L.part.rhythm;
           if (!Array.isArray(r2.lanes)) r2.lanes = [];
           if (!Array.isArray(r2.lanes[li])) r2.lanes[li] = [];
+          const mode = cellModeOf(ctx.L);
+          if (mode !== 'hit') {
+            // NOTHING TO SAY ABOUT A SILENT CELL. Chance and tune describe a
+            // hit, so a tap on an empty cell in these modes turns it ON rather
+            // than storing a setting nothing plays — the alternative is a cell
+            // that holds a value and makes no sound, which reads as broken.
+            if (!r2.lanes[li][ci]) {
+              r2.lanes[li][ci] = 1;
+            } else {
+              const key2 = li + ':' + ci;
+              const fx0 = (r2.cellFx && r2.cellFx[key2]) || {};
+              const cur = (mode === 'chance')
+                ? (Number.isFinite(fx0.c) ? fx0.c | 0 : 100)
+                : (Number.isFinite(fx0.t) ? fx0.t | 0 : 0);
+              const ring = (mode === 'chance') ? CELL_CHANCES : CELL_TUNES;
+              const at = ring.indexOf(cur);
+              const next = ring[(at < 0 ? 0 : at + 1) % ring.length];
+              r2.cellFx = r2.cellFx || {};
+              const e2 = Object.assign({}, fx0);
+              if (mode === 'chance') e2.c = next; else e2.t = next;
+              r2.cellFx[key2] = e2;
+            }
+            // NORMALIZE PRUNES what says nothing, so the store never grows a
+            // default, and the row is rebuilt because the cell's own face (its
+            // fade, its number) is what the mode is for.
+            commit(ctx); h._sig = ''; V2.render(E);
+            return;
+          }
           r2.lanes[li][ci] = r2.lanes[li][ci] ? 0 : 1;
           lc.classList.toggle('on', !!r2.lanes[li][ci]);
           lc.setAttribute('aria-pressed', r2.lanes[li][ci] ? 'true' : 'false');

@@ -4546,6 +4546,20 @@
     .ambient-euclid-cell { background: rgba(255,255,255,0.03); color: #6a6a86; }
     .ambient-euclid-cell.on { border-color: #6fe0c0; color: #06210f; background: #4fd1a5; font-weight: 700; box-shadow: 0 0 6px rgba(79,209,165,0.35); }
     @media (hover: hover) { .ambient-euclid-cell.on:hover { background: #67e0ba; border-color: #9df5d8; color: #06210f; } }
+    /* ── A CELL THAT SAYS MORE THAN ON/OFF (2026-09-22) ──────────────────
+       Chance fades the fill IN PROPORTION (--cellch, set inline by lanesHtml)
+       rather than hiding it: a 25% cell is still a cell you drew, and it has to
+       read as "drawn, sometimes" and never as "off". Tune stamps the offset ON
+       the cell and rings it, so a pitched drum is visible in every mode — the
+       settings must not vanish when the grid goes back to ■ Hit. */
+    .ambient-euclid-cell.on.v2-cellmaybe { opacity: var(--cellch, 1); }
+    .ambient-euclid-cell.on.v2-celltuned { box-shadow: 0 0 0 1.5px rgba(246,173,85,0.9), 0 0 6px rgba(79,209,165,0.35); }
+    .v2-celltune { font-size: 9px; line-height: 1; font-weight: 700; letter-spacing: -0.02em;
+      color: #06210f; pointer-events: none; }
+    /* The mode row is the grid's own control, so it sits tight under the head
+       and wraps rather than scrolling (UI rule 1). */
+    .v2-cellmodes { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+    .v2-cellmodes .ambient-seg { padding: 3px 8px; font-size: 11px; }
     /* Cells the edit panel is currently pointed at (selected lane × step scope). */
     .ambient-euclid-cell.in-scope { outline: 1.5px solid rgba(159,122,234,0.85); outline-offset: 1px; }
     /* Melodic-euclid note readout: a strip under the grid naming each active step's

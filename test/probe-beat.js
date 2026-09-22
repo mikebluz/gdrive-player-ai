@@ -379,6 +379,178 @@ const ok = (name, cond, detail) => {
     Math.abs(tempo.frac.maxGap - 0.25) < 0.01,
     tempo.frac.perBar + '/bar, widest gap ' + (Math.round(tempo.frac.maxGap * 1000) / 1000) + ' bars');
 
+  // ── 8. ⊞ RESOLUTION — THE GROOVE'S SPEED, AND A DOOR ONTO IT ────────────
+  // user, 2026-09-22: "default generated beat should be 2x as dense … also
+  // there should be a Resolution parameter so the user can adjust that scaling
+  // of the beat". It is the per-bar grid, and it moves the whole beat's speed:
+  // the lane pulses scale with it, so ⊞ 32 plays the same pattern double-time.
+  // A quantiser that left the pulses alone would be the same beat on a finer
+  // grid — no change in speed at all, which is what was asked for.
+  await page.evaluate(() => {
+    const x = document.querySelector('.v2-layer .v2-gencancel, .v2-layer .v2-genclose');
+    if (x) x.click();
+  });
+  await zz(900);
+  await page.evaluate(() => { window._v2.openGen(_masterEng, (_masterEng.getCfg().layers || [])[0]); });
+  await zz(1400);
+  await page.evaluate(() => {
+    const c = document.querySelector('.v2-layer');
+    const x = c.querySelector('.v2-gzbar[data-gz="2"]');
+    if (x && !c.classList.contains('v2-gz-2')) x.click();
+  });
+  await zz(800);
+
+  const resDoor = await page.evaluate(() => {
+    const sel = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.beat.per"]');
+    if (!sel) return { there: false };
+    // MEASURED, not merely found — a `querySelector` hit proves nothing and a
+    // 0×0 rect is the tell (the house rule for every new control).
+    const r = sel.getBoundingClientRect();
+    const lane = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.beat.lanes.0.p"]');
+    return { there: true, w: Math.round(r.width), h: Math.round(r.height),
+             reachable: r.width > 0 && r.height > 0 && !!sel.offsetParent,
+             opts: [...sel.options].map((o) => o.value), value: sel.value,
+             laneMax: lane ? lane.getAttribute('max') : null,
+             inView: r.right <= document.documentElement.clientWidth + 1 };
+  });
+  console.log('  ⊞ Resolution: ' + JSON.stringify(resDoor) + '\n');
+  ok('⊞ Resolution is on screen and a real target',
+    resDoor.there && resDoor.reachable && resDoor.w > 40, JSON.stringify(resDoor));
+  ok('…offering musical divisions of a bar, sixteenths by default',
+    JSON.stringify(resDoor.opts) === JSON.stringify(['4', '8', '12', '16', '24', '32', '48', '64']) &&
+    resDoor.value === '16', JSON.stringify({ opts: resDoor.opts, v: resDoor.value }));
+  // NO HORIZONTAL SCROLLING, EVER — the row is a plain `.ambient-ctrl`, so it
+  // shrinks with its neighbours rather than pushing the card wide.
+  ok('…and it fits the card at 390px', resDoor.inView === true, 'w=' + resDoor.w);
+  // THE LANE STEPPERS COUNT IN THE GRID, so their ceiling is it.
+  ok('…with the per-drum knobs capped at the grid, not a fixed 32',
+    resDoor.laneMax === '16', 'max=' + resDoor.laneMax);
+
+  const scale = await page.evaluate(async () => {
+    const E = _masterEng, V = window._v2;
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    const Lat = () => V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    { const l = Lat(); l.part.bars = 2; if (l.part.rhythm.beat) delete l.part.rhythm.beat.vary; E.getCfg(); }
+    const read = () => {
+      const l = Lat();
+      E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+      const cyc = V.cycleSec(l, E.getCfg());
+      const ns = V.withEdit(() => V.withTake(0, () => V.notesFor(l,
+        { E, cfg: E.getCfg(), key: 'v2:' + l.id, cycleStart: 0, cycleSec: cyc }))) || [];
+      const spb = cyc / Math.max(0.001, l.part.bars);
+      const k = ns.filter((x) => x.lane === 0).map((x) => x.at / spb).sort((a, b) => a - b);
+      const gaps = k.slice(1).map((v, i) => v - k[i]);
+      const by = {}; ns.forEach((x) => { if (Number.isFinite(x.lane)) by[x.lane] = (by[x.lane] || 0) + 1; });
+      return { per: V.beatPerOf(l.part.rhythm.beat),
+               lanes: (l.part.rhythm.beat.lanes || []).map((e) => (e && e.p | 0) || 0).slice(0, 3),
+               kickPerBar: Math.round((k.length / l.part.bars) * 100) / 100,
+               minGap: gaps.length ? Math.round(Math.min.apply(null, gaps) * 1000) / 1000 : 0,
+               total: ns.length, by,
+               says: (document.querySelector('.v2-layer .v2-gensays') || {}).textContent || '' };
+    };
+    const set = async (v) => {
+      const sel = document.querySelector('.v2-layer .v2-f[data-f="part.rhythm.beat.per"]');
+      sel.value = String(v);
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      return read();
+    };
+    const at16 = read();
+    const at32 = await set(32);
+    const at8 = await set(8);
+    const back = await set(16);
+    // SAVE-COMPAT: sixteenths is ABSENT from the store, so a project that
+    // never touched the knob is written byte for byte as it was.
+    const stored16 = JSON.stringify(Lat().part.rhythm.beat.per === undefined);
+    const at24 = await set(24);
+    // …AND A GRID THAT WAS MOVED SURVIVES THE MIGRATION CHOKEPOINT.
+    // Asked of the CFG layer, not the draft: ⚙ Deep is a sandbox and its edits
+    // are not in cfg until ✓ Done, so reading cfg here would measure the
+    // sandbox working rather than the field persisting.
+    const cl = (E.getCfg().layers || [])[0];
+    cl.part.rhythm.beat.per = 24; E.getCfg();
+    const cfgHasPer = ((E.getCfg().layers || [])[0].part.rhythm.beat || {}).per;
+    // A GRID NOBODY OFFERS IS NOT ONE: normalize drops it back to the default
+    // rather than letting a hand-edited save state a resolution the panel
+    // cannot show and the Characters are not written in.
+    cl.part.rhythm.beat.per = 13; E.getCfg();
+    const cfgOdd = ((E.getCfg().layers || [])[0].part.rhythm.beat || {}).per;
+    return { at16, at32, at8, back, at24, stored16, cfgHasPer, cfgOdd };
+  });
+  console.log('  ⊞ 16: ' + JSON.stringify(scale.at16.lanes) + ' → ' + scale.at16.kickPerBar +
+    ' kicks/bar, gap ' + scale.at16.minGap + ' bars');
+  console.log('  ⊞ 32: ' + JSON.stringify(scale.at32.lanes) + ' → ' + scale.at32.kickPerBar +
+    ' kicks/bar, gap ' + scale.at32.minGap + ' bars');
+  console.log('  ⊞  8: ' + JSON.stringify(scale.at8.lanes) + ' → ' + scale.at8.kickPerBar +
+    ' kicks/bar, gap ' + scale.at8.minGap + ' bars');
+  console.log('  says at 16: ' + JSON.stringify(scale.at16.says));
+  console.log('  says at 24: ' + JSON.stringify(scale.at24.says) + '\n');
+
+  // TWICE THE GRID IS TWICE THE SPEED — the whole point of the knob.
+  ok('⊞ 32 plays the same beat twice as fast',
+    scale.at32.kickPerBar === scale.at16.kickPerBar * 2 &&
+    Math.abs(scale.at32.minGap - scale.at16.minGap / 2) < 0.002,
+    JSON.stringify({ at16: scale.at16.kickPerBar, at32: scale.at32.kickPerBar }));
+  ok('…because the pattern scales with the grid, not just the quantising',
+    JSON.stringify(scale.at32.lanes) === JSON.stringify([8, 4, 16]),
+    JSON.stringify(scale.at32.lanes));
+  ok('…and ⊞ 8 plays it half-time', scale.at8.kickPerBar === scale.at16.kickPerBar / 2,
+    JSON.stringify({ at8: scale.at8.kickPerBar, at16: scale.at16.kickPerBar }));
+  // ROUND TRIP: back to sixteenths is the beat you started with, not a
+  // pattern quietly eroded by two roundings.
+  ok('…and coming back to ⊞ 16 is the beat you started with',
+    JSON.stringify(scale.back.lanes) === JSON.stringify(scale.at16.lanes) &&
+    scale.back.kickPerBar === scale.at16.kickPerBar,
+    JSON.stringify({ back: scale.back.lanes, was: scale.at16.lanes }));
+  // ADDITIVE AND ABSENT BY DEFAULT — the one rule every new field here obeys.
+  ok('sixteenths stores nothing, so an untouched project is byte-identical',
+    scale.stored16 === 'true', scale.stored16);
+  ok('…and a grid that was moved is stored and survives normalize',
+    scale.cfgHasPer === 24, JSON.stringify(scale.cfgHasPer));
+  ok('…while a grid nobody offers falls back to sixteenths',
+    scale.cfgOdd === undefined, JSON.stringify(scale.cfgOdd));
+  // THE READOUT THAT MISREPORTED THE DENSITY. It divided the per-bar pulses by
+  // the CYCLE's length and announced "14 onsets over 8.13 bars (≈1.7 a bar)"
+  // for a backbeat playing fourteen to the bar — which is how a slow-beat bug
+  // came to be reported as a density one.
+  ok('the readout counts a beat per BAR, not spread over the cycle',
+    /\(14 a bar\)/.test(scale.at16.says) && /\bonsets over\b/.test(scale.at16.says), JSON.stringify(scale.at16.says));
+  // A FOLDED CHANGE IS NEVER INVISIBLE: a grid away from sixteenths is named.
+  ok('…and it names the grid when it is not sixteenths',
+    /⊞ 24 a bar/.test(scale.at24.says), JSON.stringify(scale.at24.says));
+
+  // A CHARACTER IS WRITTEN IN SIXTEENTHS and must arrive on the grid the layer
+  // is actually on — Motorik's hat "never stops", which is 16 a bar at ⊞ 16 and
+  // 32 at ⊞ 32. Written raw it would be a half-speed hat and the card would
+  // still call the Character untouched, so both ends are checked.
+  const chr = await page.evaluate(async () => {
+    const E = _masterEng, V = window._v2;
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    const Lat = () => V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    const set = async (sel, v) => {
+      const el = document.querySelector('.v2-layer ' + sel);
+      if (!el) return false;
+      el.value = String(v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      return true;
+    };
+    await set('.v2-f[data-f="part.rhythm.beat.per"]', 32);
+    const had = await set('.v2-presetpick', 'motorik');
+    const l = Lat();
+    return { had, per: V.beatPerOf(l.part.rhythm.beat),
+             lanes: (l.part.rhythm.beat.lanes || []).map((e) => (e && e.p | 0) || 0).slice(0, 3),
+             tuned: (V.presetState(l) || {}).tuned, id: (V.presetState(l) || {}).id };
+  });
+  console.log('  Motorik at ⊞ 32: ' + JSON.stringify(chr) + '\n');
+  ok('a Character picked at ⊞ 32 keeps its shape, at the grid it landed on',
+    chr.had && chr.per === 32 && JSON.stringify(chr.lanes) === JSON.stringify([8, 4, 32]),
+    JSON.stringify(chr));
+  ok('…and the card does not call it tuned for values it wrote itself',
+    chr.id === 'motorik' && chr.tuned === false, JSON.stringify({ id: chr.id, tuned: chr.tuned }));
+
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

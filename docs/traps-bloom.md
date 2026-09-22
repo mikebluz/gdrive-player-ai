@@ -1328,6 +1328,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   NOT a guarantee to rest a tempo on: ◫ Per part's `fitTo` refits a filed record to the part's length
   on every normalize ("a record filed under a part is that part's length, always"). Fix tempo in the
   generator, and let the length be whatever the arrangement says.
+- **A BEAT'S NUMBERS ARE PER BAR — so is anything that reads or bounds them.** ⊞ Resolution
+  (`rhythm.beat.per`, absent = 16) is the per-bar grid, and it is the ceiling normalize clamps each
+  lane's `p`/`r` to; clamping to `rhythm.steps` instead was only ever right because the two happened
+  to agree at 16 on a one-bar part. Same trap in the readout: `gensays` divided the summed pulses by
+  the CYCLE's bars and announced "14 onsets over 8.13 bars (≈1.7 a bar)" for a backbeat playing
+  fourteen to the bar — which is how a slow-beat bug came in as a DENSITY report.
+- **⊞ RESOLUTION SCALES THE PATTERN, IT DOES NOT QUANTISE IT.** Moving the grid alone leaves pulses
+  (counts per bar) untouched, so the beat plays at exactly the same speed on a finer grid — the
+  opposite of what the knob is for. `V2.beatScalePer` rewrites every lane with the grid, floored at
+  1 so a lane that was sounding cannot be silenced by a rounding. The beat Characters are written in
+  sixteenths, so `presetBeatVal` scales them at BOTH ends — apply AND the "· tuned" compare — or
+  picking one at ⊞ 32 silently halves the tempo and then reports itself as tuned.
 
 ### Bloom stores — what exists, and the one thing to know about each
 

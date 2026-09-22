@@ -460,6 +460,9 @@
     // a lane is `p` hits spread evenly with `r` steps of push. Over 16 steps:
     // p:4 is every beat, p:8 eighths, p:16 sixteenths, and r:4 moves a 2-hit
     // lane off 1-and-3 onto the backbeat.
+    // SIXTEENTHS IS THE REFERENCE GRID every one of these is written in, and
+    // `presetBeatVal` scales them to whatever ⊞ Resolution the layer is on —
+    // so a Character keeps its shape instead of halving the tempo at ⊞ 32.
     // WRITTEN AS A SET LIKE EVERY OTHER CHARACTER, so ↺ Reset, "· tuned" and
     // the Changed chips work on a beat with no new machinery.
     { id: 'backbeat', shape: 'beat', label: 'Backbeat',
@@ -1290,16 +1293,24 @@
       if (r.beat && typeof r.beat === 'object') {
         const bl = Array.isArray(r.beat.lanes) ? r.beat.lanes : [];
         const outB = [];
+        // ⊞ RESOLUTION — the steps a BAR is cut into, and the ceiling every
+        // lane's pulse count is clamped to. It was `r.steps`, which is the
+        // CYCLE's grid and so the wrong ruler for a per-bar euclid: on a
+        // one-bar part the two happened to agree at 16, which is why nothing
+        // caught it until the grid became adjustable.
+        const per = beatPerOf(r.beat);
         for (let li = 0; li < _V2_LANES; li++) {
           const e = (bl[li] && typeof bl[li] === 'object') ? bl[li] : {};
-          const pu = clamp(e.p | 0, 0, r.steps);
+          const pu = clamp(e.p | 0, 0, per);
           // A LANE WITH NO PULSES IS OFF, and stores nothing else — one
           // representation for silence, so a rotate left behind by a lane you
           // switched off cannot come back when you switch it on.
-          outB.push(pu > 0 ? { p: pu, r: clamp(e.r | 0, 0, Math.max(0, r.steps - 1)) } : {});
+          outB.push(pu > 0 ? { p: pu, r: clamp(e.r | 0, 0, Math.max(0, per - 1)) } : {});
         }
         const vr = clamp(r.beat.vary | 0, 0, 100);
         r.beat = { lanes: outB };
+        // PRUNED AT SIXTEENTHS, so an untouched project stores nothing new.
+        if (per !== BEAT_PER_BAR) r.beat.per = per;
         if (vr > 0) r.beat.vary = vr;
         if (!outB.some((e) => e.p > 0)) delete r.beat;     // nothing stated = no rules
       } else if (r.beat !== undefined) delete r.beat;
@@ -2030,11 +2041,31 @@
   // ROTATION IS NOT TOUCHED by the seed, deliberately: a randomly rotated kick
   // is no longer four-on-the-floor, and a beat that loses its downbeat between
   // takes is not a variation of anything.
-  // A BEAT'S GRID IS SIXTEENTHS OF A BAR — never a slice of the cycle.
+  // A BEAT'S GRID IS A DIVISION OF A BAR — never a slice of the cycle.
   // Every Character is written in this unit ("kick 4" is four to the bar,
   // "half-time" puts the snare on 3 via step 8 of 16), so the pulse counts
   // only mean what their names say when the euclid is solved over ONE BAR.
+  // SIXTEENTHS IS THE DEFAULT and the unit every Character is written in.
   const BEAT_PER_BAR = 16;
+  // ── ⊞ RESOLUTION — HOW FINE THAT BAR IS CUT (2026-09-22) ──────────────
+  // user: "there should be a Resolution parameter so the user can adjust that
+  // scaling of the beat". It is the grid `beat.per`, and the ONE knob that
+  // moves the whole groove's speed: at 32 a bar holds twice the steps, and the
+  // ✎ change handler scales every lane's pulses with it, so the same pattern
+  // plays double-time rather than merely being quantised finer. Halving it
+  // gives half-time by the same arithmetic.
+  // MUSICAL VALUES ONLY — a grid of 13 is not a resolution anybody means, and
+  // the euclid already covers "an odd number of hits" through the lane knobs.
+  // ADDITIVE AND ABSENT BY DEFAULT: absent is 16, and normalize prunes 16, so
+  // every project saved before this reads and re-saves byte for byte.
+  const BEAT_PERS = [4, 8, 12, 16, 24, 32, 48, 64];
+  // A DECLARATION, not a const arrow: `_normalizeAmbientCfg` sits ABOVE this in
+  // the file and calls it, and a const in the temporal dead zone would throw
+  // into a surrounding catch and read as a silent no-op (the documented trap).
+  function beatPerOf(b) {
+    const v = (b && (b.per | 0)) || 0;
+    return BEAT_PERS.indexOf(v) >= 0 ? v : BEAT_PER_BAR;
+  }
   // `perBar` is that unit; the euclid is solved once against it and TILED
   // across the cycle, so a groove reads the same whether its part is one bar
   // or eight. Solving it over the whole cycle instead was the reported bug
@@ -3614,9 +3645,11 @@
       // before knowing which one won would have read the drawn rows off the
       // end whenever a beat rolled itself silent and fell back to them.
       const bt = (p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
-      const btSt = bt ? Math.max(BEAT_PER_BAR,
-        Math.round(BEAT_PER_BAR * Math.max(0.125, +p.bars || 1))) : 0;
-      const bl = bt ? beatLanes(p, btSt, seedBase, BEAT_PER_BAR) : null;
+      // ⊞ RESOLUTION decides the per-bar grid; absent is sixteenths.
+      const btPer = bt ? beatPerOf(bt) : 0;
+      const btSt = bt ? Math.max(btPer,
+        Math.round(btPer * Math.max(0.125, +p.bars || 1))) : 0;
+      const bl = bt ? beatLanes(p, btSt, seedBase, btPer) : null;
       const lanes = bl || p.rhythm.lanes || [];
       const st = bl ? btSt : Math.max(1, p.rhythm.steps | 0);
       const slot = cyc / st;
@@ -6333,6 +6366,23 @@
   }
   // absent, '', 0 and false all read as "not set" — normalize prunes them
   const presetNorm = (v) => (v === undefined || v === null || v === '' || v === 0 || v === false) ? '' : String(v);
+  // ── A CHARACTER IS WRITTEN IN SIXTEENTHS, AND SCALES TO THE GRID ────────
+  // Every beat Character states its lanes over 16 steps a bar ("kick 4" is
+  // four to the bar, `r: 4` moves a 2-hit lane onto the backbeat) — see the
+  // table's own header. At ⊞ Resolution 32 those numbers mean HALF the bar, so
+  // writing them raw would make picking a Character silently halve the tempo
+  // of a beat the player had just doubled. Scaled at BOTH ends, so `↺ Reset`
+  // and the "· tuned" chip compare against the same numbers that were written
+  // — one rule, no second vocabulary.
+  function presetBeatVal(L, key, v) {
+    if (!/^part\.rhythm\.beat\.lanes\.\d+\.[pr]$/.test(key)) return v;
+    const per = beatPerOf(((L && L.part && L.part.rhythm) || {}).beat);
+    if (per === BEAT_PER_BAR || !(v > 0)) return v;
+    // A LANE THE CHARACTER SOUNDS KEEPS SOUNDING at a coarse grid — the same
+    // floor `beatScalePer` holds, and for the same reason.
+    const s = Math.round(v * per / BEAT_PER_BAR);
+    return key.endsWith('.p') ? clamp(Math.max(1, s), 1, per) : clamp(s, 0, Math.max(0, per - 1));
+  }
   function applyPresetFn(E, L, id) {
     const pr = PRESET_BY_ID[id]; if (!pr || !L || !L.part) return null;
     if (shapeKeyOf(L) !== pr.shape) {
@@ -6347,7 +6397,7 @@
     // a STAGED layer is not in cfg — writing the cfg one would leak past ✓ Done
     const L2 = isStagedFn(L) ? L
       : ((E && E.getCfg) ? ((E.getCfg().layers || []).find((x) => x.id === L.id) || L) : L);
-    Object.keys(pr.set).forEach((k) => presetPut(L2, k, pr.set[k]));
+    Object.keys(pr.set).forEach((k) => presetPut(L2, k, presetBeatVal(L2, k, pr.set[k])));
     if (pr.speed) setSpeedFn(E, L2, pr.speed, pr.density);
     L2.part.preset = pr.id;
     try { E.getCfg(); } catch (e) {}
@@ -6359,7 +6409,8 @@
   function presetStateFn(L) {
     const p = L && L.part, pr = p && PRESET_BY_ID[p.preset];
     if (!pr || shapeKeyOf(L) !== pr.shape) return { id: null, tuned: false };
-    let tuned = Object.keys(pr.set).some((k) => presetNorm(presetGet(L, k)) !== presetNorm(pr.set[k]));
+    let tuned = Object.keys(pr.set).some((k) =>
+      presetNorm(presetGet(L, k)) !== presetNorm(presetBeatVal(L, k, pr.set[k])));
     if (!tuned && pr.speed) tuned = Math.abs((speedOfFn(L) || 0) - pr.speed) > 0.01;
     if (!tuned && Number.isFinite(pr.density)) {
       const r = p.rhythm || {}, st = Math.max(1, r.steps | 0);
@@ -7040,6 +7091,31 @@
     // duplicated: two copies of a drum map is how the two halves come to
     // disagree about which lane is a clap.
     LANES: _V2_LANES, VDRUM: _V2_VDRUM, LANE_NAMES: _V2_LANE_NAMES,
+    // ⊞ RESOLUTION crosses the same way and for the same reason — the card
+    // builds its row and its scaler from these, and a second copy of the list
+    // is how the panel comes to offer a grid the emitter will not honour.
+    BEAT_PERS, BEAT_PER_BAR, beatPerOf,
+    // MOVING THE GRID MOVES THE GROOVE. Resolution is not a quantiser: the
+    // pulses are counts PER BAR, so leaving them alone while the grid doubles
+    // would keep the beat at exactly the same speed and finer placement — the
+    // opposite of "adjust that scaling of the beat". Every lane's pulses and
+    // its rotation scale with the grid instead, so ⊞ 32 plays the same pattern
+    // twice as fast and ⊞ 8 plays it half-time.
+    // A LANE THAT WAS SOUNDING KEEPS SOUNDING (the floor of 1): rounding 1
+    // pulse down to 0 at a coarser grid would silence a drum as a side effect
+    // of a grid change, and silence nobody asked for reads as a broken knob.
+    beatScalePer: (L, prevPer) => {
+      const b = L && L.part && L.part.rhythm && L.part.rhythm.beat;
+      const from = BEAT_PERS.indexOf(prevPer | 0) >= 0 ? (prevPer | 0) : BEAT_PER_BAR;
+      const to = beatPerOf(b);
+      if (!b || !Array.isArray(b.lanes) || from === to) return false;
+      b.lanes.forEach((e) => {
+        if (!e || !(e.p > 0)) return;
+        e.p = clamp(Math.max(1, Math.round(e.p * to / from)), 1, to);
+        e.r = clamp(Math.round((e.r | 0) * to / from), 0, Math.max(0, to - 1));
+      });
+      return true;
+    },
     // ── PER-PART SELECT — file the edited record and take up the target's ──
     // Choosing a part ADOPTS the current content when that part has none of
     // its own, so switching is never destructive and syncing/editing is what
@@ -10567,19 +10643,40 @@
         // reads. A ♦ Beat of 4 kicks + 2 snares + 8 hats was announcing
         // "3 onsets" (the leftover euclid default) over a bar with fourteen.
         const kit3 = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
+        // A BEAT'S PULSES ARE COUNTS PER BAR, and the pattern TILES \u2014 so the
+        // cycle holds `per bar \u00d7 bars`, not that sum spread across the whole
+        // cycle. Dividing by the cycle's length announced "14 onsets over 8.13
+        // bars (\u22481.7 a bar)" for a backbeat playing fourteen to the bar, which
+        // is how the slow-beat bug came to be reported as a density one
+        // (2026-09-22). `beat3` is the per-bar figure, and it is the honest
+        // headline for a loop.
+        let beat3 = 0;
         if (kit3) {
           const bl3 = (rh3.beat && Array.isArray(rh3.beat.lanes)) ? rh3.beat.lanes : null;
-          on3 = bl3 ? bl3.reduce((a, e) => a + ((e && e.p | 0) || 0), 0)
-                    : (rh3.lanes || []).reduce((a, row) => a + (row || []).reduce((b2, c) => b2 + (c ? 1 : 0), 0), 0);
+          if (bl3) {
+            beat3 = bl3.reduce((a, e) => a + ((e && e.p | 0) || 0), 0);
+            on3 = Math.round(beat3 * cb3);
+          } else {
+            on3 = (rh3.lanes || []).reduce((a, row) => a + (row || []).reduce((b2, c) => b2 + (c ? 1 : 0), 0), 0);
+          }
         } else if (rh3.kind === 'euclid' || rh3.kind === 'drawn') on3 = (rh3.pulses | 0) || 0;
         else if (rh3.kind === 'pulse') on3 = (rh3.n | 0) || 0;
         bits.push(on3 > 0
           ? on3 + ' onset' + (on3 === 1 ? '' : 's') + ' over ' + barsTxt +
-            ' (\u2248' + (Math.round((on3 / cb3) * 10) / 10) + ' a bar)'
+            ' (' + (beat3 > 0 ? beat3 : '\u2248' + (Math.round((on3 / cb3) * 10) / 10)) + ' a bar)'
           : barsTxt);
+        // THE GRID WHEN IT IS NOT SIXTEENTHS \u2014 the drum-solo rule: a setting
+        // away from its default is never invisible, and \u229e Resolution is the
+        // one that changes how fast everything above it reads.
+        if (beat3 > 0) {
+          const bp3 = V2.beatPerOf(rh3.beat);
+          if (bp3 !== V2.BEAT_PER_BAR) bits.push('\u229e ' + bp3 + ' a bar');
+        }
         const st3 = (rh3.steps | 0) || 0;
         const bi3 = Math.max(1, Math.round(cb3));
-        if (on3 > 0 && st3 > 0 && Math.abs(cb3 - bi3) < 1e-6 && st3 % bi3 !== 0) {
+        // NOT FOR A BEAT: its grid is per BAR and divides by construction, so
+        // the warning would fire on a groove with nothing wrong with it.
+        if (!beat3 && on3 > 0 && st3 > 0 && Math.abs(cb3 - bi3) < 1e-6 && st3 % bi3 !== 0) {
           const fix3 = Math.max(bi3, Math.min(32, bi3 * Math.max(1, Math.round(st3 / bi3))));
           bits.push('\u26a0 ' + st3 + ' steps don\u2019t divide ' + bi3 + ' bars \u2014 set Steps to ' + fix3);
         }
@@ -13967,14 +14064,35 @@
               // shrink, and "how busy is the hat" is one number, not a section.
               // Gated `voice:kit`: on a synth these write lanes nothing reads.
               (function (bl) {
-                return '<div class="ambient-ctrl v2-beatrow" data-v2when="kind:live;voice:kit">' +
+                // ── ⊞ RESOLUTION — THE GROOVE'S SPEED (2026-09-22) ──────
+                // user: "there should be a Resolution parameter so the user
+                // can adjust that scaling of the beat". The grid a BAR is cut
+                // into, and the one knob that moves the whole beat's speed:
+                // the lane pulses scale with it (`beatScalePer`), so the same
+                // pattern reads double-time at ⊞ 32 and half-time at ⊞ 8.
+                // NAMED BY NOTE VALUE, not by the raw number — "32 steps" is
+                // arithmetic and "32nds" is what a drummer hears. The number
+                // rides along because it is the unit the lane knobs count in.
+                const per0 = V2.beatPerOf((L.part.rhythm || {}).beat);
+                const PERLAB = { 4: 'quarters', 8: 'eighths', 12: 'eighth triplets',
+                  16: 'sixteenths', 24: 'sixteenth triplets', 32: 'thirty-seconds',
+                  48: '32nd triplets', 64: 'sixty-fourths' };
+                return gsel(L, 'part.rhythm.beat.per', 'Resolution', String(per0),
+                     V2.BEAT_PERS.map((n) => [String(n), n + ' a bar — ' + PERLAB[n]]),
+                     'how fine a bar is cut — the pattern scales with it, so twice the grid is twice the speed',
+                     'kind:live;voice:kit') +
+                  '<div class="ambient-ctrl v2-beatrow" data-v2when="kind:live;voice:kit">' +
                   '<label>Each drum</label>' +
                   '<span class="v2-beatlanes">' +
                   V2.LANE_NAMES.map((nm, li) =>
+                    // THE CEILING IS THE RESOLUTION, not a hard 32 — a lane
+                    // cannot hit more often than the bar has steps, and
+                    // normalize clamps to exactly this, so a number the
+                    // stepper let you type would have been silently cut.
                     mini(L, 'part.rhythm.beat.lanes.' + li + '.p', nm,
-                         ((bl[li] || {}).p | 0), 0, 32, 1)).join('') +
+                         ((bl[li] || {}).p | 0), 0, per0, 1)).join('') +
                   '</span>' +
-                  '<span class="ambient-hint">hits per cycle, spread evenly — 0 sits that drum out</span>' +
+                  '<span class="ambient-hint">hits per bar, spread evenly — 0 sits that drum out</span>' +
                   '</div>' +
                   // VARY IS WHAT GIVES A BEAT A TAKE. A euclid is a formula, so
                   // without it 🎲 New take would redraw the same bar for ever —
@@ -18844,8 +18962,20 @@
         // the PREVIOUS length, captured before the write — "fill" is a ratio and
         // normalize can never know it
         const prevBars = (path === 'part.bars') ? (+ctx.L.part.bars || 0) : 0;
+        // …and the PREVIOUS resolution, for the same reason: ⊞ Resolution
+        // scales the pattern it is leaving, and normalize cannot know what it
+        // was once the field is written.
+        const prevPer = (path === 'part.rhythm.beat.per')
+          ? V2.beatPerOf((ctx.L.part.rhythm || {}).beat) : 0;
         setPath(ctx.L, path, (f.tagName === 'SELECT' || f.type === 'text') ? raw : (parseFloat(raw) || 0));
         if (path === 'part.bars') { try { V2.applyBarsMode(ctx.L, prevBars); } catch (e) {} }
+        // MOVING THE GRID MOVES THE GROOVE — the pulses are counts per bar, so
+        // without this the beat plays at exactly the same speed on a finer
+        // grid, which is not what "Resolution" was asked for.
+        if (path === 'part.rhythm.beat.per') {
+          try { V2.beatScalePer(ctx.L, prevPer); } catch (e) {}
+          try { E.getCfg(); } catch (e) {}
+        }
         // THE KNOBS REDRAW AN EDITED PATTERN — v1's own contract for a
         // hand-edited euclid grid, so the two editors behave alike. The hint
         // under the grid says so, because a silent wipe of drawn cells is
@@ -18956,7 +19086,11 @@
         if (!staged0 && (path.indexOf('part.rhythm.') === 0 || path === 'part.kind')) redrawCells(ctx.card, ctx.L);
         // The lane grid is built from `steps`, and switching instrument changes
         // which grid is on screen — both need the row rebuilt, not just regated.
-        if (path === 'instrument.voice' || path === 'part.rhythm.steps' || path === 'part.pitch.kind') { h._sig = ''; V2.render(E); }
+        // ⊞ RESOLUTION rebuilds too: the lane steppers are capped at the grid
+        // and `beatScalePer` has just rewritten every one of their values, so
+        // a regate alone would leave eight numbers showing the old beat.
+        if (path === 'instrument.voice' || path === 'part.rhythm.steps' ||
+            path === 'part.pitch.kind' || path === 'part.rhythm.beat.per') { h._sig = ''; V2.render(E); }
         // \u266b ConFugued keeps one interval row per gap, so the count moved the rows
         if (path === 'part.pitch.voices' && ((ctx.L.part.pitch || {}).kind === 'confug')) { h._sig = ''; V2.render(E); }
         // The gate's pattern length IS its step count, and `_ambNormalizeFx`

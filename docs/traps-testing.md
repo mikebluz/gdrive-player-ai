@@ -7,6 +7,13 @@
 
 ### Measurement & testing discipline
 
+- **`localhost:3001` SERVES WHICHEVER CHECKOUT STARTED IT — usually not your worktree.** `server.js`
+  is a static server rooted at its own cwd, so a fix committed in a worktree reads as NOT APPLIED in
+  the browser and in every probe: the user's screenshot and a probe run both reproduced a bug that
+  had already been fixed on the branch, and the numbers matched the pre-fix code exactly (2026-09-22,
+  ♦ Beat's tempo). Check it before debugging a fix that "did nothing" — `lsof -a -p <pid> -d cwd -Fn`
+  names the directory being served. Start your own on another port (`PORT=3002 node server.js`) and
+  point every probe at it with `BLOOPS_URL`; do not restart or kill the user's 3001.
 - **A worktree has no `js/config.js`** — it is gitignored, so the server answers that request with the
   HTML 404 page and every probe run against the worktree logs `Unexpected token '<'`. Harmless to most
   checks, but any "no page errors" assertion fails on it and the noise masks a REAL page error. Copy

@@ -206,6 +206,11 @@
   picture did not change" passed while it had. Pick the one with a real rect and an `offsetParent`
   (the reachability rule, applied to READING rather than to tapping). When adding a second
   instance of anything, rename its hooks in the SAME change.
+  TWO MORE, both measured 2026-09-22: `.v2-lanecell` exists twice per card (the ▦ Pattern grid and a
+  copy in a collapsed group), and the hidden copy comes FIRST — scope to `.v2-partsteps`. And a
+  SELECTOR LIST is the same trap in one string: `querySelector('.v2-gendone, .v2-genclose')` answers
+  for the head's ✕ (Cancel), because ✓ Done carries BOTH classes and the list matches by DOM order,
+  not by the order you wrote. A probe that "picked the material" silently discarded the draft.
 - **A control that re-renders its own panel on `input` cannot be dragged** — the re-render replaces the
   element the pointer grabbed. Mirror readouts on `input`; do the rebuild on `change`.
   Isolating test: dispatch ONE input and ask `document.contains(el)`.

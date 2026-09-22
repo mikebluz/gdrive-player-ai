@@ -1328,6 +1328,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   NOT a guarantee to rest a tempo on: ◫ Per part's `fitTo` refits a filed record to the part's length
   on every normalize ("a record filed under a part is that part's length, always"). Fix tempo in the
   generator, and let the length be whatever the arrangement says.
+- **"THE FORM DECIDES WHICH BRANCH EMITS" HAS TO REACH EVERY BRANCH.** ⌗ Roll and ▦ Pattern are
+  parallel, and the rule was applied to the note list and to `onsetsOf` — but the KIT branch read
+  `rhythm.beat` whenever it existed and never looked at `part.form`, so a drum layer in ▦ Pattern
+  drew one grid and played another ("when i switch to pattern, it keeps playing the Roll content",
+  2026-09-22). Gate `bt` on `!inSteps`; leave `rhythm.beat` alone so switching back finds it intact.
+  And SEED the other half when entering a form — a kit's grid is `rhythm.lanes` sized to the beat's
+  own `per × bars`, not `cells`, so the single-row seeding left drum layers opening empty and silent.
+- **`cycleWindowAt(L, E, cfg, at, null)` ANCHORS THE LATTICE AT 0**, not at the layer's phase — the
+  fallback is `startAt: 0`, the AudioContext epoch. `stepsPlayhead` passed `null` while the notes ran
+  on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported
+  as "the playhead starts on step 4 or so" and measured at step 26 of 32. Pass the phase state, the
+  way the roll's own sweep already does.
 - **A BEAT'S NUMBERS ARE PER BAR — so is anything that reads or bounds them.** ⊞ Resolution
   (`rhythm.beat.per`, absent = 16) is the per-bar grid, and it is the ceiling normalize clamps each
   lane's `p`/`r` to; clamping to `rhythm.steps` instead was only ever right because the two happened

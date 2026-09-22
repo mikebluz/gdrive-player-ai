@@ -3644,7 +3644,16 @@
       // part is), a drawn grid is `rhythm.steps` across the cycle. Sizing `st`
       // before knowing which one won would have read the drawn rows off the
       // end whenever a beat rolled itself silent and fell back to them.
-      const bt = (p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
+      // ▦ PATTERN: THE DRAWN LANES *ARE* THE MATERIAL, whatever rules the Roll
+      // happens to carry — the same "the FORM decides which branch emits" rule
+      // `notesFor` applies to the note list and `onsetsOf` to the single-row
+      // grid. The kit branch never had it, so a drum layer in ▦ Pattern drew
+      // one grid and played another: reported verbatim 2026-09-22, "when i
+      // switch to pattern, it keeps playing the Roll content". `rhythm.beat` is
+      // LEFT ALONE, so switching back to ⌗ Roll finds the beat exactly as it
+      // was — the two forms stay parallel.
+      const inSteps = p.form === 'steps';
+      const bt = (!inSteps && p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
       // ⊞ RESOLUTION decides the per-bar grid; absent is sixteenths.
       const btPer = bt ? beatPerOf(bt) : 0;
       const btSt = bt ? Math.max(btPer,
@@ -7095,6 +7104,27 @@
     // builds its row and its scaler from these, and a second copy of the list
     // is how the panel comes to offer a grid the emitter will not honour.
     BEAT_PERS, BEAT_PER_BAR, beatPerOf,
+    // ── THE RULES, RESOLVED INTO A GRID YOU CAN EDIT ───────────────────────
+    // Entering ▦ Pattern on a kit SEEDS the lanes from the beat, exactly as the
+    // single-row form seeds `cells` from the euclid. Without it the form opens
+    // on an empty grid — and an empty grid is silence, so "switch to Pattern"
+    // read as "lose the beat" the moment the emitter started honouring it.
+    // THE GRID IS SIZED TO THE BEAT, not the other way round: `rhythm.steps` is
+    // a grid per CYCLE and a beat is `per × bars`, so seeding into the old
+    // `steps` would resample the groove into a different tempo.
+    // SEED 0, DELIBERATELY: Vary is a property of the RULES, and in ▦ Pattern
+    // there are no rules left to re-roll — what you get is one take, which is
+    // then yours. At the default Vary of 0 it is the only take there ever was.
+    beatToLanes: (L) => {
+      const p = L && L.part; if (!p || !p.rhythm) return null;
+      const b = p.rhythm.beat;
+      if (!b || !Array.isArray(b.lanes)) return null;
+      const per = beatPerOf(b);
+      const st = Math.max(per, Math.round(per * Math.max(0.125, +p.bars || 1)));
+      let rows = null;
+      try { rows = beatLanes(p, st, 0, per); } catch (e) { rows = null; }
+      return rows ? { steps: st, lanes: rows } : null;
+    },
     // MOVING THE GRID MOVES THE GROOVE. Resolution is not a quantiser: the
     // pulses are counts PER BAR, so leaving them alone while the grid doubles
     // would keep the beat at exactly the same speed and finer placement — the
@@ -11487,7 +11517,15 @@
     const r = (L.part && L.part.rhythm) || {};
     const st = Math.max(1, r.steps | 0);
     let w = null;
-    try { w = V2.cycleWindowAt(L, E, cfg, now, null); } catch (e) {}
+    // THE LAYER'S OWN PHASE ANCHOR, exactly as the roll's sweep passes it.
+    // `null` makes `cycleWindowAt` fall back to `startAt: 0` — the AudioContext
+    // epoch — so the grid lit cells on a lattice anchored at 0 while the notes
+    // sounded on one anchored at the layer's `startAt`. The two differ by
+    // `startAt mod cycle`, an arbitrary offset: reported 2026-09-22 as "the
+    // playhead starts on step 4 or so" (measured at 3.36s into a 4s cycle,
+    // step 26 of 32, on a layer that had simply been alive for a while).
+    const ps = E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
+    try { w = V2.cycleWindowAt(L, E, cfg, now, ps || null); } catch (e) {}
     const cs = w && Number.isFinite(w.cs) ? w.cs : null;
     const cyc = w && w.cyc > 0 ? w.cyc : null;
     if (cs == null || cyc == null) return;
@@ -20515,11 +20553,24 @@
           if (want === 'steps') {
             P.form = 'steps';
             const r0 = P.rhythm || (P.rhythm = {});
-            const drawn = (r0.cells || []).some(Boolean);
-            if (!drawn && r0.kind !== 'drawn') {
-              const st0 = Math.max(1, r0.steps | 0);
-              const pat = V2.euclidCells(r0.pulses, st0, r0.rotate) || [];
-              r0.cells = Array.from({ length: st0 }, (_, i) => (pat[i] ? 1 : 0));
+            // A KIT'S GRID IS ITS LANES, not the single row — so a drum layer
+            // seeds from ♦ Beat's rules the way a pitched one seeds from the
+            // euclid. Same courtesy, different store; without it the form
+            // opened empty and silent on exactly the layers whose rules are
+            // richest (2026-09-22, with the emitter now honouring the form).
+            if (((ctx.L.instrument || {}).voice) === 'kit') {
+              const anyLane = (r0.lanes || []).some((row) => (row || []).some(Boolean));
+              if (!anyLane) {
+                const seed = V2.beatToLanes(ctx.L);
+                if (seed) { r0.steps = seed.steps; r0.lanes = seed.lanes; }
+              }
+            } else {
+              const drawn = (r0.cells || []).some(Boolean);
+              if (!drawn && r0.kind !== 'drawn') {
+                const st0 = Math.max(1, r0.steps | 0);
+                const pat = V2.euclidCells(r0.pulses, st0, r0.rotate) || [];
+                r0.cells = Array.from({ length: st0 }, (_, i) => (pat[i] ? 1 : 0));
+              }
             }
           } else delete P.form;
           // …AND SAY WHAT IS WAITING IN THE OTHER ONE. Switching is silent

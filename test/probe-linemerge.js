@@ -70,10 +70,11 @@ const ok = (name, cond, detail) => {
   ok('…and the three it replaces are gone from the menu',
     ['arp', 'roll', 'scatter'].every((k) => offered.indexOf(k) < 0), JSON.stringify(offered));
   // THE ARITHMETIC, so a future change to the list has to think about it:
-  // the nine it started with, plus Bass, minus the three merged here, plus
-  // Play a line = EIGHT on a synth. (Beat is kit-only and not in this list.)
-  ok('…leaving the menu at eight entries rather than ten',
-    offered.length === 8, offered.length + ' entries: ' + JSON.stringify(offered));
+  // the nine it started with, plus Bass, minus the three merged here plus
+  // Play a line, then minus the two merged into One note plus One note
+  // = SEVEN on a synth. (Beat is kit-only and not in this list.)
+  ok('…leaving the menu at seven entries rather than ten',
+    offered.length === 7, offered.length + ' entries: ' + JSON.stringify(offered));
 
   // ── 2. IT BUILDS, AND MOVES IS A REAL KNOB ──────────────────────────────
   const built = await page.evaluate(async () => {

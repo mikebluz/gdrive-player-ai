@@ -520,6 +520,18 @@
              'part.shape.lenRatio': 60 } },
     { id: 'linescatter', shape: 'line', label: 'Scattered', speed: 8, density: 0.55,
       set: { 'part.pitch.kind': 'chance', 'part.rhythm.kind': 'euclid' } },
+    { id: 'onepedal', shape: 'one', label: 'Pedal', speed: 1,
+      set: { 'part.pitch.kind': 'anchor', 'part.rhythm.kind': 'pulse',
+             'part.shape.lenRatio': 190 } },
+    { id: 'oneroot', shape: 'one', label: 'Root per change', speed: 1,
+      set: { 'part.pitch.kind': 'fixed', 'part.pitch.degree': 1,
+             'part.rhythm.kind': 'pulse', 'part.shape.lenRatio': 190 } },
+    { id: 'oneost', shape: 'one', label: 'Ostinato', speed: 4,
+      set: { 'part.pitch.kind': 'fixed', 'part.pitch.degree': 1,
+             'part.rhythm.kind': 'pulse', 'part.shape.lenRatio': 80 } },
+    { id: 'onepump', shape: 'one', label: 'Pumping', speed: 8,
+      set: { 'part.pitch.kind': 'fixed', 'part.pitch.degree': 1,
+             'part.rhythm.kind': 'pulse', 'part.shape.lenRatio': 45 } },
     { id: 'pad', shape: 'sustain', label: 'Pad',
       set: { 'part.pitch.voices': 4, 'part.pitch.chordMode': 'chords', 'part.pitch.spread': 1, 'part.pitch.inv': 0 } },
     { id: 'organ', shape: 'sustain', label: 'Organ',
@@ -6143,7 +6155,8 @@
   // boundary that turns a stamp into a door (the picker, the Character list,
   // the face). A rewrite-on-load would touch every project on disk to fix a
   // label, and provenance mismatches fail silently.
-  const MAT_MERGE = { arp: 'line', roll: 'line', melody: 'line', scatter: 'line' };
+  const MAT_MERGE = { arp: 'line', roll: 'line', melody: 'line', scatter: 'line',
+                      anchor: 'one', onenote: 'one' };
   const matDoorOf = (k) => (k && MAT_MERGE[k]) || k;
   const shapeKeyOf = (L) => {
     const p = L && L.part; if (!p || p.kind !== 'live') return null;
@@ -6178,7 +6191,19 @@
     // THE SAME DEGREE, struck again and again — it follows the chords, so over
     // C · Am · F · G it plays C A F G. `fill` keeps that pulse per BAR when the
     // part gets longer, which is what an ostinato means.
-    onenote: { rhythm: { kind: 'pulse', n: 4, steps: 16 }, pitch: { kind: 'fixed', degree: 1 },
+    // -- ONE NOTE: HOLDS or FOLLOWS (2026-09-21) ---------------------------
+    // user, of a pedal note: "why does 'hold a pedal note' not obey changes".
+    // It was behaving exactly as designed - a pedal point is a note held
+    // AGAINST moving harmony, and `anchor` picks the tonic by v1's own
+    // `_ambAnchorPc` and holds it. The follows-the-changes version existed too,
+    // as a SEPARATE material called Repeat one note. Two adjacent menu entries
+    // whose names hid the only thing that differs between them, so the answer
+    // to "why doesn't this follow" was "pick the other one", which nothing on
+    // screen said.
+    // NOW IT IS A SWITCH. One door, and `pitch.kind` says whether the note
+    // stays put (`anchor`) or moves with the changes (`fixed`).
+    // THE DEFAULT FOLLOWS, because that is what was expected of it.
+    one:     { rhythm: { kind: 'pulse', n: 4, steps: 16 }, pitch: { kind: 'fixed', degree: 1 },
                shape: { lenRatio: 80, holdSteps: 0 }, ring: 0, barsMode: 'fill' },
     // ANY TONE OF THE SET, drawn fresh per onset — seeded, so it replays until
     // 🎲 New take.
@@ -10239,7 +10264,8 @@
                 mixed: '\u2687 Mix chords + notes', ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line',
+                one: '\u25aa One note' };
     const v1 = (p.mat && p.mat.indexOf('v1:') === 0) ? p.mat.slice(3) : null;
     // THE FORWARDING ADDRESS FOR THE DICE, and which throw is on screen. It was
     // a labelled row of its own carrying no control; the head states the SIZE
@@ -10265,14 +10291,14 @@
       : (t.kind === 'mixed') ? 'mixed'
       : (t.kind === 'series') ? 'line'
       : ((r.kind === 'pulse' || !r.kind) && (r.n | 0) <= 1 && (t.kind === 'chord' || t.kind === 'stack')) ? 'sustain'
-      : (t.kind === 'anchor') ? 'anchor'
+      : (t.kind === 'anchor') ? 'one'
       : (t.kind === 'chance') ? 'line'
       // BOTH `fixed` MATERIALS ARE THE ROOT DEGREE; the RHYTHM separates them -
       // Repeat one note is a pulse, Bass a euclid. Before this an unstamped
       // euclid bass reported itself as "Repeat one note", which is the wrong
       // answer rather than a missing one.
       : (t.kind === 'fixed' && (r.kind === 'euclid' || r.kind === 'drawn')) ? 'bass'
-      : (t.kind === 'fixed') ? 'onenote'
+      : (t.kind === 'fixed') ? 'one'
       : (t.kind === 'walk') ? 'roll' : null;
     const mat = M[p.mat] ? p.mat : (v1 ? null : guess);
     if (p.kind === 'recorded') {
@@ -10424,7 +10450,8 @@
                 ground: '\u26f0 Play the changes', melody: '\u266a Melody',
                 anchor: '\u2693 Hold a pedal note', onenote: '\u25aa Repeat one note',
                 scatter: '\u273b Scatter tones', confug: '\u266b ConFugued',
-                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line' };
+                beat: '\u2666 Beat', bass: '\u25e2 Bass', line: '\u266a Play a line',
+                one: '\u25aa One note' };
     // `.v2-genface` was the sub-label INSIDE ⚙ Deep's button and went with it;
     // the query is kept because ✨ Quick's own face still uses the same class
     // on some builds, and a missing node here is simply skipped.
@@ -10451,13 +10478,24 @@
       // shape reported one level up. A kit gets the one material addressed to
       // lanes; a synth gets the nine addressed to pitch. Neither sees the
       // other's, because neither can play it.
+      // BEAT IS LISTED EVERYWHERE, the pitched ones only on a synth - and the
+      // asymmetry is the point rather than an oversight. user: "where is Beat
+      // option?", asked of a synth layer, where it was hidden: hiding it made
+      // it undiscoverable, because you cannot know to switch the instrument
+      // first if the only thing that would have told you is behind that switch.
+      // IT CAN BE LISTED ANYWHERE BECAUSE IT BRINGS ITS OWN INSTRUMENT -
+      // `makeBeatFn` sets `voice: 'kit'`, so picking it on a synth is a
+      // complete action rather than a half one. The pitched materials cannot
+      // return the favour: on a kit they write a `pitch` nothing reads, so they
+      // stay hidden there.
       const isKit3 = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';
       const SH = isKit3 ? [['beat', '\u2666 Beat \u2014 a pattern per drum']] :
-        [['sustain', '\u25ac Sustain a chord'], ['anchor', '\u2693 Hold a pedal note'],
-        ['onenote', '\u25aa Repeat one note'], ['bass', '\u25e2 Bass'],
+        [['beat', '\u2666 Beat \u2014 switches this layer to a drum kit']].concat(
+        [['sustain', '\u25ac Sustain a chord'],
+        ['one', '\u25aa One note'], ['bass', '\u25e2 Bass'],
         ['line', '\u266a Play a line'],
         ['mixed', '\u2687 Mix chords + notes'], ['ground', '\u26f0 Play the changes'],
-        ['confug', '\u266b ConFugued']];
+        ['confug', '\u266b ConFugued']]);
       // THE MERGED DOOR IS WHAT THE SELECT SHOWS. A part still stamped `arp`
       // must select \u266a Play a line, or the picker finds no matching option and
       // silently shows the first one (the documented trap).
@@ -10552,7 +10590,7 @@
       // stamped `arp` finds them: `matDoorOf` is the one place a stamp becomes
       // a door, so this map no longer has to list the old names separately.
       const PK = { sustain: 'sustain', mixed: 'mixed', ground: 'ground',
-                   beat: 'beat', bass: 'bass', line: 'line' };
+                   beat: 'beat', bass: 'bass', line: 'line', one: 'one' };
       const shpKey = V2.matDoor(matProv(L).key);
       const shp = (L.part.kind === 'live') ? PK[shpKey] : null;
       const list = shp ? (V2.presets || []).filter((pr) => pr.shape === shp) : [];
@@ -12809,7 +12847,7 @@
     });
     return lifted;
   }
-  const MAT_NAME = { beat: 'Beat', bass: 'Bass',
+  const MAT_NAME = { beat: 'Beat', bass: 'Bass', one: 'One note',
     sustain: 'Sustain a chord', arp: 'Arpeggiate', roll: 'Roll a line', melody: 'Melody',
     mixed: 'Mix chords + notes', ground: 'Play the changes',
     anchor: 'Hold a pedal note', onenote: 'Repeat one note', scatter: 'Scatter tones',
@@ -13785,6 +13823,7 @@
               // works by PRESSING the matching button — the one implementation
               // of confirm/adopt/stamp/roll they all share.
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="beat" title="♦ Beat — a pattern per drum: a euclid on each lane, so a kit generates like everything else.">\u2666 Beat</button>' +
+              '<button type="button" class="ambient-seg v2-mkpart" data-mk="one" title="One note - held against the changes as a pedal, or moving with them.">\u25aa One note</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="line" title="Play a line - one note at a time; Moves chooses how the next one is picked.">\u266a Play a line</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="bass" title="Bass - the root of each change, low and on the beat.">\u25e2 Bass</button>' +
               '<button type="button" class="ambient-seg v2-mkpart" data-mk="sustain" title="▬ Sustained — a held note or chord, one per cycle: the pad material.">\u25ac Sustain a chord</button>' +
@@ -13864,6 +13903,13 @@
               // "Advanced: each die". Marked `v2-moves` so neither a handler
               // nor a probe can pick up the wrong one: two elements sharing a
               // `data-f` is the duplicate-class trap this file keeps naming.
+              gsel(L, 'part.pitch.kind', 'The note',
+                   ((L.part.pitch || {}).kind === 'anchor') ? 'anchor' : 'fixed',
+                   [['fixed', 'Follows the changes \u2014 the same degree of each'],
+                    ['anchor', 'Stays put \u2014 a pedal note under them all']],
+                   'a pedal point is held AGAINST the harmony; that friction is the point',
+                   'kind:live;voice:synth;pitch:fixed,anchor')
+                .replace('class="ambient-select', 'class="ambient-select v2-holds') +
               gsel(L, 'part.pitch.kind', 'Moves',
                    (L.part.pitch || {}).kind || 'walk',
                    [['series', 'Run \u2014 through the chord in order'],

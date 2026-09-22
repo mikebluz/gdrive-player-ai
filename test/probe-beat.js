@@ -58,11 +58,39 @@ const ok = (name, cond, detail) => {
   // ── 1. EACH VOICE SEES ONLY THE MATERIALS IT CAN PLAY ───────────────────
   const synthOpts = await matOpts();
   console.log('\n  a SYNTH layer offers: ' + JSON.stringify(synthOpts));
+  // NAMED, NOT COUNTED. This check is about a synth seeing PITCHED materials,
+  // not about how many there are — keyed on the length it broke twice as the
+  // list was consolidated, each time pointing at the wrong feature.
   ok('a synth layer offers the pitched materials',
-    synthOpts.indexOf('sustain') >= 0 && synthOpts.indexOf('ground') >= 0 && synthOpts.length >= 8,
+    synthOpts.indexOf('sustain') >= 0 && synthOpts.indexOf('ground') >= 0 &&
+    synthOpts.indexOf('one') >= 0 && synthOpts.length >= 5,
     JSON.stringify(synthOpts));
-  ok('…and not ♦ Beat, which it has no lanes for', synthOpts.indexOf('beat') < 0,
-    JSON.stringify(synthOpts));
+  // LISTED ON A SYNTH TOO (2026-09-21, user: "where is Beat option?" - asked of
+  // a synth layer, where it was hidden). It can be, because `makeBeat` sets the
+  // voice itself, so picking it there is a complete action; hiding it made it
+  // undiscoverable, since the only thing that would have told you to switch the
+  // instrument was behind that switch.
+  ok('…and ♦ Beat too, which brings its own instrument',
+    synthOpts.indexOf('beat') >= 0, JSON.stringify(synthOpts));
+
+  // PICKING IT ON A SYNTH IS A COMPLETE ACTION - it brings the kit with it.
+  // That is what lets the door be listed everywhere, so it is checked here
+  // rather than assumed.
+  const conv = await page.evaluate(async () => {
+    const E = _masterEng, V = window._v2;
+    const sp = document.querySelector('.v2-layer .v2-shapepick');
+    sp.value = 'beat';
+    sp.dispatchEvent(new Event('input', { bubbles: true }));
+    sp.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 1600));
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    const L = V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    return { voice: (L.instrument || {}).voice, mat: L.part.mat,
+             hasRules: !!(L.part.rhythm || {}).beat };
+  });
+  console.log('  picking Beat on a SYNTH: ' + JSON.stringify(conv) + '\n');
+  ok('picking ♦ Beat on a synth turns the layer into a kit',
+    conv.voice === 'kit' && conv.mat === 'beat' && conv.hasRules, JSON.stringify(conv));
 
   // SHUT ⚙ DEEP BEFORE CHANGING THE INSTRUMENT, which is the order a person
   // works in anyway (pick the sound, then generate for it). Deep holds a STAGED
@@ -89,7 +117,9 @@ const ok = (name, cond, detail) => {
   ok('a drum layer offers ♦ Beat', kitOpts.indexOf('beat') >= 0, JSON.stringify(kitOpts));
   // THE DEAD-DOOR BUG: all nine write `pitch`, which the kit emitter never
   // reads — picking one changed nothing audible.
-  ok('…and NOT the nine that write a pitch it cannot play',
+  // THE ASYMMETRY IS THE POINT: the pitched materials cannot return the favour,
+  // because on a kit they write a `pitch` nothing reads.
+  ok('…and NOT the pitched ones, which write a pitch it cannot play',
     kitOpts.length === 1 && kitOpts[0] === 'beat', JSON.stringify(kitOpts));
 
   // ── 2. PICKING IT BUILDS A REAL BEAT ────────────────────────────────────

@@ -1315,6 +1315,19 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   part draws 3 bars stopped, and the chords in bars 4–5 are not merely off screen but unreachable:
   the ◀ ▶ pair hides itself when the CYCLE fits, and the drag-pan declines for the same reason.
   A part longer than its layer's cycle has content no surface admits exists.
+- **`rhythm.steps` IS A GRID PER CYCLE — a pattern whose numbers mean PER BAR must tile.** ♦ Beat's
+  lane pulses are written in sixteenths of a bar ("kick 4" is four to the bar; Half-time puts the
+  snare on 3 via step 8 of 16), so solving the euclid over the cycle made the groove eight times too
+  slow on an 8-bar part — two steps per bar, a kick every two bars. `beatLanes` takes a `perBar` unit,
+  solves once against it and tiles (`row[i % per]`), and the kit emitter sizes `st` from
+  `BEAT_PER_BAR × bars`, not from `rhythm.steps`. Size `st` AFTER you know which source answered:
+  a beat that rolls itself silent falls back to the DRAWN rows, which are on the other grid.
+- **A GROOVE IS A LOOP, SO ♦ Beat IS THE ONE MATERIAL THAT DOES NOT MIRROR THE PART** (`p.bars = 1`,
+  not `partBarsFor`). That is also what keeps its cycle inside `PV_MAX_SEC` (8s) — preview plays
+  exactly the cycle it drew, so a 16s cycle was audible only for its first four bars. But `bars` is
+  NOT a guarantee to rest a tempo on: ◫ Per part's `fitTo` refits a filed record to the part's length
+  on every normalize ("a record filed under a part is that part's length, always"). Fix tempo in the
+  generator, and let the length be whatever the arrangement says.
 
 ### Bloom stores — what exists, and the one thing to know about each
 

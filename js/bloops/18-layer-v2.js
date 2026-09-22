@@ -2030,22 +2030,37 @@
   // ROTATION IS NOT TOUCHED by the seed, deliberately: a randomly rotated kick
   // is no longer four-on-the-floor, and a beat that loses its downbeat between
   // takes is not a variation of anything.
-  function beatLanes(p, steps, seed) {
+  // A BEAT'S GRID IS SIXTEENTHS OF A BAR — never a slice of the cycle.
+  // Every Character is written in this unit ("kick 4" is four to the bar,
+  // "half-time" puts the snare on 3 via step 8 of 16), so the pulse counts
+  // only mean what their names say when the euclid is solved over ONE BAR.
+  const BEAT_PER_BAR = 16;
+  // `perBar` is that unit; the euclid is solved once against it and TILED
+  // across the cycle, so a groove reads the same whether its part is one bar
+  // or eight. Solving it over the whole cycle instead was the reported bug
+  // (2026-09-22: "much slower than it should be") — on an 8-bar cycle a
+  // 16-step grid is two steps per bar, and the backbeat came out as one kick
+  // every two bars. A fractional last bar simply truncates, which is what a
+  // loop running out of room does.
+  function beatLanes(p, steps, seed, perBar) {
     const b = p && p.rhythm && p.rhythm.beat;
     if (!b || !Array.isArray(b.lanes)) return null;
     const st = Math.max(1, steps | 0);
+    const per = Math.max(1, (perBar | 0) || st);
     const vary = clamp(b.vary | 0, 0, 100) / 100;
     const out = [];
     let any = false;
     for (let li = 0; li < _V2_LANES; li++) {
       const e = b.lanes[li] || {};
-      const pu = clamp(e.p | 0, 0, st);
+      const pu = clamp(e.p | 0, 0, per);
       if (pu <= 0) { out.push(new Array(st).fill(0)); continue; }
       let row = [];
-      try { row = euclidCells(pu, st, e.r | 0) || []; } catch (x) { row = []; }
+      try { row = euclidCells(pu, per, e.r | 0) || []; } catch (x) { row = []; }
       const cells = new Array(st);
       for (let i = 0; i < st; i++) {
-        let on = row[i] ? 1 : 0;
+        // THE PATTERN REPEATS, the vary does not — `sd` keys on the absolute
+        // step, so a long cycle breathes instead of being eight identical bars.
+        let on = row[i % per] ? 1 : 0;
         if (vary > 0) {
           // keyed on (layer-seed, lane, step) so one lane's draw cannot shift
           // another's — the same isolation the chance rhythm keeps
@@ -3589,11 +3604,21 @@
       // directly is why the groove panel's Density did nothing to a v2 layer.
       const rest = (typeof _ambEffRest === 'function') ? (_ambEffRest(L) | 0) : (L.restProb | 0);
       const ghost = L.ghosts | 0, lvar = L.lenVary | 0;
-      const st = Math.max(1, p.rhythm.steps | 0);
-      // THE RULES IF THERE ARE ANY, the drawn grid otherwise. One line is the
+      // THE RULES IF THERE ARE ANY, the drawn grid otherwise. Two lines are the
       // whole of "drums generate now": everything below this reads `lanes` and
       // cannot tell which it got.
-      const lanes = beatLanes(p, st, seedBase) || p.rhythm.lanes || [];
+      // THE TWO SOURCES ARE ON DIFFERENT GRIDS, so `st` follows whichever one
+      // actually answered: a beat is sixteenths PER BAR (`BEAT_PER_BAR` times
+      // the cycle's length, so the groove holds its tempo however long the
+      // part is), a drawn grid is `rhythm.steps` across the cycle. Sizing `st`
+      // before knowing which one won would have read the drawn rows off the
+      // end whenever a beat rolled itself silent and fell back to them.
+      const bt = (p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
+      const btSt = bt ? Math.max(BEAT_PER_BAR,
+        Math.round(BEAT_PER_BAR * Math.max(0.125, +p.bars || 1))) : 0;
+      const bl = bt ? beatLanes(p, btSt, seedBase, BEAT_PER_BAR) : null;
+      const lanes = bl || p.rhythm.lanes || [];
+      const st = bl ? btSt : Math.max(1, p.rhythm.steps | 0);
       const slot = cyc / st;
       const durMs = Math.max(20, Math.round(slot * 1000 * (p.shape.lenRatio / 100)));
       for (let li = 0; li < _V2_LANES; li++) {
@@ -6258,7 +6283,22 @@
     // addressed to lanes that only a kit has.
     L.instrument = L.instrument || {};
     L.instrument.voice = 'kit';
-    p.bars = partBarsFor(E, L) || p.bars || 2;
+    // A BEAT IS ONE BAR LONG — the one material that does NOT mirror the part,
+    // because a groove is a loop and only a phrase wants the part's length.
+    // It STILL COVERS THE PART: a cycle repeats.
+    // Reported 2026-09-22 ("preview only plays the first 4 bars of the
+    // visualized content, it's also much slower than it should be"). Two
+    // symptoms, one cause — the cycle was the whole part:
+    //   TEMPO. Fixed at the source instead, in `beatLanes`: the euclid is
+    //   solved per BAR and tiled, so the groove holds whatever the cycle is.
+    //   That is what keeps a beat right when something else sets the length —
+    //   ◫ Per part refits `bars` to the part on every normalize, so bars=1 is
+    //   not a guarantee and must not be the thing the tempo rests on.
+    //   PREVIEW. `previewLayer` caps at `PV_MAX_SEC` (8s) and deliberately
+    //   plays exactly the cycle it drew, so a 16s cycle was audible only for
+    //   its first four bars. Nothing but a shorter cycle fixes that, and one
+    //   bar (2s at 120) is both short enough and the honest length of a loop.
+    p.bars = 1;
     p.rhythm = JSON.parse(JSON.stringify(MAT_BEAT.rhythm));
     p.shape = Object.assign({}, p.shape, MAT_BEAT.shape);
     p.mat = 'beat';

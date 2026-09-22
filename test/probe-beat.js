@@ -313,6 +313,72 @@ const ok = (name, cond, detail) => {
   ok('a kit with no rules still plays what was drawn',
     rest.drawn[0] === 4 && !rest.drawn[1] && !rest.drawn[2], JSON.stringify(rest.drawn));
 
+  // ── 7. THE GROOVE HOLDS ITS TEMPO AT ANY CYCLE LENGTH ───────────────────
+  // Reported 2026-09-22: "Beat content gen seems weird, preview only plays the
+  // first 4 bars of the visualized content, it's also much slower than it
+  // should be". `makeBeat` sized the cycle to the whole arrangement part and
+  // `rhythm.steps` is a grid per CYCLE, so a 16-step pattern over an 8-bar
+  // part was TWO STEPS PER BAR — a kick every two bars, eight times too slow.
+  // Both halves of the fix are measured here: the cycle is one bar, and the
+  // euclid is solved per bar and tiled so nothing that later moves `bars`
+  // (◫ Per part refits it on every normalize) can take the tempo with it.
+  const tempo = await page.evaluate(() => {
+    const E = _masterEng, V = window._v2;
+    const L = () => (E.getCfg().layers || [])[0];
+    // THE PART THAT WAS REPORTED: three changes, eight bars. The whole bug
+    // needs a LONG part to show itself — on a short one a beat that wrongly
+    // mirrors the part is still roughly in tempo and still previews whole, so
+    // a probe on a 2-bar part would watch the fix fail and call it a pass.
+    { const cfg = E.getCfg();
+      cfg.prog.on = true;
+      cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7], bars: 3 },
+        { root: 4, intervals: [0, 3, 7], bars: 3 },
+        { root: 5, intervals: [0, 4, 7], bars: 2 }];
+      delete cfg.prog.parts; delete cfg.prog.chain;
+      delete cfg.prog.arrGrid; delete cfg.prog.grid;
+      E.getCfg(); }
+    V.makeBeat(E, L());
+    const fresh = (L().part.bars);
+    // MEASURED BEFORE `run` MOVES `bars` — this is the cycle a press of ▶
+    // would actually audition.
+    const freshCyc = V.cycleSec(L(), E.getCfg());
+    const run = (bars) => {
+      L().part.bars = bars; E.getCfg();
+      const l = L();
+      E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+      const cyc = V.cycleSec(l, E.getCfg());
+      const ns = V.withEdit(() => V.withTake(0, () => V.notesFor(l,
+        { E, cfg: E.getCfg(), key: 'v2:' + l.id, cycleStart: 0, cycleSec: cyc }))) || [];
+      const spb = cyc / Math.max(0.001, l.part.bars);
+      const k = ns.filter((x) => x.lane === 0).map((x) => x.at / spb).sort((a, b) => a - b);
+      const gaps = k.slice(1).map((v, i) => v - k[i]);
+      return { bars: l.part.bars, cyc,
+        perBar: k.length / Math.max(0.001, l.part.bars),
+        // the widest spacing between two kicks, in bars — 0.25 is four to the bar
+        maxGap: gaps.length ? Math.max.apply(null, gaps) : 0 };
+    };
+    return { fresh, freshCyc, one: run(1), eight: run(8), frac: run(2.5) };
+  });
+  console.log('  fresh bars=' + tempo.fresh + ' (' +
+    (Math.round(tempo.freshCyc * 100) / 100) + 's, part is 8 bars)  |  ' +
+    [tempo.one, tempo.eight, tempo.frac].map((r) =>
+      r.bars + 'bar:' + (Math.round(r.perBar * 100) / 100) + '/bar').join('  ') + '\n');
+
+  // A GROOVE IS A LOOP, not a phrase — it does not take the part's length, and
+  // that is also what keeps its cycle inside the 8s preview cap, so the preview
+  // plays the whole of what it drew instead of the first four bars of it.
+  ok('a fresh ♦ Beat is a one-bar loop', tempo.fresh === 1, 'bars=' + tempo.fresh);
+  ok('…and its cycle previews whole (under the 8s cap)', tempo.freshCyc <= 8,
+    (Math.round(tempo.freshCyc * 100) / 100) + 's');
+  // FOUR TO THE BAR AT EVERY LENGTH. Before the fix an 8-bar cycle gave 0.5.
+  ok('the kick stays four to the bar on a long cycle',
+    Math.abs(tempo.eight.perBar - 4) < 0.01 && Math.abs(tempo.eight.maxGap - 0.25) < 0.01,
+    tempo.eight.perBar + '/bar, widest gap ' + (Math.round(tempo.eight.maxGap * 1000) / 1000) + ' bars');
+  // A FRACTIONAL CYCLE truncates its last bar rather than stretching the grid.
+  ok('…and on a fractional one', Math.abs(tempo.frac.perBar - 4) < 0.01 &&
+    Math.abs(tempo.frac.maxGap - 0.25) < 0.01,
+    tempo.frac.perBar + '/bar, widest gap ' + (Math.round(tempo.frac.maxGap * 1000) / 1000) + ' bars');
+
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

@@ -1359,6 +1359,15 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   the density never changes. Its UNIT is not constant — ◫ Fill solves over one bar and tiles, so the
   grid is per BAR there, and per CYCLE on a `stretch` part; the hint reads `barsMode` and says which.
   And it belongs with the MAIN knobs, not in Fine-tune: "like Beat" includes being in the same place.
+- **A PART THAT IS NOT A WHOLE NUMBER OF BARS DRIFTS AGAINST THE BEAT, ONE FRACTION PER PASS.** An
+  8⅛-bar cadence loops every 8⅛ bars, so pass 2 starts ⅛ bar late, pass 3 ¼, pass 5 half a bar —
+  reported as "the second is staggered and gets out of sync with the beat, feels about 1/8 or 1/4
+  off". Nothing downstream is wrong and there is nothing to fix in the engine: the length comes from
+  the CADENCE TOTAL (`_ambCadence` sums per-chord `bars`, which may legitimately be ⅛ · ¼ · ½), and
+  the cadence editor already calls such a total "uneven". ↔ Rubato is NOT the cause — it re-slices
+  chord boundaries per pass but forces the last boundary to `total`, so the cycle length is exactly
+  preserved. Check the cadence total before looking anywhere else, and remember the layer card's
+  own readout now says it.
 - **A GRID THAT DIVIDES THE CYCLE CANNOT LAND ON A BEAT unless the cycle is a whole number of bars.**
   ◢ Bass is 4 pulses over 16 steps; on an 8.13-bar part a step is 8.13/16 = 0.508 bars ≈ 2.03 beats,
   so the four notes sit two bars apart and nothing is on a beat ("why is default generated bass

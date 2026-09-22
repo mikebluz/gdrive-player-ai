@@ -10383,11 +10383,39 @@
       // Said only when it DIFFERS — on a monophonic line the two numbers are the
       // same and printing both twice is noise, which is the rule this file keeps
       // relearning about readouts.
+      // ── AN UNEVEN PART DRIFTS AGAINST THE BEAT, AND MUST SAY SO ──────
+      // user, 2026-09-22, of a bass over an 8.13-bar part: "the second is
+      // staggered and gets out of sync with the beat, feels about 1/8 or 1/4
+      // off". Nothing was wrong downstream — the loop is 8⅛ bars, so every
+      // pass starts ⅛ bar (half a beat) later against the bar grid, and by the
+      // second pass the whole part sits off the beat. Faithful, and unreadable
+      // as anything but a glitch, because the only clue on the card was the
+      // number "8.13" with nothing saying what a fraction there costs.
+      // THE CADENCE EDITOR ALREADY KNOWS — it calls such a total "uneven — not
+      // a whole number of bars" — but that is a different screen from the one
+      // you are looking at when you hear it. Same judgement, said here.
+      // NOT A WARNING ABOUT A MISTAKE: an odd part is a choice the app
+      // supports, so this names the CONSEQUENCE and where the length comes
+      // from, and leaves the choice alone.
+      const unevenTxt = (() => {
+        if (free || !(barsF > 0)) return '';
+        const off = barsF - Math.floor(barsF);
+        if (off < 1e-6 || off > 1 - 1e-6) return '';
+        // NAMED, NOT PRINTED AS A DECIMAL. "0.13 bar later" is the same number
+        // that already failed to communicate; "half a beat" is the thing you
+        // can hear. Four-four, so a bar is four beats.
+        const NAMES = { 0.125: 'half a beat', 0.25: 'a beat', 0.375: 'a beat and a half',
+          0.5: 'two beats', 0.625: 'two and a half beats', 0.75: 'three beats',
+          0.875: 'three and a half beats' };
+        const frac = NAMES[Math.round(off * 1000) / 1000] ||
+          (Math.round(off * 4 * 100) / 100 + ' beats');
+        return ' · ⚠ uneven — every pass starts ' + frac + ' later against the beat';
+      })();
       lab.textContent = liveTxt(L, cfg) + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') +
         (onsetN && onsetN !== played.length
           ? ' in ' + onsetN + ' onset' + (onsetN === 1 ? '' : 's') : '') + ' · ' + barTxt +
-        ' · ' + (Math.round(cyc * 10) / 10) + 's' +
+        ' · ' + (Math.round(cyc * 10) / 10) + 's' + unevenTxt +
         // NAME THE TAKE. "one take of many" was true and unhelpful — you could
         // not tell whether the picture had moved. A number you can watch change
         // is what makes "Preview did not re-roll that" verifiable by eye.

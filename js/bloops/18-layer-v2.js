@@ -7194,12 +7194,20 @@
     // SEED 0, DELIBERATELY: Vary is a property of the RULES, and in ▦ Pattern
     // there are no rules left to re-roll — what you get is one take, which is
     // then yours. At the default Vary of 0 it is the only take there ever was.
-    beatToLanes: (L) => {
+    // `steps` IS THE GRID THE CALLER ALREADY HAS, not one this decides for
+    // itself. `rhythm.steps` is re-sized by normalize the moment the form is
+    // ▦ Pattern, so a seed built to its own idea of the length is padded with
+    // silence the instant it is committed — the same "18 hits in the first 32
+    // of 130" that bit the pitched path. `beatLanes` TILES a per-bar euclid
+    // across whatever it is given, so any grid a whole number of bars long
+    // comes out right.
+    beatToLanes: (L, steps) => {
       const p = L && L.part; if (!p || !p.rhythm) return null;
       const b = p.rhythm.beat;
       if (!b || !Array.isArray(b.lanes)) return null;
       const per = beatPerOf(b);
-      const st = Math.max(per, Math.round(per * Math.max(0.125, +p.bars || 1)));
+      const st = Math.max(1, (steps | 0) ||
+        Math.max(per, Math.round(per * Math.max(0.125, +p.bars || 1))));
       let rows = null;
       try { rows = beatLanes(p, st, 0, per); } catch (e) { rows = null; }
       return rows ? { steps: st, lanes: rows } : null;
@@ -20741,6 +20749,16 @@
           const P = ctx.L.part;
           if (want === 'steps') {
             P.form = 'steps';
+            // THE GRID IS SIZED BEFORE IT IS SEEDED. `r.steps` is the ROLL's
+            // euclid resolution until the form flips; normalize then re-sizes
+            // it to the SEQUENCER's grid (`bars × gridPerBar`), which is a
+            // different and usually much larger number. Seeding first filled
+            // the old count and left the rest of the grid empty — reported
+            // 2026-09-22 of a rolled Line: "most steps unpopulated", 18 hits
+            // in the first 32 cells of 130, the tail dead. One `getCfg` is the
+            // whole fix, and it is the same ordering the Steps knob's own
+            // handler already states ("let normalize resize cells first").
+            try { E.getCfg(); } catch (e) {}
             const r0 = P.rhythm || (P.rhythm = {});
             // A KIT'S GRID IS ITS LANES, not the single row — so a drum layer
             // seeds from ♦ Beat's rules the way a pitched one seeds from the
@@ -20750,8 +20768,10 @@
             if (((ctx.L.instrument || {}).voice) === 'kit') {
               const anyLane = (r0.lanes || []).some((row) => (row || []).some(Boolean));
               if (!anyLane) {
-                const seed = V2.beatToLanes(ctx.L);
-                if (seed) { r0.steps = seed.steps; r0.lanes = seed.lanes; }
+                // SEEDED TO THE GRID NORMALIZE JUST SIZED, so the rows cover
+                // every cell the sequencer will draw.
+                const seed = V2.beatToLanes(ctx.L, Math.max(1, r0.steps | 0));
+                if (seed) r0.lanes = seed.lanes;
               }
             } else {
               const drawn = (r0.cells || []).some(Boolean);

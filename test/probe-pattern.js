@@ -208,6 +208,59 @@ const ok = (name, cond, detail) => {
     ph.pre === 0 && ph.preFar === 0,
     'at 50ms: ' + ph.pre + ', at 400ms: ' + ph.preFar + ' (last step is ' + (ph.st - 1) + ')');
 
+  // ── A SEEDED GRID COVERS THE WHOLE PART ─────────────────────────────────
+  // user, 2026-09-22, of a rolled ♪ Line switched to ▦ Pattern: "most steps
+  // unpopulated" — 18 hits in the first 32 cells of 130, the rest dead.
+  // `rhythm.steps` is the ROLL's euclid resolution until the form flips, and
+  // normalize then re-sizes it to the SEQUENCER's grid (bars × gridPerBar).
+  // Seeding before that sizing filled the old, much smaller count and left the
+  // tail of the grid empty. Measured on a LONG part, because on a one-bar part
+  // the two numbers coincide and the bug cannot show.
+  const seeded = await page.evaluate(async () => {
+    const E = _masterEng, V = window._v2;
+    // A multi-bar arrangement, the shape the report came from.
+    { const cfg = E.getCfg();
+      cfg.prog.on = true;
+      cfg.prog.chords = [{ root: 0, intervals: [0, 4, 7], bars: 3 },
+        { root: 4, intervals: [0, 3, 7], bars: 3 }, { root: 5, intervals: [0, 4, 7], bars: 2 }];
+      delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+      E.getCfg(); }
+    const L = (E.getCfg().layers || [])[0];
+    // BACK TO ⌗ Roll, as a synth playing a euclid — the form the report starts in.
+    delete L.part.form;
+    L.instrument = L.instrument || {}; L.instrument.voice = 'synth';
+    L.part.kind = 'live';
+    L.part.bars = 8;
+    L.part.rhythm = { kind: 'euclid', steps: 32, pulses: 18, rotate: 0 };
+    L.part.pitch = Object.assign({}, L.part.pitch, { kind: 'walk' });
+    delete L.part.rhythm.cells;
+    E.getCfg();
+    const before = { steps: L.part.rhythm.steps | 0, bars: +L.part.bars };
+    // …and into ▦ Pattern through the real button.
+    const b = document.querySelector('.v2-layer .v2-formbtn');
+    if (b) b.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    const L2 = (E.getCfg().layers || [])[0];
+    const r = L2.part.rhythm;
+    const st = r.steps | 0;
+    const cells = (r.cells || []).slice(0, st);
+    const on = cells.filter(Boolean).length;
+    // WHERE the hits sit: a seed that covered only the old grid leaves the
+    // whole tail empty, and that is the thing to measure.
+    let last = -1;
+    cells.forEach((c, i) => { if (c) last = i; });
+    return { before, steps: st, on, last, form: V.formOf(L2),
+             tailEmpty: last >= 0 && last < Math.floor(st * 0.5) };
+  });
+  console.log('\n  seeded grid: ' + JSON.stringify(seeded));
+  ok('switching a rolled line to ▦ Pattern lands in the form', seeded.form === 'steps',
+    JSON.stringify(seeded));
+  ok('…and the grid is sized to the PART, not the roll\u2019s euclid resolution',
+    seeded.steps > seeded.before.steps, seeded.before.steps + ' → ' + seeded.steps);
+  ok('…and the seed covers the whole of it, not just the first cells',
+    seeded.on > 0 && !seeded.tailEmpty,
+    seeded.on + ' hits, last at step ' + (seeded.last + 1) + ' of ' + seeded.steps);
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

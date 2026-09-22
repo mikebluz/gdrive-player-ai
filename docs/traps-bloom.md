@@ -1352,6 +1352,13 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   on `E._v2Phase['v2:'+id].startAt`, so the grid lit a column offset by `startAt mod cycle`: reported
   as "the playhead starts on step 4 or so" and measured at step 26 of 32. Pass the phase state, the
   way the roll's own sweep already does.
+- **`rhythm.steps` MEANS TWO DIFFERENT LENGTHS, AND THE FORM DECIDES WHICH.** In ⌗ Roll it is the
+  euclid's resolution; the moment `form === 'steps'` normalize re-sizes it to the SEQUENCER's grid
+  (`bars × gridPerBar`), which on a long part is far larger. So anything that SEEDS the grid must let
+  normalize size it FIRST — one `getCfg()` — or it fills the old count and leaves the tail dead:
+  measured as 18 hits in the first 32 cells of 128 after rolling a Line and switching to ▦ Pattern
+  ("most steps unpopulated"). Invisible on a one-bar part, where the two numbers coincide; only a
+  multi-bar part can catch it. The Steps knob's own handler already stated this ordering.
 - **PER-CYCLE RANDOMNESS NEEDS `part.vary`; WITHOUT IT EVERY DIE IS ONE THROW, FOREVER.** `cycIdx`
   seeds every per-hit draw (rests, ghosts, chance, pitch vary) and it only advances per cycle when
   the part re-decides each pass — otherwise it is `take + epoch`, constant. A probability measured

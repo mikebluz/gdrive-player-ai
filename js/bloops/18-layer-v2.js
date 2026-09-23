@@ -8477,7 +8477,7 @@
       hl.push(kv('Hold', plural(hold, 'step') + (hms > 0 ? ' \u00b7 ' + holdTime(hms) : '')));
     }
     else hl.push(kv('Length', NF(sh.lenRatio, 100) + '% of each slot'));
-    if (I(L.lenVary) > 0) hl.push(kv('Len vary', I(L.lenVary) + '%'));
+    if (I(L.lenVary) > 0) hl.push(kv('Length vary', I(L.lenVary) + '%'));
     let hlTail = '';
     if (ns.length) {
       const ds = ns.map((n) => n.dur).filter((d) => d > 0).sort((a, b) => a - b);
@@ -14476,6 +14476,28 @@
                       ' is cut — the pattern scales with it, so twice the grid is twice the speed',
                     'kind:live;voice:synth;rhythm:euclid,drawn,chance;form:roll');
               })(L.part.rhythm || {}) +
+              // ── NOTE LENGTH IS A MAIN KNOB (2026-09-23) ──────────────
+              // user: "Where is note length setting in generate menu? It should
+              // be a primary value and highlighted".
+              // It was in Fine-tune ▸ Rhythm, two taps down, which is the wrong
+              // depth for the knob that decides whether a line is stabbed or
+              // legato — the loudest single thing about a generated part after
+              // the notes themselves. Beside ⊞ Resolution, because the two are
+              // one question asked twice: the grid says how OFTEN, this says how
+              // much of each slot is sounded.
+              // ITS PARTNER COMES WITH IT. `lenVary` is what stops every note
+              // being the same length, and it lived under ▸ Advanced: each die
+              // — so the static value was buried and the thing that makes it
+              // BREATHE was buried under that. A control whose whole purpose is
+              // variation is useless at a depth nobody reaches.
+              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
+                  '% of the slot each note sounds \u2014 short is stabbed, 100 is legato',
+                  'kind:live;rhythm:pulse,euclid,drawn,chance')
+                .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary') +
+              gsl(L, 'lenVary', 'Length vary', num(L.lenVary, 0), 0, 100,
+                  '% scatter on that length \u2014 0 is machine-even',
+                  'kind:live;rhythm:pulse,euclid,drawn,chance')
+                .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary') +
               (function (bl) {
                 // ── ⊞ RESOLUTION — THE GROOVE'S SPEED (2026-09-22) ──────
                 // user: "there should be a Resolution parameter so the user
@@ -14710,8 +14732,10 @@
               })(L.part.rhythm || {}) +
               gsl(L, 'part.rhythm.syncop', 'Syncopate', num((L.part.rhythm || {}).syncop, 0), 0, 100,
                   'straight → offbeat', 'kind:live;voice:synth;rhythm:chance') +
-              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
-                  '% of the space each note fills', 'kind:live;rhythm:pulse,euclid,drawn,chance') +
+              // Note length is NOT here — it is a MAIN knob now (user: "it should
+              // be a primary value and highlighted"). It was the single loudest
+              // thing about a generated line sitting behind a Fine-tune tab.
+
               gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
                   'nudge each note late by a random hair — a strum', 'kind:live;rhythm:ground') +
               // ARRIVE SAYS WHAT IT DOES (2026-09-21, user: "why are chords
@@ -14897,7 +14921,11 @@
               subrows('dice',
                 gsl(L, 'restProb', 'Rests', num(L.restProb, 0), 0, 100, '% of onsets dropped', 'kind:live') +
                 gsl(L, 'ghosts', 'Ghosts', num(L.ghosts, 0), 0, 100, '% quiet extra hits', 'kind:live') +
-                gsl(L, 'lenVary', 'Len vary', num(L.lenVary, 0), 0, 100, '% note-length scatter', 'kind:live') +
+                // SAME FIELD, SAME WORDS as the promoted row above. A second
+                // control over one axis is allowed here (the panel repeats
+                // several), but a second NAME for it is not — one axis with two
+                // vocabularies reads as two mechanisms.
+                gsl(L, 'lenVary', 'Length vary', num(L.lenVary, 0), 0, 100, '% note-length scatter', 'kind:live') +
                 gsl(L, 'startVary', 'Start', num(L.startVary, 0), 0, 100, 'on the 1 → anywhere', 'kind:live') +
                 gsl(L, 'twist', 'Twist', num(L.twist, 0), 0, 100, 'steady → bursts', 'kind:live;voice:synth') +
                 gsl(L, 'part.pitch.randomness', 'Scatter', num((L.part.pitch || {}).randomness, 0), 0, 100,

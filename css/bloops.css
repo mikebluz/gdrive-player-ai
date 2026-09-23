@@ -15000,6 +15000,19 @@
        length…, which is a control contradicting its own sentence. Any rule here
        that sets `display` needs this partner. */
     .v2-layer .v2-evenfix[hidden] { display: none; }
+    /* ── A PRIMARY KNOB (2026-09-23) ────────────────────────────────────────
+       "it should be a primary value and highlighted". A main-knob row that is
+       one of the few things worth reaching for first: the label takes the
+       card's accent and the row a faint lit ground, so it reads as promoted
+       rather than merely present. Deliberately NOT a new control — same
+       `.ambient-ctrl` markup, same slider, so it matches its neighbours (UI
+       rule 6) and only its weight changes. */
+    .v2-layer .ambient-ctrl.v2-primary {
+      background: rgba(159,122,234,0.07);
+      border-left: 2px solid rgba(159,122,234,0.55);
+      padding-left: 6px; border-radius: 4px;
+    }
+    .v2-layer .ambient-ctrl.v2-primary > label { color: #c9b6f5; font-weight: 700; }
     .ambient-cad-modal .cad-total.is-even { border-color: rgba(79,209,197,0.38); background: rgba(79,209,197,0.09); }
     .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
     .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }

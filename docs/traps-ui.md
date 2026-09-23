@@ -200,6 +200,18 @@
 - **A card fold is a CLASS (`v2-so-<id>`) and a card rebuild dropped it** — ▸ Fine-tune holds Steps, whose
   commit rebuilds the card, so the fold shut under the finger. `V2.render` now carries `v2-so-*` across.
   Anything that lands on a row INSIDE a fold (🔍 Find) must press the fold's own button, or it marks a 0×0 row.
+- **NEVER REBUILD A NOTE FROM A NAMED LIST OF FIELDS — COPY IT AND OVERRIDE THE ONE THAT MOVED.**
+  `drawPartViz` rebuilt each note as `{at, freq, durMs, nidx, antic, oi}` to re-base its time, and the
+  chord choke did the same to shorten one. Both silently dropped every other per-note field. Its own
+  comment already recorded losing `oi` once; it bit again the moment the drawing needed `vel`, and
+  loudness-as-opacity drew every note solid (measured: vel 100/70/40/100 at the emitter, `{}` by the
+  time the drawing looked). `Object.assign({}, n, { at: … })`. A list of fields goes stale every time
+  a note gains one — the same lesson `applyBarsMode`'s preserve branch states for `vel`/`hx`.
+- **TO PROVE A CANVAS HONOURED A VALUE, RECORD IT AT THE DRAW CALL — pixel sampling is a poor witness.**
+  A published alpha the paint ignores is exactly this drawing's recurring bug, so it needs checking;
+  but sampling `getImageData` inside a 4px-tall block read 172 against a 174 background and could not
+  tell the note from the page. Patch `CanvasRenderingContext2D.prototype.fill` for the render and
+  collect `this.globalAlpha` — decisive, and it cannot be faked by what the picture claims.
 - **A STROKED GRIDLINE AND A FILLED BLOCK MUST BE SNAPPED THE SAME WAY, or they cannot line up.**
   A bar line is drawn at `Math.round(xF(f)) + 0.5` — the +0.5 centres a 1px stroke on the pixel
   column starting at `round(x)`. A note filled at the RAW `xF(f)` therefore starts up to half a pixel

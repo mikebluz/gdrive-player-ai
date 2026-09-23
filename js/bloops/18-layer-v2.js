@@ -9669,12 +9669,16 @@
     } catch (e) { notes = []; }
     // `notesFor` returns ABSOLUTE times (cycleStart + offset), so a remembered
     // cycle start has to be subtracted back off before drawing.
-    // `oi` COMES ALONG. This rebuild copies NAMED fields, so anything not listed
-    // is silently dropped — the onset tag went missing here and the readout fell
-    // back to counting distinct times, which is wrong in exactly the case the
-    // tag exists for (a strummed chord read as three onsets).
+    // COPY THE NOTE, OVERRIDE THE ONE FIELD. This used to rebuild from a NAMED
+    // LIST, and the comment here already recorded it dropping `oi` once — the
+    // readout fell back to counting distinct times, wrong in exactly the case
+    // the tag exists for (a strummed chord read as three onsets). It bit again
+    // the moment the drawing needed `vel`: loudness-as-opacity drew every note
+    // solid because the list did not mention it (measured: vel 100/70/40/100 at
+    // the emitter, `{}` by the time the drawing looked).
+    // A list of fields is a list that goes stale every time a note gains one.
     notes = notes.map(n => (n && Number.isFinite(n.at))
-      ? { at: n.at - cs, freq: n.freq, durMs: n.durMs, nidx: n.nidx, antic: n.antic, oi: n.oi } : n);
+      ? Object.assign({}, n, { at: n.at - cs }) : n);
     // THE PICTURE MUST AGREE WITH THE EAR. A note is released by the next
     // change unless the layer rings, so drawing its full length while the
     // choke cuts it is exactly the disagreement that reads as "notes are
@@ -9708,7 +9712,18 @@
         try {
           const ms = window._ambNoteChoke('v2:' + (L.id | 0), cs + n.at, n.durMs,
             Object.assign({}, n.antic > 0 ? { _chokeLead: n.antic } : {}, n.line ? { _chokeSkip: 1 } : {}));
-          return (ms > 0 && ms < n.durMs) ? { at: n.at, freq: n.freq, durMs: ms, nidx: n.nidx } : n;
+          // COPY THE NOTE, OVERRIDE THE ONE FIELD. Rebuilding it from four
+          // named fields silently DROPPED every per-note override the emitter
+          // had put on it — `vel`, ⑁ Length shape's `shw`, `ghost`, `antic`,
+          // `line`, the envelope pins — for any note the choke shortened, which
+          // on a part with changes is most of them. Invisible until something
+          // downstream read one: loudness-as-opacity drew every note solid
+          // because `vel` was gone by the time the drawing looked (measured:
+          // vel 100/70/40/100 at the emitter, all four alpha 1 in the picture).
+          // The same trap this file records for `applyBarsMode`'s preserve
+          // branch — "a hand-set velocity, envelope, glide or `hx` pin is
+          // somebody's edit, and a rebuild-from-three-fields drops every one".
+          return (ms > 0 && ms < n.durMs) ? Object.assign({}, n, { durMs: ms }) : n;
         } catch (e) { return n; }
       }));
     }
@@ -10371,6 +10386,35 @@
     cv._ghostTakes = ghostDrawn;
     cv._evoEv = evoEv;               // 0 = the takes come from `vary`, every cycle
     let hidden = 0;   // notes outside the held window — named in the readout
+    // ── HOW LOUD A NOTE IS, AS HOW SOLID IT LOOKS (2026-09-23) ───────────
+    // user: "loudness/accent of each note event in visualizer should be
+    // visualized as opacity".
+    // WHAT THE DRAWING CAN HONESTLY KNOW is what `notesFor` put on the note: a
+    // hand-edited note's own `vel`, ⌁ Length shape's weight `shw`, and the
+    // ghost flag (a ghost is deliberately a fraction of the hit it follows).
+    // ACCENT IS NOT IN HERE, and that is a limit worth stating rather than
+    // faking: `_ambAccentVol` runs at EMIT time and draws from a SHARED seeded
+    // stream, so asking it again here would consume draws and shift what every
+    // other layer plays. Showing accent means moving it into `notesFor` first,
+    // which is a change to what sounds, not to what is drawn.
+    // RELATIVE TO THE LOUDEST NOTE ON SCREEN, so a part with no dynamics at all
+    // draws exactly as it always did (every note is the loudest, every note is
+    // solid) and nothing about an existing picture moves.
+    const ampOf = (n2) => {
+      let a = 1;
+      if (Number.isFinite(n2.vel)) a *= Math.max(0, (n2.vel | 0) / 100);
+      if (Number.isFinite(n2.shw) && n2.shw > 0) a *= n2.shw;
+      if (n2.ghost) a *= 0.42;
+      return a;
+    };
+    let ampMax = 0;
+    for (let i = 0; i < played.length; i++) ampMax = Math.max(ampMax, ampOf(played[i]));
+    if (!(ampMax > 0)) ampMax = 1;
+    // 0.42 IS THE FLOOR, not 0: the quietest note is still a note you can see
+    // and tap. The same reasoning that raised the take fade's floor to 0.5 —
+    // below that a block reads as an outline, and an outline already means
+    // something else here (the takes to come).
+    const loudA = (n2) => 0.42 + 0.58 * Math.max(0, Math.min(1, ampOf(n2) / ampMax));
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
       const x = xF(n.at / cyc);
@@ -10456,7 +10500,15 @@
       // the fade was the whole difference). The fade is a reading of the
       // FUTURE and belongs to the stopped picture.
       // (floor raised 0.28 → 0.5: at 0.28 a stopped note read as an outline)
-      if (stab && !playing && !fromPv && !isSel && !isGrp) g.globalAlpha = 0.5 + 0.5 * stab[i];   // …and a previewed cycle is a sounding one
+      // LOUDNESS AND THE TAKE FADE SHARE ONE CHANNEL, so they are combined
+      // rather than one overwriting the other — and FLOORED at 0.4, because
+      // 0.5 × 0.42 is 0.21 and the file already learned that anything under
+      // ~0.3 reads as an outline. The selected and gathered notes keep their
+      // own full-strength treatment: those say "this is what you are working
+      // on", which outranks both.
+      const la = (isSel || isGrp) ? 1 : loudA(n);
+      const ta = (stab && !playing && !fromPv && !isSel && !isGrp) ? (0.5 + 0.5 * stab[i]) : 1;
+      if (la < 1 || ta < 1) g.globalAlpha = Math.max(0.4, la * ta);   // …and a previewed cycle is a sounding one
       g.fill(); g.stroke();
       g.globalAlpha = 1;
       if (selKeys && willGo && !isSel && !isGrp) {
@@ -10493,7 +10545,8 @@
       // like everything else here, so a reader — the gate included — asks the
       // picture's own claim rather than re-deriving the ownership rule beside
       // it and eventually disagreeing with what was drawn.
-      cv._hits.push({ x: xv, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
+      cv._hits.push({ a: Math.round(loudA(n) * 1000) / 1000,
+                      x: xv, y, w: ww, h: nh, i: (Number.isFinite(n.nidx) ? n.nidx : i),
                       t: n.at / cyc, midi: mids[i], go: !!willGo });
     }
     // …and NOW the count of what fell outside is known

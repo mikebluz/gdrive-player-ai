@@ -428,6 +428,47 @@
   // that really scope this card are `kind` (generated vs written) and `voice`
   // (synth vs kit), and both already existed.
   const FORMS = new Set(['roll', 'steps']);
+  // ── ⑁ LENGTH SHAPE — THE FIGURES ────────────────────────────────────
+  // Each is a short cycle of [length×, weight×] applied per onset within the
+  // BAR, so a shape reads the same at any tempo or part length — the same unit
+  // ♦ Beat's lanes and ⊞ Resolution are written in, and the reason a figure
+  // stays recognisable when the part grows.
+  // LENGTH AND WEIGHT MOVE TOGETHER because that is what makes a figure sound
+  // played rather than programmed: the long note is the leaned-on one. Keeping
+  // them on separate axes is what Note length + Accent already were, and it is
+  // exactly the combination that could not state a meter.
+  // Multipliers, never absolutes — Note length stays the part's base character
+  // while the shape says how each onset departs from it, so switching a shape
+  // on does not throw away the sound you had.
+  const LEN_SHAPES = {
+    longshort: { lab: 'Long – short', tip: 'The downbeat is held and the answer is clipped — the plainest way to make a line breathe.',
+                 cyc: [[1.45, 1.12], [0.55, 0.92]] },
+    shortlong: { lab: 'Short – long', tip: 'A clipped pickup into a held note — the figure leans forward instead of back.',
+                 cyc: [[0.55, 0.92], [1.45, 1.12]] },
+    push:      { lab: 'Push', tip: 'Even until the last onset of the bar, which is held and leaned on — it pushes into the next bar.',
+                 cyc: null },
+    swell:     { lab: 'Swell', tip: 'Notes grow longer and louder across the bar and reset at the top — a ramp toward the turn.',
+                 cyc: null },
+    stab:      { lab: 'Stabs', tip: 'Every note clipped short and even — the most rhythmic reading of the same notes.',
+                 cyc: [[0.42, 1.0]] },
+  };
+  const SHAPES = new Set(Object.keys(LEN_SHAPES));
+  // WHERE AN ONSET SITS IN ITS BAR decides the figure, not where it sits in the
+  // cycle: `f` is the cycle fraction and `bars` the cycle's length, so `pos` is
+  // the onset's index within its own bar and `of` how many onsets that bar has.
+  // Falls back to the cycle when the bar count is not knowable, which keeps a
+  // free-clock part working rather than silently flat.
+  function lenShapeAt(kind, pos, of) {
+    const sp = LEN_SHAPES[kind]; if (!sp) return null;
+    const n = Math.max(1, of | 0), i = Math.max(0, pos | 0) % n;
+    if (sp.cyc) return sp.cyc[i % sp.cyc.length];
+    if (kind === 'push') return (i === n - 1) ? [1.6, 1.15] : [0.9, 0.98];
+    if (kind === 'swell') {
+      const t = (n === 1) ? 1 : i / (n - 1);
+      return [0.7 + t * 0.8, 0.9 + t * 0.3];
+    }
+    return null;
+  }
   const formOf = (L) => {
     const f = L && L.part && L.part.form;
     return FORMS.has(f) ? f : 'roll';
@@ -1532,6 +1573,22 @@
       // 0 = off, i.e. Length governs. Stored only when it is doing something.
       if (Number.isFinite(s.holdSteps) && s.holdSteps > 0) s.holdSteps = clamp(s.holdSteps | 0, 0, 16);
       else delete s.holdSteps;
+      // ── ⑁ LENGTH SHAPE (2026-09-23) ─────────────────────────────────
+      // user: "I want to be able to insert more excitement and interest into
+      // generated part, starting from something straightforward and aligned to
+      // the part" — then: "it should be parallel to the current length/accent
+      // controls (if this one is active it overrides those other ones)".
+      // Note length is ONE number and Length vary scatters it at random, so a
+      // line could be even or noisy and nothing in between. A shape is the
+      // missing middle: a short repeating figure of length-and-weight over the
+      // bar, which is how a part states its own meter.
+      // A PEER, NOT A MODIFIER. While it is set it DECIDES both the duration
+      // and the weight, and Note length, Length vary and Accent are not
+      // consulted — the card greys them and says which control took over, the
+      // same way every other outranked row on this card does.
+      // ADDITIVE AND ABSENT BY DEFAULT: '' is off and is pruned, so every part
+      // saved before this reads and re-saves byte for byte.
+      if (SHAPES.has(s.lenShape)) { /* kept */ } else delete s.lenShape;
       // MAX EVENTS IS GONE (2026-09-18) — and the STORED value goes with it.
       // Dropping only the control would have left a project that had one set
       // playing a truncated cycle with nothing on the card able to switch it
@@ -4221,9 +4278,36 @@
         if (gset.hold !== lr0) dm0 = Math.max(20, Math.round(dm0 * (gset.hold / lr0)));
       }
       let dm = dm0;
+      // ⑁ LENGTH SHAPE OUTRANKS BOTH. While a shape is set it decides the
+      // duration and the weight, so Length vary is not consulted — the card
+      // greys it and names the cause. A figure and a scatter over the same
+      // note is neither: the figure stops being recognisable and the scatter
+      // stops sounding random.
+      // THE FIGURE IS PER BAR. `onsBar` is which onset of its own bar this is
+      // and `onsOfBar` how many that bar holds, so the same shape reads alike
+      // at any part length — the unit ♦ Beat's lanes and ⊞ Resolution use.
+      const shKind = (p.shape && p.shape.lenShape) || '';
+      let shW = 0;
+      if (shKind) {
+        const bn = Math.max(1, Math.round(+p.bars || 1));
+        const f0 = ons[i] || 0;
+        const bIdx = Math.min(bn - 1, Math.floor(f0 * bn + 1e-9));
+        let posInBar = 0, ofBar = 0;
+        for (let q = 0; q < ons.length; q++) {
+          const bq = Math.min(bn - 1, Math.floor((ons[q] || 0) * bn + 1e-9));
+          if (bq !== bIdx) continue;
+          if (q < i) posInBar++;
+          ofBar++;
+        }
+        const mult = lenShapeAt(shKind, posInBar, ofBar);
+        if (mult) {
+          dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * mult[0]));
+          shW = mult[1];
+        }
+      }
       // …and Len vary may not scatter a note below the floor (it only ever
       // shortens past it — a lengthened note is never a problem)
-      if (lvar > 0) dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * (1 + (vRnd(stageSeed('len', chgOf2 ? Math.round((ons[i] || 0) * 1e6 / 1000) : si) ^ (si * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
+      else if (lvar > 0) dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * (1 + (vRnd(stageSeed('len', chgOf2 ? Math.round((ons[i] || 0) * 1e6 / 1000) : si) ^ (si * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
       // PHRASING — v1's GESTURE CELLS. With probability `phrasing` this onset
       // takes a shaped figure — relative onsets and durations with an ARRIVAL
       // note (agogic emphasis: long, and leaned on) — instead of a uniform
@@ -4410,6 +4494,11 @@
         for (let v = 0; v < ms.length; v++) {
           const off = slipMax > 0 ? vRnd(seedBase ^ ((si * 31 + v) * 2246822519), 137) * slipMax : 0;
           const nt2 = { at: at + off, freq: midiToFreq(ms[v]), durMs: dm };
+          // ⑁ THE FIGURE'S WEIGHT rides with the note so the EMITTER can lean
+          // on it and skip Accent — a separate field, never `vel`, because
+          // `vel` is a HAND-EDITED note's own volume and accent is applied on
+          // top of it by design. Two different facts must not share a store.
+          if (shW > 0) nt2.shw = shW;
           // Only the FIRST voice of an onset carries the degree — a slide and an
           // ornament are gestures on the LINE, not on each note of a chord.
           if (v === 0 && p._deg != null) { nt2.deg = p._deg; nt2.oct = p._oct | 0; }
@@ -5519,9 +5608,20 @@
         // ACCENT draws from the SHARED seeded stream exactly as v1 does, and
         // only when non-zero — so a layer with no accent and a neutral groove
         // consumes no draw and shifts nothing downstream.
-        try {
-          if (typeof _ambAccentVol === 'function') vol = _ambAccentVol(vol, (perfOf(L, 'accent') | 0) || 0);
-        } catch (e) {}
+        // ⑁ A LENGTH SHAPE OUTRANKS ACCENT. While a shape is set the figure
+        // decides the weight, so Accent's seeded draw is not taken at all —
+        // asked for outright ("if this one is active it overrides those other
+        // ones"), and musically the point: a figure whose long note is leaned
+        // on is what states a meter, while a random accent over it would blur
+        // the very thing the shape is saying. The card greys Accent and names
+        // the cause rather than leaving a knob that quietly does nothing.
+        if (Number.isFinite(n.shw) && n.shw > 0) {
+          vol = Math.max(1, Math.min(127, Math.round(vol * n.shw)));
+        } else {
+          try {
+            if (typeof _ambAccentVol === 'function') vol = _ambAccentVol(vol, (perfOf(L, 'accent') | 0) || 0);
+          } catch (e) {}
+        }
         if (L.instrument.voice === 'kit' && Number.isFinite(n.lane)) {
           if (L.instrument.kit === 'synth') {
             try { _ambPlaySynthDrum(E, dest, L, n.lane, at, vol, null, 0, 0); } catch (e) {}
@@ -7230,6 +7330,11 @@
     // builds its row and its scaler from these, and a second copy of the list
     // is how the panel comes to offer a grid the emitter will not honour.
     BEAT_PERS, BEAT_PER_BAR, beatPerOf,
+    // ⑁ The shape table crosses to the CARD's IIFE for its labels — exported
+    // rather than duplicated, the same rule the lane table states: two copies
+    // of one table is how the two halves come to disagree about what a figure
+    // is called.
+    LEN_SHAPES,
     // ── THE RULES, RESOLVED INTO A GRID YOU CAN EDIT ───────────────────────
     // Entering ▦ Pattern on a kit SEEDS the lanes from the beat, exactly as the
     // single-row form seeds `cells` from the euclid. Without it the form opens
@@ -14490,13 +14595,25 @@
               // — so the static value was buried and the thing that makes it
               // BREATHE was buried under that. A control whose whole purpose is
               // variation is useless at a depth nobody reaches.
+              // ── ⑁ LENGTH SHAPE (2026-09-23) ───────────────────────
+              // The missing middle between one flat number and a random
+              // scatter: a short figure of length AND weight per bar. A PEER
+              // of the two rows under it — while it is set it decides both, and
+              // they grey rather than lying about what they still control.
+              gsel(L, 'part.shape.lenShape', '\u2441 Length shape',
+                   (L.part.shape || {}).lenShape || '',
+                   [['', 'Off \u2014 use the two below']].concat(
+                     Object.keys(V2.LEN_SHAPES).map((k) => [k, V2.LEN_SHAPES[k].lab])),
+                   'a figure of length and weight, repeated every bar \u2014 it takes over Note length, Length vary and Accent',
+                   'kind:live;rhythm:pulse,euclid,drawn,chance')
+                .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary v2-lenshape') +
               gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
                   '% of the slot each note sounds \u2014 short is stabbed, 100 is legato',
-                  'kind:live;rhythm:pulse,euclid,drawn,chance')
+                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:off')
                 .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary') +
               gsl(L, 'lenVary', 'Length vary', num(L.lenVary, 0), 0, 100,
                   '% scatter on that length \u2014 0 is machine-even',
-                  'kind:live;rhythm:pulse,euclid,drawn,chance')
+                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:off')
                 .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary') +
               (function (bl) {
                 // ── ⊞ RESOLUTION — THE GROOVE'S SPEED (2026-09-22) ──────
@@ -16159,6 +16276,12 @@
       // piece so the Size tab can show exactly the knob in force, with no
       // second stored field and no show/hide wired by hand.
       size: (((p.shape || {}).holdSteps | 0) > 0) ? 'hold' : 'length',
+      // ⑁ IS A LENGTH SHAPE IN FORCE? The two rows it outranks carry
+      // `shape:off`, so they GREY while it is on — pointing at the control
+      // that took them over instead of vanishing, which is the rule this card
+      // already applies to `kind` and `vary`. A knob that silently stops
+      // working is the dead-control shape this panel keeps weeding out.
+      shape: ((p.shape || {}).lenShape) ? 'on' : 'off',
     };
     now.on = ['delay', 'dist', 'chorus', 'phaser', 'autopan', 'glitch']
       .filter(k => { const f = fx(L, k); return num(f.mix, 0) > 0 || !!f.dryKill; });
@@ -16191,6 +16314,11 @@
                                          : want.indexOf(have) >= 0;
         if (piece === 'kind') { kindOk = pass; wantsLive = want.indexOf('live') >= 0; }
         else if (piece === 'vary') { varyOk = pass; }
+        // ⑁ OUTRANKED, NOT IRRELEVANT — judged with `vary` for the same reason:
+        // a row failing only on `shape` is this layer's control being taken over
+        // by the row directly above it, so it GREYS and teaches what did that,
+        // where vanishing would say nothing.
+        else if (piece === 'shape') { varyOk = varyOk && pass; }
         else if (!pass) othersOk = false;
       });
       // ONLY PARAMETER ROWS grey — a gated BUTTON (the take bar's 🎲 New

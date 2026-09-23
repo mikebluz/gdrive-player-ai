@@ -1416,6 +1416,14 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   measured as 18 hits in the first 32 cells of 128 after rolling a Line and switching to ▦ Pattern
   ("most steps unpopulated"). Invisible on a one-bar part, where the two numbers coincide; only a
   multi-bar part can catch it. The Steps knob's own handler already stated this ordering.
+- **A CONTROL THAT OUTRANKS ANOTHER MUST SAY SO, AND THE OTHER MUST GREY.** ⑁ Length shape decides
+  duration AND weight while it is set, so `lenVary` and Accent are not consulted at all — a figure
+  plus a scatter is neither (the figure stops being recognisable and the scatter stops sounding
+  random). Its gate piece is `shape:on|off` and the outranked rows carry `shape:off`, judged with
+  `vary` so they GREY rather than vanish: a knob that silently stops working is the dead-control
+  shape this panel keeps weeding out. The weight rides on the note as its OWN field (`shw`), never
+  `vel` — `vel` is a hand-edited note's volume and Accent is applied on top of it by design, so two
+  different facts must not share a store.
 - **PER-CYCLE RANDOMNESS NEEDS `part.vary`; WITHOUT IT EVERY DIE IS ONE THROW, FOREVER.** `cycIdx`
   seeds every per-hit draw (rests, ghosts, chance, pitch vary) and it only advances per cycle when
   the part re-decides each pass — otherwise it is `take + epoch`, constant. A probability measured

@@ -9915,6 +9915,23 @@
     // and the boundary lines say where it ends whatever fits.
     if (cmarks) {
       g.save();
+      // ── A CHANGE LANDS ON THE SAME PIXEL AS THE NOTE THAT STARTS ON IT ──
+      // user, 2026-09-23, of a note beside a full-height change line: "still
+      // not exactly lined up".
+      // The note x and the bar-line x now agree (both snapped), but a CHANGE
+      // comes from a third clock: `_ambChordSpanAt` BISECTS for its boundary,
+      // and this file already documents that the result "carries float noise
+      // per query" — two calls 16ms apart came back ~10ms apart. A boundary at
+      // bar 3 therefore arrives as 0.37499997 instead of 0.375, and when
+      // `xF` puts that within a hair of a .5 the rounding falls the other way:
+      // the line lands one pixel left of the note that starts on it.
+      // QUANTISING THE FRACTION WAS TRIED AND BACKED OUT. The theory was that
+      // the bisection's noise flips the rounding a pixel; the measurement says
+      // otherwise — with and without it the change line and the note that
+      // starts on it land on the SAME pixel (delta 0). An unverified mechanism
+      // dressed as a fix is worse than no fix, so what stays is the thing that
+      // made it answerable: the line's x, published.
+      const chordX = [];
       for (let i = 0; i < cmarks.length; i++) {
         const m2 = cmarks[i];
         const x0 = Math.max(GUT, xF(m2.f0)), x1 = Math.min(w, xF(m2.f1));
@@ -9923,6 +9940,10 @@
         g.fillRect(x0, 0, x1 - x0, CHT);
         if (m2.f0 > 1e-4) {                       // the change itself, full height
           const xb = Math.round(x0) + 0.5;
+          // PUBLISHED so a probe can ask the picture where it drew the line
+          // rather than re-deriving the mapping — re-deriving it is this whole
+          // family of bugs.
+          chordX.push(Math.round(x0));
           g.strokeStyle = 'rgba(159,122,234,0.45)'; g.lineWidth = 1;
           g.beginPath(); g.moveTo(xb, 0); g.lineTo(xb, h); g.stroke();
         }
@@ -9938,6 +9959,7 @@
       g.strokeStyle = 'rgba(159,122,234,0.18)'; g.lineWidth = 1;
       g.beginPath(); g.moveTo(GUT, CHT + 0.5); g.lineTo(w, CHT + 0.5); g.stroke();
       g.restore();
+      cv._chordX = chordX;
     }
     // THE SELECTED BARS, tinted full-height so "which bars will re-roll" is on
     // the picture, not in a caption. Geometry recorded for the tap handler —

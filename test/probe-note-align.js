@@ -102,6 +102,53 @@ const ok = (name, cond, detail) => {
   ok('a note on a bar line starts exactly on that line',
     measure.worst === 0, 'worst offset ' + measure.worst + 'px — ' + JSON.stringify(measure.offsets));
 
+  // ── AND A CHANGE LINE LANDS ON THE NOTE THAT STARTS ON IT ───────────
+  // user, of a note beside a full-height change line: "still not exactly lined
+  // up". A CHANGE is a third clock: `_ambChordSpanAt` bisects for its boundary
+  // and this file already documents that the answer "carries float noise per
+  // query", so bar 3 arrives as 0.37499997 and the rounding can fall a pixel
+  // the other way from the note's.
+  const chords = await page.evaluate(async () => {
+    const E = _masterEng;
+    const cfg = E.getCfg();
+    cfg.prog.on = true;
+    // Changes at bar 3 and bar 7 — both on a beat a note also starts on.
+    cfg.prog.chords = [
+      { root: 2, intervals: [0, 4, 7], bars: 3 },
+      { root: 6, intervals: [0, 3, 7], bars: 4 },
+      { root: 7, intervals: [0, 4, 7], bars: 1 }];
+    cfg.barsPerChord = 2;
+    delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+    E.getCfg();
+    const L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; delete L.part.form;
+    L.part.bars = 8; L.part.barsMode = 'fill';
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 };
+    L.part.pitch = Object.assign({}, L.part.pitch, { kind: 'fixed', degree: 1 });
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 1300));
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    if (!cv) return { err: 'no canvas' };
+    const xs = cv._chordX || [];
+    const lefts = (cv._hits || []).map((ht) => ht.x);
+    const deltas = xs.map((cx) => {
+      const near = lefts.filter((lx) => Math.abs(lx - cx) < 8);
+      if (!near.length) return null;
+      const best = near.reduce((a, b) => (Math.abs(a - cx) <= Math.abs(b - cx) ? a : b));
+      return best - cx;
+    }).filter((d) => d !== null);
+    return { lines: xs.length, xs: xs, deltas: deltas,
+             worst: deltas.length ? Math.max.apply(null, deltas.map(Math.abs)) : null };
+  });
+  console.log('  change lines: ' + JSON.stringify(chords) + '\n');
+  ok('the drawing published where it put its change lines',
+    !chords.err && chords.lines > 0, JSON.stringify(chords));
+  ok('a note starting on a change is drawn on that change line',
+    chords.worst === 0,
+    'worst ' + chords.worst + 'px \u2014 deltas ' + JSON.stringify(chords.deltas));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

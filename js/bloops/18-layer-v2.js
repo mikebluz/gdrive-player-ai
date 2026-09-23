@@ -10196,9 +10196,25 @@
       // skipped so it cannot be hit-tested either (a hit box off screen is a
       // tap target nobody can see).
       if (x + dw <= GUT || x >= w) continue;
-      const xv = Math.max(GUT, x);
-      const ww = Math.min(dw - (xv - x), w - xv);
-      if (!(ww > 0)) continue;
+      const xv0 = Math.max(GUT, x);
+      const ww0 = Math.min(dw - (xv0 - x), w - xv0);
+      if (!(ww0 > 0)) continue;
+      // ── ON THE LINE, TO THE PIXEL (2026-09-23) ───────────────────────
+      // user: "the left border of the note events don't line up exactly with
+      // their starting line".
+      // TWO DERIVATIONS OF ONE X, which is this file's oldest recurring fault.
+      // A bar line is drawn at `Math.round(xF(…)) + 0.5` — snapped to the pixel
+      // grid so a 1px stroke is crisp — while a note was filled at the raw
+      // `xF(…)`. A note ON the bar therefore started a fraction of a pixel off
+      // the line, the canvas antialiased that fraction across two columns, and
+      // the eye read it as not lining up. Nothing about the MUSIC was off: the
+      // editor says "bar 4 · beat 1" because the note is exactly there.
+      // The same reasoning as the square corners two comments down, which fixed
+      // the other half of this once already ("the corner IS the onset").
+      // BOTH EDGES are snapped, so a note keeps its width in whole pixels
+      // instead of the rounding stealing a column from its end.
+      const xv = Math.round(xv0);
+      const ww = Math.max(2, Math.round(xv0 + ww0) - xv);
       // THE NOTE BEING EDITED IS MARKED. With the editor inline the drawing
       // stays visible while you work, which is the point of it — but "Note 2 of
       // 4" names a position in a list, not a mark on the picture.

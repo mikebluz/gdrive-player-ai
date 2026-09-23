@@ -200,6 +200,15 @@
 - **A card fold is a CLASS (`v2-so-<id>`) and a card rebuild dropped it** — ▸ Fine-tune holds Steps, whose
   commit rebuilds the card, so the fold shut under the finger. `V2.render` now carries `v2-so-*` across.
   Anything that lands on a row INSIDE a fold (🔍 Find) must press the fold's own button, or it marks a 0×0 row.
+- **A STROKED GRIDLINE AND A FILLED BLOCK MUST BE SNAPPED THE SAME WAY, or they cannot line up.**
+  A bar line is drawn at `Math.round(xF(f)) + 0.5` — the +0.5 centres a 1px stroke on the pixel
+  column starting at `round(x)`. A note filled at the RAW `xF(f)` therefore starts up to half a pixel
+  off that column, the canvas antialiases the fraction across two columns, and a note that is exactly
+  on the beat READS as off it. Measured: −0.5px on alternating bars, with fractional left edges.
+  Snap BOTH edges of the rect (`round(x)`, and `round(x + w) - round(x)` for the width) so it keeps
+  whole-pixel width instead of the rounding stealing a column from its end — and let the hit box use
+  the drawn rect, so tapping matches the picture. The square-corner fix one comment away solved the
+  other half of this same complaint; this is the sub-pixel half.
 - **A CLASS RULE SETTING `display` BEATS THE `hidden` ATTRIBUTE.** `[hidden] { display: none }` is a
   UA rule at specificity (0,1,0); `.v2-layer .v2-thing { display: block }` is (0,2,0) and wins, so the
   element stays on screen through every state the JS believes it hid. Reported with the card reading

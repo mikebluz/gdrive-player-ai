@@ -222,6 +222,74 @@ const ok = (name, cond, detail) => {
     new Set(denseSwell.durs.slice(0, 6)).size > 1,
     JSON.stringify({ push: densePush.durs.slice(0, 3), swell: denseSwell.durs.slice(0, 6) }));
 
+  // ── MORE FIGURES, AND THREE KNOBS THAT EDIT THEM ────────────────
+  // user: "add more length shapes, also add some params so the user can edit
+  // the shape". A menu of finished answers is a menu; Depth, Weight and Turn
+  // make the table a starting point.
+  const opts2 = await page.evaluate(() =>
+    [...document.querySelectorAll('.v2-layer .v2-f[data-f="part.shape.lenShape"] option')]
+      .map((o) => o.value).filter(Boolean));
+  console.log('  figures: ' + JSON.stringify(opts2));
+  ok('the figure list has grown',
+    opts2.length >= 10 && ['gallop', 'pairs', 'downbeat', 'fade', 'arch']
+      .every((k) => opts2.indexOf(k) >= 0), JSON.stringify(opts2));
+
+  const tune = async (shape, depth, weight, turn) => page.evaluate(async (shape, depth, weight, turn) => {
+    const E = _masterEng, V = window._v2;
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    const L = V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    L.part.bars = 2;
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 };
+    L.part.shape = Object.assign({}, L.part.shape,
+      { lenRatio: 70, lenShape: shape, lenDepth: depth, lenWeight: weight, lenTurn: turn });
+    L.lenVary = 0;
+    E.getCfg();
+    await new Promise((r) => setTimeout(r, 250));
+    const l = V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+    const cyc = V.cycleSec(l, E.getCfg());
+    const ns = (V.withEdit(() => V.withTake(0, () => V.notesFor(l,
+      { E, cfg: E.getCfg(), key: 'v2:' + l.id, cycleStart: 0, cycleSec: cyc }))) || [])
+      .slice().sort((a, b) => a.at - b.at);
+    return { durs: ns.map((x) => Math.round(x.durMs || 0)).slice(0, 8),
+             ws: ns.map((x) => (Number.isFinite(x.shw) ? Math.round(x.shw * 100) / 100 : null)).slice(0, 4) };
+  }, shape, depth, weight, turn);
+
+  const full = await tune('longshort', 100, 100, 0);
+  const half = await tune('longshort', 50, 100, 0);
+  const flatD = await tune('longshort', 0, 100, 0);
+  const noW = await tune('longshort', 100, 0, 0);
+  const turned = await tune('longshort', 100, 100, 1);
+  const gall = await tune('gallop', 100, 100, 0);
+  console.log('  depth 100: ' + JSON.stringify(full.durs.slice(0, 4)) + '  weights ' + JSON.stringify(full.ws));
+  console.log('  depth 50:  ' + JSON.stringify(half.durs.slice(0, 4)));
+  console.log('  depth 0:   ' + JSON.stringify(flatD.durs.slice(0, 4)));
+  console.log('  weight 0:  ' + JSON.stringify(noW.durs.slice(0, 4)) + '  weights ' + JSON.stringify(noW.ws));
+  console.log('  turn 1:    ' + JSON.stringify(turned.durs.slice(0, 4)));
+  console.log('  gallop:    ' + JSON.stringify(gall.durs.slice(0, 6)) + '\n');
+
+  // DEPTH scales the departure from even, both ways.
+  ok('Depth 50 is half the figure of Depth 100',
+    half.durs[0] < full.durs[0] && half.durs[1] > full.durs[1] &&
+    half.durs[0] > half.durs[1],
+    JSON.stringify({ full: full.durs.slice(0, 2), half: half.durs.slice(0, 2) }));
+  ok('…and Depth 0 is flat, which is what Off means',
+    new Set(flatD.durs).size === 1, JSON.stringify(flatD.durs.slice(0, 4)));
+  // WEIGHT decides how much reaches loudness, and must not touch the lengths.
+  ok('Weight 0 shapes length only — same durations, no lean',
+    JSON.stringify(noW.durs) === JSON.stringify(full.durs) &&
+    noW.ws.every((w) => w === 1),
+    JSON.stringify({ durs: noW.durs.slice(0, 2), ws: noW.ws }));
+  // TURN rotates the figure, so the bar starts on the other half of it.
+  ok('Turn 1 starts the figure on its second step',
+    turned.durs[0] === full.durs[1] && turned.durs[1] === full.durs[0],
+    JSON.stringify({ turned: turned.durs.slice(0, 2), full: full.durs.slice(0, 2) }));
+  // AND A NEW FIGURE IS REALLY A FIGURE.
+  ok('Gallop is one held and two clipped, repeating',
+    gall.durs[0] > gall.durs[1] && gall.durs[1] === gall.durs[2] &&
+    gall.durs[3] === gall.durs[0],
+    JSON.stringify(gall.durs.slice(0, 6)));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

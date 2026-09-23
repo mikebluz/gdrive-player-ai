@@ -445,9 +445,19 @@
                  cyc: [[1.45, 1.12], [0.55, 0.92]] },
     shortlong: { lab: 'Short – long', tip: 'A clipped pickup into a held note — the figure leans forward instead of back.',
                  cyc: [[0.55, 0.92], [1.45, 1.12]] },
+    gallop:    { lab: 'Gallop', tip: 'One held, two clipped — the dotted figure that drives a line forward.',
+                 cyc: [[1.35, 1.12], [0.5, 0.9], [0.5, 0.9]] },
+    pairs:     { lab: 'Pairs', tip: 'Two held then two clipped — a two-beat feel over a straight grid.',
+                 cyc: [[1.3, 1.08], [1.3, 1.08], [0.6, 0.92], [0.6, 0.92]] },
     push:      { lab: 'Push', tip: 'Even until the last onset of the bar, which is held and leaned on — it pushes into the next bar.',
                  cyc: null },
+    downbeat:  { lab: 'Downbeat', tip: 'The first onset of the bar is held and leaned on, the rest even — it states the bar rather than pushing past it.',
+                 cyc: null },
     swell:     { lab: 'Swell', tip: 'Notes grow longer and louder across the bar and reset at the top — a ramp toward the turn.',
+                 cyc: null },
+    fade:      { lab: 'Fade', tip: 'The mirror of Swell — notes shorten and soften across the bar, so each bar falls away.',
+                 cyc: null },
+    arch:      { lab: 'Arch', tip: 'Grows to the middle of the bar and falls back — a phrase with a top rather than a ramp.',
                  cyc: null },
     stab:      { lab: 'Stabs', tip: 'Every note clipped short and even — the most rhythmic reading of the same notes.',
                  cyc: [[0.42, 1.0]] },
@@ -458,16 +468,41 @@
   // the onset's index within its own bar and `of` how many onsets that bar has.
   // Falls back to the cycle when the bar count is not knowable, which keeps a
   // free-clock part working rather than silently flat.
-  function lenShapeAt(kind, pos, of) {
+  // …and the three knobs that EDIT whatever figure is picked, so the table is a
+  // starting point rather than a menu of finished answers:
+  //   DEPTH  scales every departure from even — `1 + (m - 1) × depth`. At 0 the
+  //          figure is flat (which is what Off already is, so the row says so
+  //          rather than pretending 0 is useful); at 100 it is the table's own.
+  //          Over 100 it exaggerates, which is why the slider runs to 200.
+  //   WEIGHT how much of the figure reaches LOUDNESS. At 0 it shapes length
+  //          only — the answer for "I want the rhythm, not the dynamics" — and
+  //          at 100 the long note is leaned on as the table intends.
+  //   TURN   rotates the figure within the bar, so Long–short can start on the
+  //          short. One control turns every cyclic figure into its inversions
+  //          instead of the table needing an entry for each.
+  function lenShapeAt(kind, pos, of, depth, weight, turn) {
     const sp = LEN_SHAPES[kind]; if (!sp) return null;
-    const n = Math.max(1, of | 0), i = Math.max(0, pos | 0) % n;
-    if (sp.cyc) return sp.cyc[i % sp.cyc.length];
-    if (kind === 'push') return (i === n - 1) ? [1.6, 1.15] : [0.9, 0.98];
-    if (kind === 'swell') {
-      const t = (n === 1) ? 1 : i / (n - 1);
-      return [0.7 + t * 0.8, 0.9 + t * 0.3];
+    const n = Math.max(1, of | 0);
+    const i = (((Math.max(0, pos | 0) + (turn | 0)) % n) + n) % n;
+    let m = null;
+    if (sp.cyc) m = sp.cyc[i % sp.cyc.length];
+    else if (kind === 'push') m = (i === n - 1) ? [1.6, 1.15] : [0.9, 0.98];
+    else if (kind === 'downbeat') m = (i === 0) ? [1.6, 1.15] : [0.9, 0.98];
+    else if (kind === 'swell') { const t = (n === 1) ? 1 : i / (n - 1); m = [0.7 + t * 0.8, 0.9 + t * 0.3]; }
+    else if (kind === 'fade') { const t = (n === 1) ? 1 : i / (n - 1); m = [1.5 - t * 0.8, 1.2 - t * 0.3]; }
+    else if (kind === 'arch') {
+      // 0 at the edges, 1 at the middle — a top rather than a ramp.
+      const t = (n === 1) ? 1 : 1 - Math.abs((i / (n - 1)) * 2 - 1);
+      m = [0.7 + t * 0.8, 0.9 + t * 0.3];
     }
-    return null;
+    if (!m) return null;
+    const d = (depth == null) ? 1 : Math.max(0, Math.min(2, depth / 100));
+    const wq = (weight == null) ? 1 : Math.max(0, Math.min(1, weight / 100));
+    // DEPTH scales BOTH axes — it is "how much figure", not "how much length"
+    // — and WEIGHT then decides how much of the shaped weight is spent.
+    const len = 1 + (m[0] - 1) * d;
+    const wgt = 1 + ((1 + (m[1] - 1) * d) - 1) * wq;
+    return [Math.max(0.05, len), Math.max(0.05, wgt)];
   }
   const formOf = (L) => {
     const f = L && L.part && L.part.form;
@@ -1589,6 +1624,18 @@
       // ADDITIVE AND ABSENT BY DEFAULT: '' is off and is pruned, so every part
       // saved before this reads and re-saves byte for byte.
       if (SHAPES.has(s.lenShape)) { /* kept */ } else delete s.lenShape;
+      // …AND THE THREE THAT EDIT IT. Each is pruned at its neutral value, so a
+      // figure left as the table wrote it stores nothing beyond its name and an
+      // untouched project is byte-identical. They are kept even with no shape
+      // picked — a setting you tuned must still be there when you switch the
+      // figure back on, which is the same reason ⇄ Roll and ▦ Pattern keep
+      // each other's material.
+      if (Number.isFinite(s.lenDepth) && (s.lenDepth | 0) !== 100) s.lenDepth = clamp(s.lenDepth | 0, 0, 200);
+      else delete s.lenDepth;
+      if (Number.isFinite(s.lenWeight) && (s.lenWeight | 0) !== 100) s.lenWeight = clamp(s.lenWeight | 0, 0, 100);
+      else delete s.lenWeight;
+      if (Number.isFinite(s.lenTurn) && (s.lenTurn | 0) > 0) s.lenTurn = clamp(s.lenTurn | 0, 0, 15);
+      else delete s.lenTurn;
       // MAX EVENTS IS GONE (2026-09-18) — and the STORED value goes with it.
       // Dropping only the control would have left a project that had one set
       // playing a truncated cycle with nothing on the card able to switch it
@@ -4307,7 +4354,10 @@
           if (q < i) posInBar++;
           ofBar++;
         }
-        const mult = lenShapeAt(shKind, posInBar, ofBar);
+        const mult = lenShapeAt(shKind, posInBar, ofBar,
+          Number.isFinite(p.shape.lenDepth) ? p.shape.lenDepth : 100,
+          Number.isFinite(p.shape.lenWeight) ? p.shape.lenWeight : 100,
+          (p.shape.lenTurn | 0) || 0);
         if (mult) {
           // NEVER PAST THE NEXT ONSET. Note length is a PERCENTAGE OF THE GAP
           // and its slider stops at 100, so no note could ever overlap its
@@ -14626,6 +14676,23 @@
                    'a figure of length and weight, repeated every bar \u2014 it takes over Note length, Length vary and Accent',
                    'kind:live;rhythm:pulse,euclid,drawn,chance')
                 .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary v2-lenshape') +
+              // …AND THE FIGURE IS EDITABLE. A menu of finished answers is a
+              // menu; these three make the table a starting point. They carry
+              // `shape:on`, so with no figure picked they GREY beside it —
+              // pointing at what they belong to rather than appearing from
+              // nowhere the moment one is chosen.
+              gsl(L, 'part.shape.lenDepth', 'Shape depth',
+                  num((L.part.shape || {}).lenDepth, 100), 0, 200,
+                  '% of the figure \u2014 100 is as written, past that exaggerates',
+                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:on') +
+              gsl(L, 'part.shape.lenWeight', 'Shape weight',
+                  num((L.part.shape || {}).lenWeight, 100), 0, 100,
+                  '% of the figure spent on loudness \u2014 0 shapes length only',
+                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:on') +
+              gst(L, 'part.shape.lenTurn', 'Shape turn',
+                  ((L.part.shape || {}).lenTurn | 0), 0, 15,
+                  'onsets \u2014 start the figure later in the bar',
+                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:on') +
               gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
                   '% of the slot each note sounds \u2014 short is stabbed, 100 is legato',
                   'kind:live;rhythm:pulse,euclid,drawn,chance;shape:off')

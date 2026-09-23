@@ -7,6 +7,12 @@
 
 ### Measurement & testing discipline
 
+- **A SERVER THAT FAILED TO BIND LEAVES YOU MEASURING SOMEBODY ELSE'S BUILD.** `node server.js` on a
+  taken port exits with EADDRINUSE while an older listener keeps answering, so every probe run looks
+  plausible and tests the wrong code — measured 2026-09-22 as a feature "not working" that was
+  simply not being served (the build had it; the port did not). `curl -s <url>/js/… | grep -c
+  <a-string-only-your-change-has>` before believing a single result, and read the nohup log rather
+  than trusting that a background start succeeded.
 - **`localhost:3001` SERVES WHICHEVER CHECKOUT STARTED IT — usually not your worktree.** `server.js`
   is a static server rooted at its own cwd, so a fix committed in a worktree reads as NOT APPLIED in
   the browser and in every probe: the user's screenshot and a probe run both reproduced a bug that

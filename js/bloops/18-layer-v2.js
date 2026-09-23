@@ -9094,6 +9094,15 @@
         '</span>' +
       '</div>' +
       '<span class="v2-vizlab ambient-hint"></span>' +
+      // ⇄ EVEN THE PART, ON THE CARD — reported twice more after the warning
+      // landed ("still goes off with 2nd pass", "everything goes wrong on
+      // second pass of part"), both times with the card still reading 8.13
+      // bars. The cure existed, in the Cadence editor — which is not the
+      // screen you are on when you HEAR it, so the warning named a fix nobody
+      // reached. Same action, same arithmetic, one tap from the symptom.
+      '<button type="button" class="ambient-seg v2-evenfix" hidden ' +
+        'title="Open the Cadence for this part, where ⇄ Even it out makes the total a whole number of bars. The cadence is shared by every layer on this part.">' +
+        '⇄ Even the part…</button>' +
       '<canvas class="v2-vizcv" height="84"></canvas>' +
       '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
@@ -10411,6 +10420,13 @@
           (Math.round(off * 4 * 100) / 100 + ' beats');
         return ' · ⚠ uneven — every pass starts ' + frac + ' later against the beat';
       })();
+      // THE DOOR FOLLOWS THE VERDICT, from the one computation — two walks of
+      // "is this part uneven" is how the button and the sentence come to
+      // disagree about what they are describing.
+      try {
+        const fixBtn = host.querySelector('.v2-evenfix');
+        if (fixBtn) fixBtn.hidden = !unevenTxt;
+      } catch (e) {}
       lab.textContent = liveTxt(L, cfg) + ' · ' +
         played.length + ' note' + (played.length === 1 ? '' : 's') +
         (onsetN && onsetN !== played.length
@@ -20915,6 +20931,36 @@
         // than `part.kind` which branch emits. It says what is being left
         // behind rather than what is being lost, because a form you cannot see
         // is still playing nothing, and that is worth naming.
+        // ⇄ EVEN THE PART — the door, not a second implementation.
+        // The cure lived in the Cadence editor and the symptom is read here,
+        // so this card carries the way IN; the editor still does the work.
+        // TRIED IT INLINE FIRST AND BACKED IT OUT: applying `_ambCadEven` from
+        // here fixed the cadence and every layer's `part.bars` (measured: 8.125
+        // → 8, cycle 16s) and STILL left the warning up, because the drawing's
+        // length is the arrangement's PASS SPAN (`cycBars` ← `cycleWindowAt`),
+        // which only the editor's own commit re-anchors. Re-deriving that
+        // cascade beside it is precisely how the Scheduler lane once came to
+        // lie about the harmony — one owner for the chord clock.
+        const evb = t.closest && t.closest('.v2-evenfix');
+        if (evb) {
+          const ctx = layerOf(evb); if (!ctx) return;
+          let pi = 0;
+          try {
+            const pf = partForOf(ctx.L);
+            if (pf && pf.pi >= 0) pi = pf.pi;
+            else if (typeof _ambCurPartNow === 'function' && typeof _ambGridRanges === 'function') {
+              const c2 = E.getCfg();
+              pi = _ambCurPartNow(E, c2, _ambGridRanges(c2) || []) | 0;
+            }
+          } catch (e) {}
+          let opened = false;
+          try { if (typeof _ambCadenceModal === 'function') { _ambCadenceModal(E, pi); opened = true; } } catch (e) {}
+          if (!opened) {
+            try { if (typeof showToast === 'function') showToast(
+              'Open Changes ▸ Cadence to even this part out.', { ms: 4000 }); } catch (e) {}
+          }
+          return;
+        }
         const fmb = t.closest && t.closest('.v2-formbtn');
         if (fmb) {
           const ctx = layerOf(fmb); if (!ctx) return;

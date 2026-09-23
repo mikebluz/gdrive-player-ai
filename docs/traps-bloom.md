@@ -1364,6 +1364,11 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   button under the finger), so a button emitted only in one state can never come back when the state
   changes, and one emitted only in the other state sits there offering to fix what is already fixed.
   Render it always and drive `hidden` from the same verdict the text uses.
+- **THE DRAWING'S LENGTH IS THE ARRANGEMENT'S PASS SPAN, NOT `part.bars`.** `cycBars` comes from
+  `cycleWindowAt`, so evening a cadence from anywhere other than the Cadence editor's own commit
+  fixes `prog` AND every layer's `part.bars` (measured: 8.125 → 8, cycle 16s) and STILL leaves the
+  drawing, its readout and anything gated on them reading the old length. One owner for the chord
+  clock: send the user to that editor rather than re-deriving its cascade beside it.
 - **A PART THAT IS NOT A WHOLE NUMBER OF BARS DRIFTS AGAINST THE BEAT, ONE FRACTION PER PASS.** An
   8⅛-bar cadence loops every 8⅛ bars, so pass 2 starts ⅛ bar late, pass 3 ¼, pass 5 half a bar —
   reported as "the second is staggered and gets out of sync with the beat, feels about 1/8 or 1/4

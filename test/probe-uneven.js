@@ -144,6 +144,75 @@ const ok = (name, cond, detail) => {
   ok('…and the offer goes away once it is even',
     evened.stillOffered === false, 'the button is still there on an even cadence');
 
+  // ── ⇄ EVEN THE PART, FROM THE CARD ──────────────────────────────────────
+  // Reported twice more after the warning landed — "still goes off with 2nd
+  // pass", then "everything goes wrong on second pass of part" — both times
+  // with the card still reading 8.13 bars. The cure existed in the Cadence
+  // editor, which is not the screen you are on when you hear it, so the
+  // warning named a fix nobody reached. Same action, one tap from the symptom.
+  const fromCard = await page.evaluate(async () => {
+    const E = _masterEng;
+    const cfg = E.getCfg();
+    cfg.prog.on = true;
+    cfg.prog.chords = [
+      { root: 0, intervals: [0, 3, 7], bars: 2 }, { root: 5, intervals: [0, 4, 7], bars: 2 },
+      { root: 7, intervals: [0, 4, 7], bars: 2 }, { root: 2, intervals: [0, 3, 7], bars: 2.125 }];
+    cfg.barsPerChord = 2;
+    delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+    E.getCfg();
+    const L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; delete L.part.form;
+    L.part.barsMode = 'fill';
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 };
+    L.part.bars = _ambLenPartBars(E.getCfg(), 0);
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 900));
+    const btn = () => document.querySelector('.v2-layer .v2-evenfix');
+    const vis = (b) => { if (!b) return false; const r = b.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && !!b.offsetParent; };
+    const before = { total: Math.round(_ambLenPartBars(E.getCfg(), 0) * 1000) / 1000,
+                     shown: vis(btn()) };
+    // THE CARD'S BUTTON IS A DOOR: it opens the Cadence editor, where the
+    // action lives. Pressing it and then pressing ⇄ Even it out there is the
+    // whole path, and it is the path a finger takes.
+    const b0 = btn(); if (b0) b0.click();
+    await new Promise((r) => setTimeout(r, 900));
+    const modal = !!document.querySelector('.ambient-cad-modal .cad-even');
+    const ev2 = document.querySelector('.ambient-cad-modal .cad-even');
+    if (ev2) ev2.click();
+    await new Promise((r) => setTimeout(r, 900));
+    try { const c = document.querySelector('.ambient-cad-modal .cad-close'); if (c) c.click(); } catch (e) {}
+    await new Promise((r) => setTimeout(r, 900));
+    return { before, openedEditor: modal,
+             after: Math.round(_ambLenPartBars(E.getCfg(), 0) * 1000) / 1000,
+             stillShown: vis(btn()),
+             partBars: ((E.getCfg().layers || [])[0] || {}).part ?
+               (E.getCfg().layers || [])[0].part.bars : null,
+             cycSec: Math.round(window._v2.cycleSec((E.getCfg().layers || [])[0], E.getCfg()) * 100) / 100,
+             lens: _ambCadence(E.getCfg(), 0).map((v) => Math.round(v * 1000) / 1000) };
+  });
+  console.log('  from the card: ' + JSON.stringify(fromCard) + '\n');
+  ok('an uneven part shows \u21c4 Even the part on the layer card',
+    fromCard.before.shown === true && fromCard.before.total === 8.125,
+    JSON.stringify(fromCard.before));
+  ok('…and it opens the Cadence, where the action lives',
+    fromCard.openedEditor === true, JSON.stringify(fromCard));
+  ok('…and evening it there makes the part whole',
+    fromCard.after === 8, fromCard.before.total + ' \u2192 ' + fromCard.after);
+  // THE DOOR TRACKS THE PART, NOT THE CADENCE — and that distinction is the
+  // whole of "part/content integration". Evening the CADENCE makes it 8 bars;
+  // the layer's part follows when the cadence edit's own cascade is applied
+  // (a prompt, so a headless probe cannot answer it). Until then the part IS
+  // still 8.125 and the warning and its door are telling the truth. Asserting
+  // "the door went away" would have been asserting the wrong invariant.
+  const partWhole = Math.abs(fromCard.partBars - Math.round(fromCard.partBars)) < 1e-6;
+  ok('…and the door tracks the PART, staying while the part is still uneven',
+    fromCard.stillShown === !partWhole,
+    JSON.stringify({ partBars: fromCard.partBars, cadence: fromCard.after,
+                     doorShown: fromCard.stillShown }));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

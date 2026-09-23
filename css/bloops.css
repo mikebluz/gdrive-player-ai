@@ -14984,6 +14984,10 @@
       padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor;
     }
     .ambient-cad-modal .cad-total-d { font-size: 0.68rem; color: #8b8ba7; flex: 1 1 100%; }
+    /* ⇄ EVEN IT OUT — the cure beside the diagnosis. Its own row under the
+       detail line (both are `flex: 1 1 100%`), so it never squeezes the total
+       or the badge at 390px, and it wraps like everything else here. */
+    .ambient-cad-modal .cad-even { flex: 1 1 100%; margin-top: 5px; font-size: 0.72rem; padding: 5px 10px; }
     .ambient-cad-modal .cad-total.is-even { border-color: rgba(79,209,197,0.38); background: rgba(79,209,197,0.09); }
     .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
     .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }

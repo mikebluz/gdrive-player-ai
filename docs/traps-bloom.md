@@ -1359,12 +1359,19 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   the density never changes. Its UNIT is not constant — ◫ Fill solves over one bar and tiles, so the
   grid is per BAR there, and per CYCLE on a `stretch` part; the hint reads `barsMode` and says which.
   And it belongs with the MAIN knobs, not in Fine-tune: "like Beat" includes being in the same place.
+- **THE CADENCE PANEL REPAINTS IN PLACE, so a control added to it must be TOGGLED, never conditionally
+  rendered.** `repaint()` deliberately does not rebuild the row (an innerHTML rewrite detaches the
+  button under the finger), so a button emitted only in one state can never come back when the state
+  changes, and one emitted only in the other state sits there offering to fix what is already fixed.
+  Render it always and drive `hidden` from the same verdict the text uses.
 - **A PART THAT IS NOT A WHOLE NUMBER OF BARS DRIFTS AGAINST THE BEAT, ONE FRACTION PER PASS.** An
   8⅛-bar cadence loops every 8⅛ bars, so pass 2 starts ⅛ bar late, pass 3 ¼, pass 5 half a bar —
   reported as "the second is staggered and gets out of sync with the beat, feels about 1/8 or 1/4
   off". Nothing downstream is wrong and there is nothing to fix in the engine: the length comes from
   the CADENCE TOTAL (`_ambCadence` sums per-chord `bars`, which may legitimately be ⅛ · ¼ · ½), and
-  the cadence editor already calls such a total "uneven". ↔ Rubato is NOT the cause — it re-slices
+  the cadence editor already calls such a total "uneven" and now offers ⇄ Even it out beside that
+  verdict (`_ambCadEven` — scale toward the nearest whole total, snap each chord to the eighth the
+  ladder uses, put the residue on the longest). ↔ Rubato is NOT the cause — it re-slices
   chord boundaries per pass but forces the last boundary to `total`, so the cycle length is exactly
   preserved. Check the cadence total before looking anywhere else, and remember the layer card's
   own readout now says it.

@@ -42118,6 +42118,35 @@
       return _ambFmtBpc(v);
     }
     function _ambCadStr(lens) { return (lens || []).map(_ambCadNum).join('·'); }
+    // ── MAKE A CADENCE COME OUT WHOLE ─────────────────────────────────────
+    // The SHAPE is kept: every chord is scaled by the same factor toward the
+    // nearest whole total, then snapped to the eighth the cadence ladder works
+    // in, and the rounding residue is put on the LONGEST chord — the one where
+    // an eighth is least audible. A chord never drops below an eighth, which is
+    // the floor the rest of this file uses.
+    // Returns null when there is nothing to do, so the caller can leave a
+    // deliberate odd cadence alone.
+    function _ambCadEven(lens) {
+      const a = (lens || []).map(Number).filter((v) => v > 0);
+      if (a.length < 1) return null;
+      const total = a.reduce((s, v) => s + v, 0);
+      const want = Math.max(1, Math.round(total));
+      if (Math.abs(total - want) < 1e-6) return null;      // already whole
+      const k = want / total;
+      const snap = (v) => Math.max(0.125, Math.round(v * k * 8) / 8);
+      const out = a.map(snap);
+      // THE RESIDUE HAS TO GO SOMEWHERE, and it must not make a chord illegal:
+      // walk from the longest down until one can absorb it.
+      let diff = Math.round((want - out.reduce((s, v) => s + v, 0)) * 1000) / 1000;
+      const order = out.map((v, i) => i).sort((x, y) => out[y] - out[x]);
+      for (let oi = 0; oi < order.length && Math.abs(diff) > 1e-6; oi++) {
+        const i = order[oi];
+        const nv = Math.max(0.125, Math.round((out[i] + diff) * 8) / 8);
+        diff = Math.round((diff - (nv - out[i])) * 1000) / 1000;
+        out[i] = nv;
+      }
+      return (Math.abs(out.reduce((s, v) => s + v, 0) - want) < 1e-6) ? out : null;
+    }
     // Classify a cadence's TOTAL length. A part that is an even number of bars
     // sits under the 2/4/8-bar phrasing everything else in the app assumes, so
     // it is worth stating outright — along with the ways it splits into equal
@@ -42128,10 +42157,26 @@
     function _ambCadTotalHtml(total) {
       const info = _ambCadTotalInfo(total);
       const n = _ambFmtBarsMixed(total) + ' bar' + (Math.abs(total - 1) < 1e-6 ? '' : 's');
+      // ── AND A WAY OUT OF "UNEVEN" (2026-09-22) ─────────────────────────
+      // Reported twice: a bass on an 8⅛-bar cadence drifts half a beat per
+      // pass against the bar grid ("still goes off with 2nd pass"). The
+      // arithmetic is faithful and the layer card now names it — but naming a
+      // problem on one screen while the only cure lives on another is half an
+      // answer. This is the screen that owns chord lengths, and it already
+      // computes the judgement, so it gets the one tap that acts on it.
+      // OFFERED, NEVER APPLIED BY ITSELF: an odd part is a choice this app
+      // supports, and a cadence is somebody's harmony.
+      // ALWAYS IN THE DOM, hidden when it has nothing to do — `repaint` updates
+      // this row in place rather than rebuilding it, so a button that was never
+      // rendered could not come back when a length edit made the total uneven.
+      const fix = '<button type="button" class="ambient-seg cad-even" data-cad="even"' +
+        ((info.kind === 'odd' && info.word === 'uneven') ? '' : ' hidden') +
+        ' title="Adjust the chord lengths so the cadence is a whole number of bars — the shape is kept, each chord is nudged to the nearest eighth.">' +
+        '⇄ Even it out</button>';
       return '<div class="cad-total is-' + info.kind + '">' +
         '<span class="cad-total-n">' + n + '</span>' +
         '<span class="cad-total-w">' + info.word + '</span>' +
-        '<span class="cad-total-d">' + info.detail + '</span></div>';
+        '<span class="cad-total-d">' + info.detail + '</span>' + fix + '</div>';
     }
     function _ambCadTotalInfo(total) {
       const t = Math.round((Number(total) || 0) * 1000) / 1000;
@@ -42363,6 +42408,14 @@
           q('.cad-total-n', _ambFmtBarsMixed(total) + ' bar' + (Math.abs(total - 1) < 1e-6 ? '' : 's'));
           q('.cad-total-w', info.word);
           q('.cad-total-d', info.detail);
+          // ⇄ EVEN IT OUT FOLLOWS THE VERDICT. This repaint deliberately does
+          // not rebuild the row (an innerHTML rewrite detaches the button under
+          // the finger), so the offer has to be toggled by hand — otherwise it
+          // sits there after the total is already whole, offering to fix what is
+          // fixed. Hidden, never removed: it has to come back the moment a
+          // length edit makes the total uneven again.
+          const evenBtn = tot.querySelector('.cad-even');
+          if (evenBtn) evenBtn.hidden = !(info.kind === 'odd' && info.word === 'uneven');
         }
       };
       paint();
@@ -42411,6 +42464,12 @@
         const a = String(btn.getAttribute('data-cad')).split(':');
         const c2 = E.getCfg();
         if (a[0] === 'up' || a[0] === 'dn') { _ambCadStep(c2, a[1] | 0, a[0] === 'up' ? 1 : -1); commit(); return; }
+        if (a[0] === 'even') {
+          const lens0 = _ambCadence(c2, pi);
+          const fixed = _ambCadEven(lens0);
+          if (fixed) { _ambCadApply(c2, pi, fixed); commit(); }
+          return;
+        }
         if (a[0] === 'gen') {
           const n = _ambCadence(c2, pi).length;
           // Seeded on the take AND on how many times you have pressed, so pressing

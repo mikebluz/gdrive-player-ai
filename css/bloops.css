@@ -14993,6 +14993,13 @@
     .v2-layer .v2-evenfix { display: block; width: fit-content; margin: 2px 0 4px;
       font-size: 0.72rem; padding: 4px 10px;
       border-color: rgba(246,173,85,0.55); color: #f6ad55; }
+    /* …AND `hidden` HAS TO WIN. A class rule setting `display` outranks the UA's
+       `[hidden] { display: none }` on specificity, so this button stayed on
+       screen through every state the JS thought it had hidden it in — reported
+       with the card reading "bars: 8" and no warning, beside a live ⇄ Fix the
+       length…, which is a control contradicting its own sentence. Any rule here
+       that sets `display` needs this partner. */
+    .v2-layer .v2-evenfix[hidden] { display: none; }
     .ambient-cad-modal .cad-total.is-even { border-color: rgba(79,209,197,0.38); background: rgba(79,209,197,0.09); }
     .ambient-cad-modal .cad-total.is-even .cad-total-w { color: #4fd1c5; }
     .ambient-cad-modal .cad-total.is-odd { border-color: rgba(246,173,85,0.38); background: rgba(246,173,85,0.09); }

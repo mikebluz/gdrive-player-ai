@@ -200,6 +200,17 @@
 - **A card fold is a CLASS (`v2-so-<id>`) and a card rebuild dropped it** — ▸ Fine-tune holds Steps, whose
   commit rebuilds the card, so the fold shut under the finger. `V2.render` now carries `v2-so-*` across.
   Anything that lands on a row INSIDE a fold (🔍 Find) must press the fold's own button, or it marks a 0×0 row.
+- **A CLASS RULE SETTING `display` BEATS THE `hidden` ATTRIBUTE.** `[hidden] { display: none }` is a
+  UA rule at specificity (0,1,0); `.v2-layer .v2-thing { display: block }` is (0,2,0) and wins, so the
+  element stays on screen through every state the JS believes it hid. Reported with the card reading
+  "bars: 8", no warning in the readout, and the ⇄ Fix the length… door still showing beside it — a
+  control contradicting its own sentence. Ship `…[hidden] { display: none }` alongside any rule here
+  that sets `display`, and MEASURE THE RECT in the probe: `el.hidden` was true the whole time, so an
+  attribute check passes while the pixels disagree.
+- **EVERY INSTANCE PREFIXES ITS IDS** (`ambient-salt-colors` is `mix-bloom-salt-colors` on the Mix
+  engine), so a probe that looks up the bare id finds nothing and reports a control missing while it
+  is on screen. Query by CLASS in a probe; `_ambGet(E, id)` / the panel's own `G()` apply the prefix
+  for the app.
 - **A BARE `return` ON ITS OWN LINE RETURNS UNDEFINED, and a row just disappears.** These builders are
   `return <a> + <b> + …` expressions spanning many lines; automatic semicolon insertion ends the
   statement at the newline, so the whole fragment evaluates to nothing and the control is not in the

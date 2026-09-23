@@ -3144,7 +3144,25 @@
           delete s.len;
           s.colors = Math.max(0, Math.min(7, s.colors | 0));
           s.scatter = Math.max(0, Math.min(100, s.scatter | 0));
-          if (!s.colors && !s.scatter) delete prog.salt;
+          // 🧂 WHAT SALT WAS BEFORE IT WAS TURNED OFF. The switch zeroes the
+          // five axes (that is what "off" means here — "everything at 0 = play
+          // exactly as written") and parks their values so turning it back on
+          // is not a retype. It is the ONE reason an all-zero `salt` is worth
+          // keeping; without this the prune below would delete the object and
+          // the memory with it, and Salt would come back as a bare default.
+          // Coerced like everything else, and dropped the moment it is empty.
+          if (s.was && typeof s.was === 'object') {
+            const w = {
+              colors: Math.max(0, Math.min(7, s.was.colors | 0)),
+              scatter: Math.max(0, Math.min(100, s.was.scatter | 0)),
+              vary: Math.max(0, Math.min(100, s.was.vary | 0)),
+              tension: Math.max(0, Math.min(100, s.was.tension | 0)),
+              reroll: Math.max(0, Math.min(100, s.was.reroll | 0)),
+            };
+            if (w.colors || w.scatter || w.vary || w.tension || w.reroll) s.was = w;
+            else delete s.was;
+          } else if (s.was !== undefined) delete s.was;
+          if (!s.colors && !s.scatter && !s.was) delete prog.salt;
         }
       }
       // 🎲 TAKE REROLL (additive): per-slot chance that New take substitutes a
@@ -52608,6 +52626,24 @@
             // _ambProgCurrentChord). All zeros = played exactly as written.
             _ambProgGrpOpen('salt', '🧂 Salt', false, true) +
             '<div class="ambient-row ambient-prog-salt" id="ambient-prog-saltrow" style="display:none" title="Salt — deterministic per-cycle spice on the progression. Everything at 0 = play exactly as written.">' +
+              // ── ON / OFF (2026-09-23) ─────────────────────────────────
+              // user: "need to be able to toggle Salt on/off, which can then
+              // also be scheduled (have some passes Salted and some not)".
+              // Salt is five axes across two stores, and this panel's own title
+              // already defines the off state: "everything at 0 = play exactly
+              // as written". So OFF zeroes the five and REMEMBERS them in
+              // `prog.salt.was`; ON puts them back. No reader changes — all 28
+              // of them already treat 0 as off, and gating each instead would be
+              // 28 chances to change what plays.
+              // PER PASS IS ALREADY THERE: `passSalt[<pass>] = { colors: 0 }` is
+              // read as "explicit zero = OFF on this pass" (`_ambPartSaltAt`),
+              // which is what ▦ Schedule → a pass's label writes. This switch is
+              // the AREA rung of that same ladder, so scheduling it needs no new
+              // machinery — only a way to say off at all, which is what was
+              // missing.
+              '<button type="button" class="ambient-seg ambient-salt-onoff" id="ambient-salt-onoff" ' +
+                'title="Turn Salt off without losing the settings — the five dials are remembered and come back when you turn it on. A single pass can be salted or not in ▦ Schedule.">' +
+                '🧂 Salt</button>' +
               '<div class="ambient-salt-dials">' +
               _ambSaltDial('ambient-salt-colors', 'Colours', 7, 1, 'recolours per chord', 'How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections.') +
               _ambSaltDial('ambient-prog-vary', '🌊 Vary', 100, 5, 'harmony variance', 'Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly.') +
@@ -54746,6 +54782,39 @@
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
         // changes land within the lookahead, no re-anchor needed.
+        // 🧂 SALT ON/OFF — zero the five, remember them, put them back.
+        // The five live in two stores (`salt.colors` / `salt.scatter`, and
+        // `prog.vary` / `prog.tension` / `prog.reroll`), so "off" is written
+        // once here rather than asked at 28 read sites.
+        { const onoff = G('ambient-salt-onoff');
+          if (onoff) onoff.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const pr2 = c.prog;
+            const sl = (pr2.salt && typeof pr2.salt === 'object') ? pr2.salt : null;
+            const live = ((sl && (sl.colors | 0)) || 0) + ((sl && (sl.scatter | 0)) || 0) +
+              (pr2.vary | 0) + (pr2.tension | 0) + (pr2.reroll | 0);
+            if (live > 0) {
+              // OFF — keep what it was, so turning it back on is not a retype.
+              pr2.salt = pr2.salt || {};
+              pr2.salt.was = { colors: (sl && sl.colors | 0) || 0, scatter: (sl && sl.scatter | 0) || 0,
+                vary: pr2.vary | 0, tension: pr2.tension | 0, reroll: pr2.reroll | 0 };
+              pr2.salt.colors = 0; pr2.salt.scatter = 0;
+              delete pr2.vary; delete pr2.tension; delete pr2.reroll;
+            } else {
+              // ON — whatever it was, or a plain default if it has never been on.
+              const w = (sl && sl.was && typeof sl.was === 'object') ? sl.was : null;
+              pr2.salt = pr2.salt || {};
+              pr2.salt.colors = w ? Math.max(0, Math.min(7, w.colors | 0)) : 3;
+              pr2.salt.scatter = w ? Math.max(0, Math.min(100, w.scatter | 0)) : 0;
+              const put = (k, v) => { const n = Math.max(0, Math.min(100, v | 0)); if (n > 0) pr2[k] = n; else delete pr2[k]; };
+              put('vary', w ? w.vary : 0); put('tension', w ? w.tension : 0); put('reroll', w ? w.reroll : 0);
+              if (pr2.salt.was) delete pr2.salt.was;
+            }
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            try { _ambRenderScheduler(E); } catch (e) {}
+          }); }
         [['ambient-salt-colors', 'colors', 7], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('input', () => {

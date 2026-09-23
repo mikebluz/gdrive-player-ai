@@ -270,6 +270,47 @@ const ok = (name, cond, detail) => {
     lapping.syncOpen === true && lapping.cadOpen === false,
     JSON.stringify({ cad: lapping.cadOpen, sync: lapping.syncOpen }));
 
+  // ── THE DOOR REALLY HIDES WHEN THERE IS NOTHING TO FIX ──────────────
+  // Reported with the card reading "bars: 8", no warning in the readout, and
+  // ⇄ Fix the length… still on screen: a class rule setting `display` outranks
+  // the UA's `[hidden] { display: none }`, so the button never hid whatever the
+  // JS set. Measured through the RECT, because `hidden` was set correctly all
+  // along and only the pixels disagreed — an attribute check would have passed.
+  const tidy = await page.evaluate(async () => {
+    const E = _masterEng;
+    const cfg = E.getCfg();
+    cfg.prog.on = true;
+    cfg.prog.chords = [
+      { root: 2, intervals: [0, 4, 7], bars: 3 },
+      { root: 6, intervals: [0, 3, 7], bars: 4 },
+      { root: 7, intervals: [0, 4, 7], bars: 1 }];
+    cfg.barsPerChord = 2;
+    delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+    E.getCfg();
+    const L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; delete L.part.form;
+    L.part.barsMode = 'fill';
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 };
+    L.part.bars = 8;                       // matches the part — nothing to fix
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 1000));
+    const b = document.querySelector('.v2-layer .v2-evenfix');
+    const r = b ? b.getBoundingClientRect() : null;
+    const lab = document.querySelector('.v2-layer .v2-vizlab');
+    return { inDom: !!b, hiddenAttr: b ? b.hidden : null,
+             rect: r ? Math.round(r.height) : null,
+             visible: !!b && r.width > 0 && r.height > 0 && !!b.offsetParent,
+             says: lab ? lab.textContent.trim() : null };
+  });
+  console.log('  part matches the cadence: ' + JSON.stringify(tidy) + '\n');
+  ok('with nothing to fix the readout carries no warning',
+    !/\u26a0/.test(tidy.says || ''), JSON.stringify(tidy.says));
+  ok('…and the door is really gone, not just marked hidden',
+    tidy.hiddenAttr === true && tidy.visible === false && tidy.rect === 0,
+    JSON.stringify(tidy));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

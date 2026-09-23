@@ -428,6 +428,64 @@
   // that really scope this card are `kind` (generated vs written) and `voice`
   // (synth vs kit), and both already existed.
   const FORMS = new Set(['roll', 'steps']);
+  // ── ACCENT, DECIDED WHERE THE PICTURE CAN SEE IT (2026-09-23) ────────
+  // user, of loudness-as-opacity: "i see no difference" — and rightly. A
+  // generated part carries no per-note `vel`, so every note was the loudest
+  // and every note drew solid. The dynamics in a v2 part come from ACCENT, and
+  // accent was the one variance axis still decided at EMIT time by
+  // `_ambAccentVol`, from `_ambRand()` — the SHARED stream. A shared draw
+  // cannot be predicted by the drawing without consuming it, so the picture
+  // could never show it.
+  // IT IS ALSO THE ODD ONE OUT. `vRnd` exists because "a v2 layer can never
+  // shift a v1 layer's draws", and rests, ghosts, length vary and the rhythm
+  // dice all obey that. Accent did not: every accented v2 note was pulling on
+  // the stream every v1 layer reads. Moving it here fixes that as well.
+  // v1'S RULE, VERBATIM — accented at 0.45×a, ghosted at 0.22× from the top,
+  // by the same multipliers — so a layer sounds like itself; what changes is
+  // WHICH notes the dice pick, because the stream is now this layer's own.
+  function accentMul(a01, seed) {
+    if (!(a01 > 0)) return 1;
+    const r = vRnd(seed, 113);
+    if (r < a01 * 0.45) return 1 + a01 * 0.6;
+    if (r > 1 - a01 * 0.22) return 1 - a01 * 0.4;
+    return 1;
+  }
+  // The layer's own Accent PLUS the Area Groove's, which is what
+  // `_ambAccentVol` folded in — reading only the layer's would quietly drop
+  // the groove panel, the exact bug `_ambEffRest` exists to avoid for Rests.
+  // ACCENT IS STAMPED ON THE FINISHED LIST, never inside one branch of the
+  // generator. The generator has several exits — a strummed onset, a slipped
+  // one, a kit lane, a recorded note — and accent applied in one of them is
+  // accent MISSING from the others. That is "a move is a delete plus an add"
+  // as it shows up in an emit path: the old `_ambAccentVol` call sat at the
+  // EMITTER, downstream of every exit, so replacing it anywhere upstream of
+  // the join would have quietly dropped accent from the branches it did not
+  // touch. This is the join.
+  function accentStage(L, ns) {
+    if (!ns || !ns.length) return ns;
+    const a01 = accentAmt(L);
+    if (!(a01 > 0)) return ns;        // absent by default: no field, no change
+    return ns.map((n) => {
+      // A FIGURE OUTRANKS ACCENT — the same precedence the emitter and the
+      // card already state, kept in ONE place now that the decision is made
+      // once instead of twice.
+      if (!n || (Number.isFinite(n.shw) && n.shw > 0)) return n;
+      // Seeded on WHEN the note falls and WHAT it is, so the drawing and the
+      // emitter — two separate calls, same arguments — reach the same answer,
+      // and so the accents fall differently from cycle to cycle (`at` is
+      // absolute) the way the shared stream used to make them.
+      const am = accentMul(a01, (Math.round((n.at || 0) * 1000) | 0) ^ ((n.freq | 0) * 2654435761));
+      // Object.assign, not a rebuilt literal: this file has twice lost a note
+      // field to a named-field copy on a path exactly like this one.
+      return am === 1 ? n : Object.assign({}, n, { acc: Math.round(am * 1000) / 1000 });
+    });
+  }
+  function accentAmt(L) {
+    let ga = 0;
+    try { const g = (typeof _ambGroove === 'function') ? _ambGroove() : null; ga = g ? (g.accent | 0) : 0; } catch (e) {}
+    const own = (typeof perfOf === 'function') ? (perfOf(L, 'accent') | 0) : ((L && L.accent) | 0);
+    return Math.max(0, Math.min(100, own + ga)) / 100;
+  }
   // ── ⑁ LENGTH SHAPE — THE FIGURES ────────────────────────────────────
   // Each is a short cycle of [length×, weight×] applied per onset within the
   // BAR, so a shape reads the same at any tempo or part length — the same unit
@@ -3490,7 +3548,7 @@
     // — read it, and audio, drawing and outlines all come through here, so
     // the three cannot disagree. Saved and restored: `notesFor` nests.
     let sv = null; try { sv = window._ambSaltLayer; window._ambSaltLayer = L; } catch (e) {}
-    try { return tightClip(L, timingStage(L, ctx, xfStage(L, ctx, notesForRaw(L, ctx)))); }
+    try { return accentStage(L, tightClip(L, timingStage(L, ctx, xfStage(L, ctx, notesForRaw(L, ctx))))); }
     finally { try { window._ambSaltLayer = sv; } catch (e) {} }
   }
   function notesForRaw(L, ctx) {
@@ -5674,9 +5732,9 @@
         if (Number.isFinite(n.vel)) vol = Math.max(1, Math.round(vol * (n.vel | 0) / 100));
         // The ARRIVAL of a gesture is leaned on — v1's agogic emphasis, x1.15.
         if (n.arr) vol = Math.min(127, Math.round(vol * 1.15));
-        // ACCENT draws from the SHARED seeded stream exactly as v1 does, and
-        // only when non-zero — so a layer with no accent and a neutral groove
-        // consumes no draw and shifts nothing downstream.
+        // ACCENT IS ALREADY DECIDED — `accentStage` stamped `n.acc` back in
+        // `notesFor`, on this layer's own `vRnd` draws. A layer with no accent
+        // and a neutral groove carries no field at all and is byte-identical.
         // ⑁ A LENGTH SHAPE OUTRANKS ACCENT. While a shape is set the figure
         // decides the weight, so Accent's seeded draw is not taken at all —
         // asked for outright ("if this one is active it overrides those other
@@ -5686,10 +5744,13 @@
         // the cause rather than leaving a knob that quietly does nothing.
         if (Number.isFinite(n.shw) && n.shw > 0) {
           vol = Math.max(1, Math.min(127, Math.round(vol * n.shw)));
-        } else {
-          try {
-            if (typeof _ambAccentVol === 'function') vol = _ambAccentVol(vol, (perfOf(L, 'accent') | 0) || 0);
-          } catch (e) {}
+        } else if (Number.isFinite(n.acc) && n.acc > 0) {
+          // THE DECISION WAS MADE IN `notesFor`, where the drawing could see
+          // it. Re-deciding here would be a second walk of one grid — and it
+          // is what kept accent invisible: `_ambAccentVol` draws from the
+          // SHARED `_ambRand` stream, which the picture cannot predict without
+          // consuming it (and which a v2 layer should never pull on at all).
+          vol = Math.max(1, Math.min(127, Math.round(vol * n.acc)));
         }
         if (L.instrument.voice === 'kit' && Number.isFinite(n.lane)) {
           if (L.instrument.kit === 'synth') {
@@ -10389,14 +10450,16 @@
     // ── HOW LOUD A NOTE IS, AS HOW SOLID IT LOOKS (2026-09-23) ───────────
     // user: "loudness/accent of each note event in visualizer should be
     // visualized as opacity".
-    // WHAT THE DRAWING CAN HONESTLY KNOW is what `notesFor` put on the note: a
-    // hand-edited note's own `vel`, ⌁ Length shape's weight `shw`, and the
-    // ghost flag (a ghost is deliberately a fraction of the hit it follows).
-    // ACCENT IS NOT IN HERE, and that is a limit worth stating rather than
-    // faking: `_ambAccentVol` runs at EMIT time and draws from a SHARED seeded
-    // stream, so asking it again here would consume draws and shift what every
-    // other layer plays. Showing accent means moving it into `notesFor` first,
-    // which is a change to what sounds, not to what is drawn.
+    // WHAT THE DRAWING KNOWS is what `notesFor` put on the note: a hand-edited
+    // note's own `vel`, the length figure's weight `shw`, the ghost flag (a
+    // ghost is deliberately a fraction of the hit it follows), and `acc`.
+    // ACCENT HAD TO MOVE FOR THIS TO MEAN ANYTHING. It was decided at EMIT
+    // time by `_ambAccentVol` from `_ambRand()` — the SHARED stream — which
+    // the drawing cannot ask without consuming a draw and shifting what every
+    // other layer plays. So a generated part, which carries no `vel` at all,
+    // drew every note solid and the feature was invisible ("i see no
+    // difference"). `accentStage` now decides it in `notesFor` on this layer's
+    // OWN `vRnd` draws, which is where the rest of v2's variance already was.
     // RELATIVE TO THE LOUDEST NOTE ON SCREEN, so a part with no dynamics at all
     // draws exactly as it always did (every note is the loudest, every note is
     // solid) and nothing about an existing picture moves.
@@ -10404,6 +10467,7 @@
       let a = 1;
       if (Number.isFinite(n2.vel)) a *= Math.max(0, (n2.vel | 0) / 100);
       if (Number.isFinite(n2.shw) && n2.shw > 0) a *= n2.shw;
+      if (Number.isFinite(n2.acc) && n2.acc > 0) a *= n2.acc;
       if (n2.ghost) a *= 0.42;
       return a;
     };

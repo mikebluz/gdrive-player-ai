@@ -126,6 +126,50 @@ const ok = (name, cond, detail) => {
   ok('a part with no dynamics draws every note solid, as before',
     flat.length > 0 && flat.every((a) => a === 1), JSON.stringify(flat));
 
+  // ── THE CASE THE USER ACTUALLY LOOKED AT ────────────────────────────────
+  // user, of the first cut: "i see no difference" — and they were right. A
+  // GENERATED part carries no per-note `vel`, so every note was the loudest
+  // note on screen and every note drew solid. The dynamics in a generated v2
+  // part come from ACCENT, which used to be decided at emit time from the
+  // SHARED `_ambRand` stream where no drawing could see it. `accentStage`
+  // moved that decision into `notesFor`. This is the check that the move
+  // reached the picture.
+  const gen = async (accent) => page.evaluate(async (accent) => {
+    const E = _masterEng, V = window._v2;
+    const L = (E.getCfg().layers || [])[0];
+    delete L.part.form;
+    L.part.kind = 'euclid';
+    L.part.notes = [];
+    L.part.bars = 2;
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 9, rotate: 0 };
+    L.part.shape = Object.assign({}, L.part.shape, { lenShape: '' });   // no figure: accent decides
+    L.accent = accent;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    V.render(E);
+    await new Promise((r) => setTimeout(r, 1300));
+    const cv = document.querySelector('.v2-layer .v2-vizcv');
+    return (cv && cv._hits ? cv._hits : []).slice().sort((a, b) => a.x - b.x).map((ht) => ht.a);
+  }, accent);
+
+  const loud = await gen(85);
+  const none = await gen(0);
+  console.log('  generated, Accent 85: ' + JSON.stringify(loud));
+  console.log('  generated, Accent 0:  ' + JSON.stringify(none) + '\n');
+
+  ok('a GENERATED part with Accent up no longer draws every note the same',
+    loud.length >= 6 && new Set(loud).size >= 2,
+    JSON.stringify(loud));
+  // BOTH DIRECTIONS, because v1's rule leans notes up AND ghosts them down;
+  // if only one showed, the picture would be reading half the decision.
+  ok('…and it shows the leaned-on notes AND the ghosted ones',
+    loud.length >= 6 && Math.max.apply(null, loud) === 1 &&
+    Math.min.apply(null, loud) < 0.999,
+    JSON.stringify({ max: Math.max.apply(null, loud), min: Math.min.apply(null, loud) }));
+  // ABSENT BY DEFAULT — Accent 0 stamps no field and the picture is as it was.
+  ok('Accent 0 is unchanged — no field, no dimming',
+    none.length >= 6 && none.every((a) => a === 1), JSON.stringify(none));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

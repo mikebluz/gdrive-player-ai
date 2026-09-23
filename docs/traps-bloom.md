@@ -1178,9 +1178,18 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   `_ambStrumOrder` — 118 writes to `_E.rng` per `notesFor` call — so the same take drew a different
   order each frame, playback pulled at its own point in that stream and disagreed with the picture,
   and a v2 layer shifted every OTHER layer's draws just by being looked at. Every v2 variance draw
-  goes through `vRnd` keyed on (layer, cycle, onset); strum was the last path reaching across.
+  goes through `vRnd` keyed on (layer, cycle, onset).
   **When adding anything to the generation path, check it with `_E.rng` before and after a draw** —
   a v1 helper that looks pure may pull from the stream two frames down.
+  THE COROLLARY, found via "i see no difference" about loudness-as-opacity (2026-09-23): a variance
+  axis decided at EMIT time is a variance axis the DRAWING CAN NEVER SHOW, because asking for it is
+  the forbidden draw. ACCENT was the last such axis — `_ambAccentVol(vol, …)` at the emitter, off
+  `_ambRand()` — so a generated part (no per-note `vel`) drew every note solid and the feature looked
+  unimplemented. Fix: decide it in `notesFor` and STAMP IT ON THE NOTE (`n.acc`), emitter reads the
+  stamp. **Stamp on the FINISHED list, not inside a generator branch** — `notesForRaw` has several
+  exits (strummed onset, slipped onset, kit lane, recorded note) and the emitter sat downstream of
+  all of them, so a stamp in one branch silently drops the axis from the rest; `accentStage` runs in
+  `notesFor` where they have joined. v1's own `_ambAccentVol` callers stay on the shared stream.
 - **▶ Preview's changes anchor at the CYCLE START (`t0 - off`), never at the press (`t0`).** The
   first note lands on the press, so the cycle begins `off` earlier — anchoring the changes at `t0`
   put chord 1 that far INTO the part while the stopped drawing aligns them with the part's own first

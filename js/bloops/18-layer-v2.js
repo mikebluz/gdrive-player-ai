@@ -4003,6 +4003,14 @@
     // 24ths is a smear.
     const MIN_GAP = Math.max(0.07, barSec / 16);
     const MIN_MS = Math.max(70, Math.round(MIN_GAP * 1000));
+    // …AND THE FLOOR UNDER THAT FLOOR. `MIN_MS` says "never shorter than a
+    // 16th of the bar", which is right for RANDOM scatter — an accidental
+    // sliver is a smear nobody asked for. It is wrong for a DELIBERATE
+    // articulation: on a 16th-note line `dm0` already equals `MIN_MS`, so the
+    // clamp refused every shortening and ⑁ Stabs came out legato (measured:
+    // every note 125 ms on a 16th part, the figure invisible). A staccato 16th
+    // is ordinary music; only the audibility floor should stop it.
+    const HARD_MIN_MS = 70;
     // AN ADDED NOTE'S TIME IS SNAPPED RELATIVE TO THE CYCLE, to microseconds.
     // Its offset is a fraction of a slot — not representable in binary — so
     // adding it to a growing absolute time gave a result a microsecond apart
@@ -4301,7 +4309,18 @@
         }
         const mult = lenShapeAt(shKind, posInBar, ofBar);
         if (mult) {
-          dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * mult[0]));
+          // NEVER PAST THE NEXT ONSET. Note length is a PERCENTAGE OF THE GAP
+          // and its slider stops at 100, so no note could ever overlap its
+          // neighbour; a multiplier above 1 broke that invariant and the notes
+          // piled on top of each other — reported immediately, and worst on a
+          // sparse part, where the gap is bars wide and 1.45× of it runs deep
+          // into the next note.
+          // CAPPED AT THE GAP, which is LEGATO — the same ceiling Note length
+          // has. The figure survives the cap because it is the SHORT note that
+          // carries it: at Note length 70 a 1.45× long clips to 100% while the
+          // 0.55× short stays at 38%, which is still plainly long–short.
+          const gapMs = Math.max(HARD_MIN_MS, Math.round(gapAt(i) * cyc * 1000));
+          dm = Math.min(gapMs, Math.max(Math.min(dm0, HARD_MIN_MS), Math.round(dm0 * mult[0])));
           shW = mult[1];
         }
       }

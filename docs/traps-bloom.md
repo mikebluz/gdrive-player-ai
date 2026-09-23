@@ -1416,6 +1416,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   measured as 18 hits in the first 32 cells of 128 after rolling a Line and switching to ▦ Pattern
   ("most steps unpopulated"). Invisible on a one-bar part, where the two numbers coincide; only a
   multi-bar part can catch it. The Steps knob's own handler already stated this ordering.
+- **NOTE LENGTH IS A PERCENTAGE OF THE GAP, AND ITS SLIDER STOPS AT 100 — THAT IS WHY NOTHING EVER
+  OVERLAPPED.** Any multiplier above 1 breaks the invariant and the notes pile onto each other,
+  worst on a SPARSE part where the gap is bars wide (measured: a 1.45× long overran the next onset by
+  225ms). Cap a shaped duration at `gapAt(i) * cyc * 1000` — legato, the same ceiling the slider has.
+  The figure survives the cap because the SHORT note carries it.
+- **`MIN_MS` IS THE FLOOR FOR RANDOM SCATTER, NOT FOR A DELIBERATE ARTICULATION.** It is "never
+  shorter than a 16th of the bar", so on a 16th-note line `dm0` already EQUALS it and
+  `Math.max(Math.min(dm0, MIN_MS), …)` refuses every shortening — ⑁ Stabs came out legato, the figure
+  invisible. A staccato 16th is ordinary music; only the 70ms audibility floor (`HARD_MIN_MS`) should
+  stop one. Random scatter keeps the stricter floor, because an accidental sliver is a smear.
 - **A CONTROL THAT OUTRANKS ANOTHER MUST SAY SO, AND THE OTHER MUST GREY.** ⑁ Length shape decides
   duration AND weight while it is set, so `lenVary` and Accent are not consulted at all — a figure
   plus a scatter is neither (the figure stops being recognisable and the scatter stops sounding

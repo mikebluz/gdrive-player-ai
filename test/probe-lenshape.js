@@ -157,6 +157,71 @@ const ok = (name, cond, detail) => {
     !!greyed.vary && greyed.vary.na === true,
     JSON.stringify(greyed));
 
+  // ── AND A SHAPED NOTE NEVER RUNS INTO THE NEXT ONE ───────────────
+  // user, of the first cut: "length shapes are causing notes to pile on top of
+  // each other". Note length is a PERCENTAGE OF THE GAP and its slider stops at
+  // 100, so nothing could overlap; a multiplier above 1 broke that invariant.
+  // WORST ON A SPARSE PART, where the gap is bars wide — which is the shape the
+  // report came from ("4 onsets over 8 bars").
+  const lap = async (shape, pulses, bars) => page.evaluate(async (shape, pulses, bars) => {
+    const E = _masterEng, V = window._v2;
+    const id = (E.getCfg().layers || [])[0].id | 0;
+    const L = V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    L.part.bars = bars;
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: pulses, rotate: 0 };
+    L.part.shape = Object.assign({}, L.part.shape, { lenRatio: 100 });
+    if (shape) L.part.shape.lenShape = shape; else delete L.part.shape.lenShape;
+    L.lenVary = 0;
+    E.getCfg();
+    await new Promise((r) => setTimeout(r, 250));
+    const l = V.stagedOf(id) || (E.getCfg().layers || [])[0];
+    E._progAnchor = 0; E._playStartAt = 0; E._barGridAnchor = 0;
+    const cyc = V.cycleSec(l, E.getCfg());
+    const ns = (V.withEdit(() => V.withTake(0, () => V.notesFor(l,
+      { E, cfg: E.getCfg(), key: 'v2:' + l.id, cycleStart: 0, cycleSec: cyc }))) || [])
+      .slice().sort((a, b) => a.at - b.at);
+    // the worst overrun of a note past the NEXT onset, in ms
+    let worst = 0;
+    for (let i = 0; i < ns.length - 1; i++) {
+      const end = ns[i].at + (ns[i].durMs || 0) / 1000;
+      const nxt = ns[i + 1].at;
+      if (nxt > ns[i].at + 1e-9) worst = Math.max(worst, Math.round((end - nxt) * 1000));
+    }
+    return { n: ns.length, worst: worst, durs: ns.map((x) => Math.round(x.durMs || 0)).slice(0, 6) };
+  }, shape, pulses, bars);
+
+  const sparseOff = await lap('', 4, 8);
+  const sparseLS = await lap('longshort', 4, 8);
+  const densePush = await lap('push', 16, 2);
+  const denseSwell = await lap('swell', 16, 2);
+  console.log('  sparse, off:        ' + JSON.stringify(sparseOff));
+  console.log('  sparse, long-short: ' + JSON.stringify(sparseLS));
+  console.log('  dense, push:        ' + JSON.stringify(densePush));
+  console.log('  dense, swell:       ' + JSON.stringify(denseSwell) + '\n');
+
+  ok('no shape never overlaps — the invariant this has to keep',
+    sparseOff.worst === 0, 'overran by ' + sparseOff.worst + 'ms');
+  ok('a shaped note stops at the next onset, even on a sparse part',
+    sparseLS.worst === 0, 'overran by ' + sparseLS.worst + 'ms');
+  ok('…and on every other figure too',
+    densePush.worst === 0 && denseSwell.worst === 0,
+    JSON.stringify({ push: densePush.worst, swell: denseSwell.worst }));
+  // THE FIGURE MUST SURVIVE THE CAP — clamping every note to the gap would be
+  // a shape that does nothing, which is the other way to fail this.
+  ok('…and the figure is still a figure after the cap',
+    new Set(sparseLS.durs).size > 1 && sparseLS.durs[0] !== sparseLS.durs[1],
+    JSON.stringify(sparseLS.durs));
+  // AND ON A DENSE LINE IT STILL ARTICULATES. `MIN_MS` — "never shorter than a
+  // 16th of the bar" — is the right floor for random scatter and the wrong one
+  // for a deliberate figure: on a 16th-note part `dm0` already equals it, so
+  // the clamp refused every shortening and the shapes came out legato
+  // (measured: every note 125ms, the figure invisible). Only the audibility
+  // floor should stop an articulation.
+  ok('a shape still articulates on a 16th-note line, where the scatter floor sits',
+    densePush.durs[0] < sparseOff.durs[0] && densePush.durs[0] < 125 &&
+    new Set(denseSwell.durs.slice(0, 6)).size > 1,
+    JSON.stringify({ push: densePush.durs.slice(0, 3), swell: denseSwell.durs.slice(0, 6) }));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

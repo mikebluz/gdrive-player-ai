@@ -22567,6 +22567,45 @@
     // what it plays WITH, not what it plays.
     const L = V2.add(cfg, { name: layerWord(cfg) || 'Layer',
       instrument: { tone: '', register: 4, level: 65 } });
+    // ── ◫ PER PART IS THE DEFAULT ONCE PARTS EXIST (2026-09-23) ─────
+    // user: "if there are parts defined, new layers should be created with Per
+    // Part mode on so they sync to the layer automatically, not-sync'ed should
+    // be opt-in if parts exist".
+    // This is the cure for the length drift chased across five reports. A
+    // record's `bars` is written once and then only ONE thing revises it: the
+    // reconciler in `normalizeAll`, which is gated on `Number.isFinite(partFor)`.
+    // So a BOUND layer follows the cadence for ever and an UNBOUND one keeps
+    // whatever length it was built with — measured: with the cadence evened to
+    // 8, an unbound record sat at 8.125 through three normalizes while a bound
+    // one snapped to 8 immediately, and the unbound one laps the part by an
+    // eighth every pass.
+    // THROUGH `partSelect`, the door the ⇶ Part strip uses — it ices the
+    // Everywhere record (`partAll`) and fits the bench copy, so turning it off
+    // later is a real inverse rather than a field deleted behind the model's
+    // back. Only when parts are actually DEFINED: with none there is nothing to
+    // bind to and a layer stays exactly as it always arrived.
+    try {
+      // "PARTS DEFINED" MEANS A PROGRESSION WITH CHANGES IN IT. `partRangesOf`
+      // answers even with the progression OFF — `_ambGridRanges` yields a
+      // default range and `_ambLenPartBars` falls back to the area's unit
+      // length — so binding on its word alone bound every layer in a project
+      // that has no changes at all (measured: `partFor: 0` with `prog.on`
+      // false). The app's own rule for when a part exists is the one used
+      // here: with chords, "Part 1 IS the changes".
+      const pr0 = cfg && cfg.prog;
+      const haveParts = !!(pr0 && pr0.on && (pr0.chords || []).length);
+      const rgs = haveParts ? partRangesOf(E).filter((x) => x && x.bars > 0) : [];
+      if (L && rgs.length) {
+        let pi = -1;
+        try {
+          if (typeof _ambCurPartNow === 'function' && typeof _ambGridRanges === 'function') {
+            pi = _ambCurPartNow(E, cfg, _ambGridRanges(cfg) || []) | 0;
+          }
+        } catch (e) {}
+        if (!(pi >= 0) || !rgs.some((x) => (x.pi | 0) === pi)) pi = rgs[0].pi | 0;
+        V2.partSelect(E, L, pi);
+      }
+    } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     V2.render(E);
     return L;

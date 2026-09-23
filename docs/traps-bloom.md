@@ -1369,6 +1369,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   fixes `prog` AND every layer's `part.bars` (measured: 8.125 → 8, cycle 16s) and STILL leaves the
   drawing, its readout and anything gated on them reading the old length. One owner for the chord
   clock: send the user to that editor rather than re-deriving its cascade beside it.
+- **ONLY A BOUND RECORD FOLLOWS THE CADENCE.** `part.bars` is written once (a material build takes
+  the cadence total AT THAT MOMENT, or ⇄ Sync, or a Bars edit) and exactly one thing ever revises
+  it: the reconciler in `normalizeAll`, gated on `Number.isFinite(S.partFor)`. Measured with the
+  cadence at 8: an UNBOUND record sat at 8.125 through three normalizes; a bound one snapped to 8 on
+  the first. That asymmetry is the whole of the length-drift family of reports, so a new layer now
+  binds on arrival whenever a progression with changes exists (`V2.addDefault` → `partSelect`).
+- **`partRangesOf` ANSWERS EVEN WITH THE PROGRESSION OFF** — `_ambGridRanges` yields a default range
+  and `_ambLenPartBars` falls back to the area's unit length, so `bars > 0` is NOT a test for "parts
+  exist". Ask `prog.on && prog.chords.length` instead; the app's own rule is that with chords,
+  "Part 1 IS the changes".
 - **TWO DIFFERENT LENGTHS DRIFT, AND THEY WEAR THE SAME SYMPTOM.** Either the CADENCE is not a whole
   number of bars (every layer on the part slips, cure in the Cadence editor), or the cadence is clean
   and THIS RECORD is a different length from the part (only that layer laps, cure is ⇄ Sync — "a

@@ -532,35 +532,71 @@
   //          figure is flat (which is what Off already is, so the row says so
   //          rather than pretending 0 is useful); at 100 it is the table's own.
   //          Over 100 it exaggerates, which is why the slider runs to 200.
-  //   WEIGHT how much of the figure reaches LOUDNESS. At 0 it shapes length
-  //          only — the answer for "I want the rhythm, not the dynamics" — and
-  //          at 100 the long note is leaned on as the table intends.
+  //   WEIGHT how much of the figure reaches LOUDNESS, as a duck DOWN from the
+  //          figure's loudest note. At 0 it shapes length only — the answer for
+  //          "I want the rhythm, not the dynamics" — and at 100 the off notes
+  //          sit about 6 dB under the leaned-on one, which is roughly what
+  //          Accent spans at full. See `SHAPE_LEAN` for why it ducks rather
+  //          than boosts.
   //   TURN   rotates the figure within the bar, so Long–short can start on the
   //          short. One control turns every cyclic figure into its inversions
   //          instead of the table needing an entry for each.
+  // ONE ENTRY IN THE FIGURE, raw from the table — split out so the weight axis
+  // can be normalised against the figure's OWN loudest note, which needs every
+  // position in the bar, not just the one being asked about.
+  function rawShapeAt(sp, kind, i, n) {
+    if (sp.cyc) return sp.cyc[i % sp.cyc.length];
+    if (kind === 'push') return (i === n - 1) ? [1.6, 1.15] : [0.9, 0.98];
+    if (kind === 'downbeat') return (i === 0) ? [1.6, 1.15] : [0.9, 0.98];
+    if (kind === 'swell') { const t = (n === 1) ? 1 : i / (n - 1); return [0.7 + t * 0.8, 0.9 + t * 0.3]; }
+    if (kind === 'fade') { const t = (n === 1) ? 1 : i / (n - 1); return [1.5 - t * 0.8, 1.2 - t * 0.3]; }
+    if (kind === 'arch') {
+      // 0 at the edges, 1 at the middle — a top rather than a ramp.
+      const t = (n === 1) ? 1 : 1 - Math.abs((i / (n - 1)) * 2 - 1);
+      return [0.7 + t * 0.8, 0.9 + t * 0.3];
+    }
+    return null;
+  }
+  // HOW FAR THE WEIGHT AXIS ACTUALLY TRAVELS (2026-09-23).
+  // user: "seeing no difference when i adjust Shape Weight" — measured, and
+  // they were right. The table's LENGTH axis is bold (Long–short is 1.45 vs
+  // 0.55, a 2.6× ratio) while its WEIGHT axis was timid (1.12 vs 0.92): the
+  // WHOLE slider, 0 to 100, moved a note by about 1.9 dB. The comment promised
+  // "the long note is the leaned-on one" and the numbers could not deliver it.
+  // TWO CHANGES, and the second is why the first is safe:
+  //   · LEAN multiplies the departure, so at Weight 100 a figure spans roughly
+  //     what v1's Accent spans at full (~2× , ~6 dB) instead of ~1.2×.
+  //   · NORMALISED TO THE FIGURE'S OWN LOUDEST NOTE, so the lean goes DOWN from
+  //     the part's level rather than up from it. Scaling a >1 multiplier just
+  //     runs into the 127 ceiling — the loud notes would flatten against each
+  //     other and only the ducking would survive, which is the length axis's
+  //     "never past the next onset" lesson in the other dimension. Ducking from
+  //     a ceiling has the full range available and cannot clip.
+  // Stabs stays flat (its cycle is a single 1.0) — "every note clipped short
+  // and even" is a figure with no dynamics BY DESIGN, not one that lost them.
+  const SHAPE_LEAN = 2.5;
   function lenShapeAt(kind, pos, of, depth, weight, turn) {
     const sp = LEN_SHAPES[kind]; if (!sp) return null;
     const n = Math.max(1, of | 0);
     const i = (((Math.max(0, pos | 0) + (turn | 0)) % n) + n) % n;
-    let m = null;
-    if (sp.cyc) m = sp.cyc[i % sp.cyc.length];
-    else if (kind === 'push') m = (i === n - 1) ? [1.6, 1.15] : [0.9, 0.98];
-    else if (kind === 'downbeat') m = (i === 0) ? [1.6, 1.15] : [0.9, 0.98];
-    else if (kind === 'swell') { const t = (n === 1) ? 1 : i / (n - 1); m = [0.7 + t * 0.8, 0.9 + t * 0.3]; }
-    else if (kind === 'fade') { const t = (n === 1) ? 1 : i / (n - 1); m = [1.5 - t * 0.8, 1.2 - t * 0.3]; }
-    else if (kind === 'arch') {
-      // 0 at the edges, 1 at the middle — a top rather than a ramp.
-      const t = (n === 1) ? 1 : 1 - Math.abs((i / (n - 1)) * 2 - 1);
-      m = [0.7 + t * 0.8, 0.9 + t * 0.3];
-    }
+    const m = rawShapeAt(sp, kind, i, n);
     if (!m) return null;
+    let wmax = 0;
+    for (let q = 0; q < n; q++) {
+      const mq = rawShapeAt(sp, kind, q, n);
+      if (mq && mq[1] > wmax) wmax = mq[1];
+    }
+    if (!(wmax > 0)) wmax = 1;
     const d = (depth == null) ? 1 : Math.max(0, Math.min(2, depth / 100));
     const wq = (weight == null) ? 1 : Math.max(0, Math.min(1, weight / 100));
     // DEPTH scales BOTH axes — it is "how much figure", not "how much length"
     // — and WEIGHT then decides how much of the shaped weight is spent.
     const len = 1 + (m[0] - 1) * d;
-    const wgt = 1 + ((1 + (m[1] - 1) * d) - 1) * wq;
-    return [Math.max(0.05, len), Math.max(0.05, wgt)];
+    const wgt = 1 + ((m[1] / wmax) - 1) * d * wq * SHAPE_LEAN;
+    // A HIGHER FLOOR THAN LENGTH'S. A note at 5% of the level is a note the
+    // part dropped, and a figure is meant to shape the line, not puncture it;
+    // Depth 200 with Weight 100 is an extreme that should still play.
+    return [Math.max(0.05, len), Math.max(0.1, wgt)];
   }
   const formOf = (L) => {
     const f = L && L.part && L.part.form;

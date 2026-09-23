@@ -1430,6 +1430,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   worst on a SPARSE part where the gap is bars wide (measured: a 1.45× long overran the next onset by
   225ms). Cap a shaped duration at `gapAt(i) * cyc * 1000` — legato, the same ceiling the slider has.
   The figure survives the cap because the SHORT note carries it.
+- **A GAIN AXIS LEANS DOWN FROM A CEILING, NEVER UP — AND "IT MOVES" IS NOT "IT IS AUDIBLE".**
+  Shape weight stored, and `shw` changed monotonically across the slider, so every programmatic probe
+  passed; the user still reported "seeing no difference", correctly. The whole 0→100 travel moved a
+  note 1.12 → 0.92 — about 1.9 dB — while the same table's LENGTH axis spanned 2.6×. **Measure the
+  SPAN of an axis, not just that the value responds**: a range too narrow to perceive is reported as
+  a dead control, and a probe asserting only monotonicity cannot tell the two apart. The fix also has
+  to duck rather than boost: `vol` clamps at 127, so scaling multipliers above 1 flattens the loud
+  notes against the ceiling and only the ducking survives — normalise to the figure's own loudest
+  note (`SHAPE_LEAN`) so the full range is available. Same lesson as the length axis's "never past
+  the next onset", in the other dimension.
 - **`MIN_MS` IS THE FLOOR FOR RANDOM SCATTER, NOT FOR A DELIBERATE ARTICULATION.** It is "never
   shorter than a 16th of the bar", so on a 16th-note line `dm0` already EQUALS it and
   `Math.max(Math.min(dm0, MIN_MS), …)` refuses every shortening — ⑁ Stabs came out legato, the figure

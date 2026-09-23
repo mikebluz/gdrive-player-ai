@@ -119,8 +119,23 @@ const ok = (name, cond, detail) => {
   ok('…and repeats identically in the next bar, so it is a figure',
     ls.durs[0] === ls.durs[4] && ls.durs[1] === ls.durs[5],
     JSON.stringify(ls.durs.slice(0, 8)));
+  // THE LEAN DUCKS, IT DOES NOT BOOST (2026-09-23). It used to read
+  // `ws[0] > 1 && ws[1] < 1` — a figure straddling the part's level. It now
+  // NORMALISES to the figure's own loudest note, so the long note sits AT the
+  // level and the short one ducks under it. Boosting had nowhere to go: vol is
+  // clamped at 127, so the loud notes flattened against the ceiling and only
+  // the ducking survived — the length axis's "never past the next onset"
+  // lesson in the other dimension.
   ok('…carrying a weight, so the long note is the leaned-on one',
-    ls.ws[0] > 1 && ls.ws[1] < 1, JSON.stringify(ls.ws.slice(0, 4)));
+    ls.ws[0] === 1 && ls.ws[1] < 1, JSON.stringify(ls.ws.slice(0, 4)));
+  // AND THE LEAN IS BIG ENOUGH TO NOTICE, which is the whole complaint:
+  // "seeing no difference when i adjust Shape Weight". The full slider used to
+  // move a note 1.12 → 0.92, about 1.9 dB across its ENTIRE travel. A figure
+  // has to span something like what Accent spans at full to be a figure.
+  ok('…and the lean is audible, not a rounding error',
+    ls.ws[0] / ls.ws[1] >= 1.6,
+    JSON.stringify({ loud: ls.ws[0], soft: ls.ws[1],
+                     ratio: Math.round((ls.ws[0] / ls.ws[1]) * 100) / 100 }));
   ok('Stabs clips every note evenly',
     new Set(stab.durs).size === 1 && stab.durs[0] < flat.durs[0],
     JSON.stringify({ stab: stab.durs[0], off: flat.durs[0] }));

@@ -1369,6 +1369,16 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   fixes `prog` AND every layer's `part.bars` (measured: 8.125 → 8, cycle 16s) and STILL leaves the
   drawing, its readout and anything gated on them reading the old length. One owner for the chord
   clock: send the user to that editor rather than re-deriving its cascade beside it.
+- **TWO DIFFERENT LENGTHS DRIFT, AND THEY WEAR THE SAME SYMPTOM.** Either the CADENCE is not a whole
+  number of bars (every layer on the part slips, cure in the Cadence editor), or the cadence is clean
+  and THIS RECORD is a different length from the part (only that layer laps, cure is ⇄ Sync — "a
+  part's bars are its own; nothing re-lengths them when the changes grow"). Reported 2026-09-22 with
+  the Cadence reading "8 bars EVEN" (3·4·1) and the card still reading 8.13: "like there's an extra
+  beat jammed in at the end of the first pass". Decide WHICH before naming a cure — a door that sent
+  the second case to the Cadence editor opened on a clean total with nothing to press. And compare
+  against the part only when a progression really exists: with none, `_ambLenPartBars` returns the
+  area's unit length and you get "8.13 bars over a 1-bar part", true arithmetic and a nonsense
+  sentence.
 - **A PART THAT IS NOT A WHOLE NUMBER OF BARS DRIFTS AGAINST THE BEAT, ONE FRACTION PER PASS.** An
   8⅛-bar cadence loops every 8⅛ bars, so pass 2 starts ⅛ bar late, pass 3 ¼, pass 5 half a bar —
   reported as "the second is staggered and gets out of sync with the beat, feels about 1/8 or 1/4

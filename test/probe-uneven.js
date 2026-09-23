@@ -213,6 +213,63 @@ const ok = (name, cond, detail) => {
     JSON.stringify({ partBars: fromCard.partBars, cadence: fromCard.after,
                      doorShown: fromCard.stillShown }));
 
+  // ── THE CADENCE IS EVEN AND THE CONTENT STILL LAPS ──────────────────────
+  // user, 2026-09-22, with the Cadence editor reading "8 bars EVEN" (D 3 ·
+  // F#m 4 · G 1) and the layer card still reading 8.13: "the second pass still
+  // gets off by 1/8 note or so, like there's an extra beat jammed in at the end
+  // of the first pass". Two faults wear one symptom, and the first version of
+  // this door sent this case to the Cadence editor — which had nothing to fix.
+  const lapping = await page.evaluate(async () => {
+    const E = _masterEng;
+    const cfg = E.getCfg();
+    cfg.prog.on = true;
+    // THE REPORTED CADENCE, exactly: 3 · 4 · 1 = 8 bars, even.
+    cfg.prog.chords = [
+      { root: 2, intervals: [0, 4, 7], bars: 3 }, { root: 6, intervals: [0, 3, 7], bars: 4 },
+      { root: 7, intervals: [0, 4, 7], bars: 1 }];
+    cfg.barsPerChord = 2;
+    delete cfg.prog.parts; delete cfg.prog.chain; delete cfg.prog.arrGrid; delete cfg.prog.grid;
+    E.getCfg();
+    const cadence = Math.round(_ambLenPartBars(E.getCfg(), 0) * 1000) / 1000;
+    const L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; delete L.part.form;
+    L.part.barsMode = 'fill';
+    L.part.rhythm = { kind: 'euclid', steps: 16, pulses: 4, rotate: 0 };
+    // …and a RECORD that does not fit it — the state the report is in.
+    L.part.bars = 8.125;
+    E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+    await new Promise((r) => setTimeout(r, 1000));
+    const lab = document.querySelector('.v2-layer .v2-vizlab');
+    const btn = document.querySelector('.v2-layer .v2-evenfix');
+    const r = btn ? btn.getBoundingClientRect() : null;
+    const shown = !!btn && r.width > 0 && r.height > 0 && !!btn.offsetParent;
+    if (btn) btn.click();
+    await new Promise((r2) => setTimeout(r2, 900));
+    const cadOpen = !!document.querySelector('.ambient-cad-modal');
+    const syncOpen = !!document.querySelector('.v2-sync-modal');
+    try { document.querySelectorAll('.sm-overlay').forEach((o) => o.remove()); } catch (e) {}
+    return { cadence, partBars: 8.125, says: lab ? lab.textContent.trim() : null,
+             shown, cadOpen, syncOpen };
+  });
+  console.log('  even cadence + lapping content:');
+  console.log('    cadence ' + lapping.cadence + ' bars, content ' + lapping.partBars + ' bars');
+  console.log('    says: ' + JSON.stringify(lapping.says));
+  console.log('    opened: ' + (lapping.cadOpen ? 'Cadence' : (lapping.syncOpen ? '\u21c4 Sync' : 'nothing')) + '\n');
+
+  ok('the cadence really is even in this case', lapping.cadence === 8,
+    String(lapping.cadence));
+  ok('…and the notice blames the CONTENT, not the cadence',
+    /this content is 8\.13 bars over a 8-bar part/.test(lapping.says || ''),
+    JSON.stringify(lapping.says));
+  ok('…naming how far it laps each pass',
+    /laps by half a beat every pass/.test(lapping.says || ''), JSON.stringify(lapping.says));
+  ok('…the door is on screen', lapping.shown === true, JSON.stringify(lapping.shown));
+  ok('…and it opens \u21c4 Sync, not the Cadence that has nothing to fix',
+    lapping.syncOpen === true && lapping.cadOpen === false,
+    JSON.stringify({ cad: lapping.cadOpen, sync: lapping.syncOpen }));
+
   if (errs.length) console.log('page errors:\n  ' + errs.slice(0, 6).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

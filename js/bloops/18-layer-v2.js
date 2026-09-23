@@ -9101,8 +9101,8 @@
       // screen you are on when you HEAR it, so the warning named a fix nobody
       // reached. Same action, same arithmetic, one tap from the symptom.
       '<button type="button" class="ambient-seg v2-evenfix" hidden ' +
-        'title="Open the Cadence for this part, where ⇄ Even it out makes the total a whole number of bars. The cadence is shared by every layer on this part.">' +
-        '⇄ Even the part…</button>' +
+        'title="Fix the length that is making this drift — the cadence when the chords do not add up to whole bars, otherwise this layer’s own record against the part it plays under.">' +
+        '<span class="v2-evenlab">⇄ Fix the length…</span></button>' +
       '<canvas class="v2-vizcv" height="84"></canvas>' +
       '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
@@ -10418,7 +10418,43 @@
           0.875: 'three and a half beats' };
         const frac = NAMES[Math.round(off * 1000) / 1000] ||
           (Math.round(off * 4 * 100) / 100 + ' beats');
-        return ' · ⚠ uneven — every pass starts ' + frac + ' later against the beat';
+        // WHOSE LENGTH IS ODD? Two different faults wear the same symptom, and
+        // sending you at the wrong one is worse than saying nothing:
+        //   · THE CADENCE is not a whole number of bars — the chords add up to
+        //     8⅛, and every layer on the part inherits it. Cured in Cadence.
+        //   · THE CONTENT is a different length from the part it plays under —
+        //     the cadence is a clean 8 and this record is 8⅛, so it laps the
+        //     part by an eighth every pass. Reported 2026-09-22 with a cadence
+        //     reading "8 bars EVEN" and the card still reading 8.13: "like
+        //     there's an extra beat jammed in at the end of the first pass".
+        //     Cured by ⇄ Sync, which is what re-fits a record to its part —
+        //     "a part's bars are its own; nothing re-lengths them when the
+        //     changes grow", as this file already says one block down.
+        // The old text named only the first, so the second sent you to an
+        // editor that was already even and had nothing to offer.
+        // ONLY WHEN THERE IS A REAL PART TO LAP. With no progression
+        // `_ambLenPartBars` falls back to the area's unit length, and comparing
+        // against that produced "8.13 bars over a 1-bar part", which is true of
+        // the arithmetic and nonsense as a sentence.
+        let cadBars = 0;
+        try {
+          const prU = cfg && cfg.prog;
+          if (prU && prU.on && (prU.chords || []).length) {
+            const rgsU = (typeof _ambGridRanges === 'function') ? (_ambGridRanges(cfg) || []) : [];
+            const piU = Number.isFinite(L.partFor) ? (L.partFor | 0)
+              : ((typeof _ambCurPartNow === 'function' && rgsU.length) ? _ambCurPartNow(E, cfg, rgsU) : -1);
+            if (piU >= 0 && typeof _ambLenPartBars === 'function') cadBars = +_ambLenPartBars(cfg, piU);
+          }
+        } catch (e) {}
+        // …and only when the two genuinely DIFFER: a clean part with an uneven
+        // cadence has content the same length as the part, and that is the
+        // cadence's fault, not this record's.
+        const cadWhole = cadBars > 0 && Math.abs(cadBars - Math.round(cadBars)) < 1e-6 &&
+          Math.abs(cadBars - barsF) > 1e-6;
+        return cadWhole
+          ? (' · ⚠ this content is ' + (Math.round(barsF * 100) / 100) + ' bars over a ' +
+             Math.round(cadBars) + '-bar part — it laps by ' + frac + ' every pass')
+          : (' · ⚠ uneven — every pass starts ' + frac + ' later against the beat');
       })();
       // THE DOOR FOLLOWS THE VERDICT, from the one computation — two walks of
       // "is this part uneven" is how the button and the sentence come to
@@ -20931,33 +20967,46 @@
         // than `part.kind` which branch emits. It says what is being left
         // behind rather than what is being lost, because a form you cannot see
         // is still playing nothing, and that is worth naming.
-        // ⇄ EVEN THE PART — the door, not a second implementation.
-        // The cure lived in the Cadence editor and the symptom is read here,
-        // so this card carries the way IN; the editor still does the work.
-        // TRIED IT INLINE FIRST AND BACKED IT OUT: applying `_ambCadEven` from
-        // here fixed the cadence and every layer's `part.bars` (measured: 8.125
-        // → 8, cycle 16s) and STILL left the warning up, because the drawing's
-        // length is the arrangement's PASS SPAN (`cycBars` ← `cycleWindowAt`),
-        // which only the editor's own commit re-anchors. Re-deriving that
-        // cascade beside it is precisely how the Scheduler lane once came to
-        // lie about the harmony — one owner for the chord clock.
+        // ⇄ FIX THE LENGTH — the door, and it has to lead to the right room.
+        // TWO FAULTS, ONE SYMPTOM. If the CADENCE is not a whole number of bars
+        // every layer on the part drifts, and the cure is in the Cadence
+        // editor. If the cadence is clean and THIS RECORD is a different length
+        // from the part, only this layer laps, and the cure is ⇄ Sync — which
+        // already exists for exactly this ("a part's bars are its own; nothing
+        // re-lengths them when the changes grow").
+        // Sending a clean-cadence case to the Cadence editor is what happened
+        // when this door was first built: it opened on "8 bars EVEN" with
+        // nothing to press, which is worse than no door at all.
         const evb = t.closest && t.closest('.v2-evenfix');
         if (evb) {
           const ctx = layerOf(evb); if (!ctx) return;
-          let pi = 0;
+          const c2 = E.getCfg();
+          let pi = -1, cadBars = 0;
           try {
             const pf = partForOf(ctx.L);
             if (pf && pf.pi >= 0) pi = pf.pi;
             else if (typeof _ambCurPartNow === 'function' && typeof _ambGridRanges === 'function') {
-              const c2 = E.getCfg();
               pi = _ambCurPartNow(E, c2, _ambGridRanges(c2) || []) | 0;
             }
+            if (pi >= 0 && typeof _ambLenPartBars === 'function') cadBars = +_ambLenPartBars(c2, pi);
           } catch (e) {}
-          let opened = false;
-          try { if (typeof _ambCadenceModal === 'function') { _ambCadenceModal(E, pi); opened = true; } } catch (e) {}
-          if (!opened) {
+          const cadWhole = cadBars > 0 && Math.abs(cadBars - Math.round(cadBars)) < 1e-6;
+          if (!cadWhole) {
+            let opened = false;
+            try { if (typeof _ambCadenceModal === 'function') { _ambCadenceModal(E, Math.max(0, pi)); opened = true; } } catch (e) {}
+            if (!opened) { try { if (typeof showToast === 'function') showToast(
+              'Open Changes \u25b8 Cadence to even this part out.', { ms: 4000 }); } catch (e) {} }
+            return;
+          }
+          // THE CADENCE IS FINE — it is this record that does not fit the part.
+          try {
+            syncPartModal(E, ctx.card, ctx.L, () => {
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+            });
+          } catch (e) {
             try { if (typeof showToast === 'function') showToast(
-              'Open Changes ▸ Cadence to even this part out.', { ms: 4000 }); } catch (e) {}
+              'Use \u21c4 Sync to fit this content to the part.', { ms: 4000 }); } catch (x) {}
           }
           return;
         }

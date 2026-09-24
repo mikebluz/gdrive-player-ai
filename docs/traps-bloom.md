@@ -213,6 +213,15 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **THE LAYER ID IS THE SEED** (`seedIdOf`, six sites: `seedBase`, `seedOf`, the lane `sd`, and the
+  slide / motion / ornament draws at emit). So anything that copies a layer must carry `seedId`
+  across or the copy plays a DIFFERENT melody from identical rules — which is what ⧉ Clone does.
+  `seedId` is absent by default and pruned when it equals the id, so nothing saved before it moves.
+  To make a copy diverge, bump `part.take` (🎲 New take) — the other axis of the same seed.
+- **Generators leave scratch in the part (`part._deg` is the walk's last degree), and it is
+  ENUMERABLE** — so a "are these two layers identical?" comparison over `JSON.stringify` is really
+  asking "did they draw the same", not "were they copied". Compare stored fields only; let a
+  notes-level check own the draw claim.
 - **`vary` IS EVOLVE AT `ev` 1, `am` 100 — one axis wearing two controls.** The emitter says so (it
   lets `vary` outrank `chg` for exactly this reason), and every consequence of the split has now been
   a bug: the Evolve rows vanished on a frozen part (`vary` computed two ways), the outline preview

@@ -119,6 +119,20 @@
     return Math.random();
   }
 
+  // ⧉ A CLONE DRAWS THE SAME NUMBERS AS WHAT IT WAS CLONED FROM. The layer
+  // id IS the seed — six sites below multiply it into `vRnd` — so a copy with
+  // a new id would play a DIFFERENT melody from identical rules, which is a
+  // clone that does not clone. `seedId` is the draw identity, split from the
+  // id (which stays unique, because the phase store, the mod chain and the
+  // strip all key off it). ABSENT BY DEFAULT and written only by ⧉ Clone, so
+  // every layer saved before today draws exactly what it drew yesterday; a
+  // copy that wants to become its own thing presses 🎲 New take, which bumps
+  // `part.take` — a different axis of the same seed.
+  function seedIdOf(L) {
+    const s = (L && L.seedId) | 0;
+    return s > 0 ? s : ((L && L.id) | 0);
+  }
+
   // v1's word emitter reads a FLAT layer (`L.tone`, `L.level`, `L.word`) and
   // hands it to `_ambApplyAdsr` and `_ambLayerPan`. `adsrShim` already flattens
   // the envelope and the Performance family, so the word shim is that plus the
@@ -1097,6 +1111,11 @@
     if (!L || typeof L !== 'object') return null;
     L.v = 2;
     L.id = (L.id | 0) || (i + 1);
+    // ⧉ THE DRAW IDENTITY, and only a clone has one that is not its own id.
+    // Pruned the moment it says nothing (absent, zero, or equal to the id), so
+    // a project saved before ⧉ Clone reads and re-saves byte for byte.
+    if (((L.seedId | 0) > 0) && ((L.seedId | 0) !== (L.id | 0))) L.seedId = L.seedId | 0;
+    else if (L.seedId !== undefined) delete L.seedId;
     if (typeof L.name !== 'string' || !L.name) L.name = 'Layer ' + L.id;
     L.on = L.on !== false;
     L.present = L.present !== false;
@@ -3983,7 +4002,7 @@
     if (TAKE_PIN == null && p.ruleb && typeof p.ruleb === 'object' && Object.keys(p.ruleb).length) {
       return composite({ base: cycIdx, bars: {}, rules: p.ruleb });
     }
-    const seedBase = ((L.id | 0) * 9176) ^ (cycIdx * 2246822519);
+    const seedBase = (seedIdOf(L) * 9176) ^ (cycIdx * 2246822519);
     try { ctx._seedBase = seedBase; } catch (e) {}   // for `xfStage` — the take's own seed, not a second one
     // ── WHICH SEED EACH STAGE READS ───────────────────────────────────────
     // A change may touch only SOME of the material (`am`) and only SOME of its
@@ -3992,7 +4011,7 @@
     // layer's own take when it starts from scratch — so the rest of the part
     // carries on unchanged while the changed share is re-decided. With no
     // `chg`, or at 100%, every stage reads `seedBase` exactly as before.
-    const seedOf = (ix) => ((L.id | 0) * 9176) ^ ((ix | 0) * 2246822519);
+    const seedOf = (ix) => (seedIdOf(L) * 9176) ^ ((ix | 0) * 2246822519);
     // A EUCLID (or drawn) PATTERN IS A FORMULA — steps, pulses, rotate — so a
     // fresh seed changes nothing about it, and "rhythm changes" measured as a
     // no-op. A change to the rhythm therefore ROTATES the pattern by a seeded
@@ -4105,7 +4124,7 @@
       for (let li = 0; li < _V2_LANES; li++) {
         const row = lanes[li] || [];
         for (let i = 0; i < st; i++) {
-          const sd = (L.id | 0) * 9176 ^ (cycIdx * 2246822519) ^ (li * 7919) ^ (i * 40503);
+          const sd = seedIdOf(L) * 9176 ^ (cycIdx * 2246822519) ^ (li * 7919) ^ (i * 40503);
           let on = row[i] ? 1 : 0;
           if (dvary > 0) {
             if (on && vRnd(sd, 61) < dvary * 0.40) on = 0;
@@ -5635,6 +5654,77 @@
     return true;
   }
 
+  // ── ⧉ CLONE A LAYER (2026-09-23) ─────────────────────────────
+  // user: "add ability to clone a layer".
+  //
+  // IT LANDS DIRECTLY BELOW THE ONE IT CAME FROM, not at the end of the strip.
+  // A copy that appears eight rows away reads as "nothing happened" — this
+  // file's reachability rule, one surface further out.
+  //
+  // DEEP, AND THROUGH `normLayer` LIKE ANY OTHER LAYER. A hand-kept field list
+  // goes stale the first time a field is added (↺ Restore's own lesson), so
+  // this takes a JSON round-trip and then normalizes: total by construction.
+  // The cached shims (`__v2word`, `__v2shim`) are NON-ENUMERABLE, so they stay
+  // behind rather than being copied into a second layer that would then share
+  // one live object with the first.
+  //
+  // THREE FIELDS DIFFER, AND THEY ARE ALL IDENTITY:
+  //   · `id` — new, because the phase store, the mod chain and the strip all
+  //     key off it, and two layers sharing one would fight over all three;
+  //   · `seedId` — the SOURCE's, so the copy plays the same notes instead of a
+  //     different melody from the same rules (`seedIdOf` says why);
+  //   · `name` — see `cloneNameOf`.
+  //
+  // ↔ ANSWER POINTS AT A SOURCE BY ID, so the copy answers whatever the
+  // original answered. It is deliberately NOT re-pointed at the original:
+  // "plays off the same layer" is a copy, "plays off the thing I copied" is a
+  // new musical decision, and it is one tap away on the card.
+  function cloneLayerFn(E, L) {
+    if (!E || !L) return null;
+    const cfg = E.getCfg && E.getCfg(); if (!cfg || !Array.isArray(cfg.layers)) return null;
+    const i = cfg.layers.indexOf(L); if (i < 0) return null;
+    let copy = null;
+    try { copy = JSON.parse(JSON.stringify(L)); } catch (e) { copy = null; }
+    if (!copy || typeof copy !== 'object') return null;
+    const id = cfg.layers.reduce((m, x) => Math.max(m, (x && x.id) | 0), 0) + 1;
+    copy.id = id;
+    const sd = seedIdOf(L);
+    if (sd > 0 && sd !== id) copy.seedId = sd; else delete copy.seedId;
+    copy.name = cloneNameOf(cfg, L, id);
+    const C = normLayer(copy, i + 1);
+    if (!C) return null;
+    cfg.layers.splice(i + 1, 0, C);
+    // RE-RESOLVE BY ID AFTER THE NORMALIZE. `_normalizeAmbientCfg` runs on every
+    // `getCfg` and is free to hand back different objects; a caller that keeps
+    // the one it pushed is editing an orphan, which is this codebase's oldest
+    // silent no-op. Falls back to `C` so a resolver miss cannot report a clone
+    // that did happen as one that did not.
+    let out = C;
+    try {
+      const c2 = E.getCfg() || cfg;
+      out = ((c2.layers || []).filter((x) => x && (x.id | 0) === id)[0]) || C;
+    } catch (e) {}
+    return out;
+  }
+
+  // "Layer 3" IS A DEFAULT, NOT A CHOICE, so its copy takes its own default
+  // rather than "Layer 3 copy" — the same distinction ↺ Restore draws when it
+  // keeps the name and drops every setting. A name you typed is yours and
+  // survives, numbered only as far as it must to stay distinct: ↔ Answer lists
+  // layers BY NAME, and two identical words there is a menu you cannot choose
+  // from.
+  function cloneNameOf(cfg, L, id) {
+    const nm = (typeof L.name === 'string' && L.name) ? L.name : ('Layer ' + (L.id | 0));
+    if (nm === 'Layer ' + (L.id | 0)) return 'Layer ' + id;
+    const taken = (cfg.layers || []).map((x) => (x && x.name) || '');
+    const base = nm + ' copy';
+    if (taken.indexOf(base) < 0) return base;
+    for (let n = 2; n < 999; n++) {
+      if (taken.indexOf(base + ' ' + n) < 0) return base + ' ' + n;
+    }
+    return base;
+  }
+
   // Render every line that is not already in the bank. Awaited by the caller so
   // it can report progress; RENDERING HAPPENS WHILE STOPPED by convention — the
   // card's button is the only caller and it says so.
@@ -5963,7 +6053,7 @@
             const prev = st._slideDeg;
             if (Number.isFinite(prev)) {
               const sms = _ambSlideMs({ slide: perfOf(L, 'slide') | 0 }, prev, n.deg,
-                () => vRnd((L.id | 0) ^ Math.round(at * 1000), 71));
+                () => vRnd(seedIdOf(L) ^ Math.round(at * 1000), 71));
               if (sms) { params.glideMs = Math.max(params.glideMs || 0, sms); params.glideLayer = adsrShim(L); }
             }
             st._slideDeg = n.deg;
@@ -5974,7 +6064,7 @@
         // both write `params.detune`, so this must add rather than replace).
         if ((perfOf(L, 'motion') | 0) > 0) {
           const m3 = clamp(perfOf(L, 'motion') | 0, 0, 100) / 100;
-          const d3 = Math.round((vRnd((L.id | 0) ^ Math.round(at * 1000), 103) * 2 - 1) * 18 * m3);
+          const d3 = Math.round((vRnd(seedIdOf(L) ^ Math.round(at * 1000), 103) * 2 - 1) * 18 * m3);
           params.detune = (Number.isFinite(params.detune) ? params.detune : 0) + d3;
         }
         // A HAND-EDITED NOTE'S OWN ENVELOPE AND GLIDE. After `_ambApplyAdsr`,
@@ -6004,7 +6094,7 @@
               withKeyTime(at, () => _ambOrnamentFlicks(
                 { ornament: perfOf(L, 'ornament') | 0 }, src3, n.deg, n.oct | 0, at, params, n.durMs, dest,
                 E.laneIdx ? E.laneIdx() : undefined,
-                () => vRnd((L.id | 0) ^ Math.round(at * 1000), 83)));
+                () => vRnd(seedIdOf(L) ^ Math.round(at * 1000), 83)));
             }
           } catch (e) {}
         }
@@ -7578,6 +7668,7 @@
     notesFor,                      // the interface, callable directly
     onsetsOf,
     resetLayer: resetLayerFn,      // \u21ba everything back to a new layer's defaults
+    cloneLayer: cloneLayerFn,      // \u29c9 …and a second one exactly like it, right below
     // …and what those defaults ARE, for anything that needs to ask (the
     // \u2699 Deep panel's "Changed" line compares against this). One source, so a
     // new field is covered the moment it is normalized.
@@ -23065,6 +23156,28 @@
                   h._sig = '';
                   try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
                   V2.render(E);
+                }, 0) },
+              // \u29c9 CLONE \u2014 under Rename and above the two destructive rows,
+              // because it is the other thing you do to a layer you already
+              // like. NO CONFIRM: it only adds, and \u2715 Remove undoes it in one
+              // tap. The toast names WHERE it went (directly below) and that it
+              // is note-for-note the same, so the next press is an informed one.
+              { label: '\u29c9 Clone layer', fn: () => setTimeout(() => {
+                  const was = ctx.L.name;
+                  const C = V2.cloneLayer(E, ctx.L);
+                  if (!C) {
+                    try { if (typeof showToast === 'function') showToast('Could not clone this layer.'); } catch (e) {}
+                    return;
+                  }
+                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                  try {
+                    if (typeof showToast === 'function') {
+                      showToast('\u29c9 "' + C.name + '" \u2014 a copy of "' + was +
+                        '", directly below it. It plays the same notes; \ud83c\udfb2 New take makes it its own.',
+                        { ms: 5000 });
+                    }
+                  } catch (e) {}
+                  h._sig = ''; V2.render(E);
                 }, 0) },
               // \u21ba RESTORE \u2014 above Remove, and asking first: it destroys every
               // setting and the notes, which is exactly the press people mean

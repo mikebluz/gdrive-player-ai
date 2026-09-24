@@ -7,6 +7,12 @@
 
 ### Measurement & testing discipline
 
+- **A synthetic tap that lands OFF the element reads as "nothing happened" and passes a
+  negative check.** `page.mouse.click` at a point outside the viewport or past the canvas does
+  nothing at all, which is indistinguishable from the handler correctly ignoring it — measured
+  while checking that a tap in the open plot clears a ⬚ Multi gathering, with the tap 70px below
+  the canvas. **Assert `document.elementFromPoint(x, y)` is the element you meant**, and derive the
+  point from the element's own published geometry rather than a guessed offset.
 - **A SERVER THAT FAILED TO BIND LEAVES YOU MEASURING SOMEBODY ELSE'S BUILD.** `node server.js` on a
   taken port exits with EADDRINUSE while an older listener keeps answering, so every probe run looks
   plausible and tests the wrong code — measured 2026-09-22 as a feature "not working" that was

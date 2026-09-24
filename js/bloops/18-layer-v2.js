@@ -8162,6 +8162,56 @@
   const SPB = V2.regSlots, regKey = V2.regKey, regBarKey = V2.regBarKey,
         regParse = V2.regParse, regLabel = V2.regLabel;
 
+  // ── WHICH REGION A RULER TAP NAMES ────────────────────────────
+  // The ruler is TWO ROWS answering two questions: the chord band on top picks
+  // a CHANGE, the numbers below pick a BAR. ONE implementation, because two
+  // presses now ask it — 🎲 New take ("which bars re-roll") and ⬚ Multi
+  // ("which notes gather") — and two copies of a chord's span is how they come
+  // to disagree about where that chord ends.
+  // Returns `{ key, nm }` or null; `nm` is WHAT YOU PRESSED ("F♯m", "bar 3"),
+  // because a selection described in slots when you pressed a chord is the app
+  // answering a question you did not ask.
+  function regAtTap(cvz, geo, px, py) {
+    if (!cvz || !geo) return null;
+    // THE KEYBOARD GUTTER IS NOT PART OF THE BAR GRID — a tap on the keys is a
+    // tap on the axis, not on bar 1.
+    const gx0 = geo.x0 || 0;
+    if (px < gx0) return null;
+    const vsc = (geo.vsc > 0) ? geo.vsc : 1, f0 = geo.f0 || 0;
+    // the tap as a CYCLE FRACTION — one inverse of the draw's own mapping,
+    // shared by the bar row and the chord band above it
+    const fr = f0 + ((px - gx0) / Math.max(1, geo.w)) * vsc;
+    const cg = cvz._chordGeo;
+    if (cg && py <= cg.top && Array.isArray(cg.marks) && cg.marks.length) {
+      const m = cg.marks.find((x) => fr >= x.f0 - 1e-6 && fr < x.f1 - 1e-6);
+      if (!m) return null;
+      // THE CHANGE'S OWN SPAN, to the slot. Reported as "clicking F♯m should
+      // only select the F♯m area" — it used to widen to whole bars, which on a
+      // cadence where F♯m runs from mid-bar to the bar line selected twice the
+      // change. SNAP FIRST: `_ambChordSpanAt` BISECTS, so a change's edges carry
+      // float noise (measured 1.00005 bars for a chord ending exactly on bar 1),
+      // and the 1/48-bar grid is where every real boundary sits.
+      const top = Math.max(1, Math.round(geo.barsF * SPB));
+      const sa = Math.max(0, Math.min(top - 1, Math.round(m.f0 * geo.barsF * SPB)));
+      const sb = Math.max(sa + 1, Math.min(top, Math.round(m.f1 * geo.barsF * SPB)));
+      const k = regKey(sa, sb);
+      return { key: k, nm: m.nm || regLabel(k) };
+    }
+    const b = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1, Math.floor(fr * geo.barsF)));
+    return { key: regBarKey(b), nm: 'bar ' + (b + 1) };
+  }
+  // …and WHICH NOTES it holds. `V2.regHas` takes the caller's own terms (a
+  // note's cycle fraction and the part's length), so nothing here has to know
+  // the slot grid exists.
+  function notesInReg(L, key, barsF) {
+    const out = [];
+    const ns = (L && L.part && L.part.notes) || [];
+    for (let i = 0; i < ns.length; i++) {
+      try { if (V2.regHas([key], ns[i].t, barsF)) out.push(i); } catch (e) {}
+    }
+    return out;
+  }
+
   // `drawn` IS NOT A CHOICE HERE — it is what `euclid` BECOMES the moment you
   // tap a cell, exactly as v1's `euclidPattern` override supersedes its own
   // formula. Shipping it as a fourth dropdown entry made the grid invisible
@@ -22317,9 +22367,52 @@
               else { try { drawPartViz(cA, L2, E); } catch (e) {} }
               return;
             }
+            const geo = cvz._barsGeo;
+            // ONLY FROM THE RULER STRIP (stated as the contract, 2026-09-08:
+            // "selecting a change should only be possible by pressing the bar
+            // ruler area, not the whole section"). A tap in the open plot used
+            // to toggle bars, which made every stray tap an edit.
+            const inRuler = !!geo && py <= ((cvz._pitchGeo && cvz._pitchGeo.top) || 15);
             if (modeOf(L2) === 'multi') {
-              // …and in MULTI a miss means "gather nothing". Bar select is not
-              // available in this mode on purpose: one gesture, one meaning.
+              // ── ⬚ A RULER TAP GATHERS THE WHOLE REGION ─────────────
+              // user, 2026-09-23: "in Multi mode, selecting the bar should
+              // select all note events in the bar".
+              // THE STRIP MEANS ONE THING IN BOTH MODES — "pick this region" —
+              // and only what is picked changes with the mode: 🎲 New take reads
+              // it as which bars re-roll, ⬚ Multi as which notes gather. Same
+              // `regAtTap`, so a chord's span cannot mean one thing here and
+              // another there; the chord band comes along for free, which is
+              // the point of sharing it (a strip whose top row went on clearing
+              // your gathering while the row below extended it would be the
+              // duplicate-surface trap in miniature).
+              // TOGGLING, like every other ⬚ Multi press: a region already
+              // gathered WHOLE gives its notes back, so a mis-tap costs one tap.
+              const reg = inRuler ? regAtTap(cvz, geo, px, py) : null;
+              if (reg && (L2.part.notes || []).length) {
+                const hits = notesInReg(L2, reg.key, geo.barsF || 1);
+                const cM = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+                if (!hits.length) {
+                  // A REGION WITH NOTHING IN IT IS NOT A MISS, and clearing the
+                  // gathering would be the opposite of what the press asked for.
+                  try { if (typeof showToast === 'function') showToast('Nothing in ' + reg.nm + ' to gather.', { ms: 2600 }); } catch (e) {}
+                  return;
+                }
+                const cur = new Set(mselOf(L2) || []);
+                const whole = hits.every((i) => cur.has(i));
+                hits.forEach((i) => { if (whole) cur.delete(i); else cur.add(i); });
+                mselSet(L2, cur);
+                NE = null;                      // the editor is a single-note surface
+                try { drawPartViz(cM, L2, E); } catch (e) {}
+                try { multiSync(cM, L2); } catch (e) {}
+                try {
+                  if (typeof showToast === 'function') {
+                    showToast('\u2b1a ' + (whole ? 'Let go of ' : 'Gathered ') + hits.length +
+                      ' note' + (hits.length === 1 ? '' : 's') + ' in ' + reg.nm + '.', { ms: 2600 });
+                  }
+                } catch (e) {}
+                return;
+              }
+              // …and a miss in the open plot still means "gather nothing".
               if ((mselOf(L2) || { size: 0 }).size) {
                 mselSet(L2, null);
                 const cM = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
@@ -22328,67 +22421,20 @@
               }
               return;
             }
-            const geo = cvz._barsGeo;
             // a LIVE part selects bars too — for 🎲 New take, which retakes
             // just those bars (a per-bar pin); a recorded one for the splice
-            if (!geo) return;
-            // …AND ONLY FROM THE RULER STRIP (stated as the contract,
-            // 2026-09-08: "selecting a change should only be possible by
-            // pressing the bar ruler area, not the whole section"). A tap in
-            // the open plot used to toggle bars, which made every stray tap
-            // an edit to which bars re-roll.
-            if (py > ((cvz._pitchGeo && cvz._pitchGeo.top) || 15)) return;
+            if (!inRuler) return;
             if (L2.part.kind === 'recorded' && !(L2.part.notes || []).length) return;
-            // THE KEYBOARD GUTTER IS NOT PART OF THE BAR GRID — a tap on the
-            // keys is a tap on the axis, not on bar 1.
-            const gx0 = geo.x0 || 0;
-            if (px < gx0) return;
-            const vsc9 = (geo.vsc > 0) ? geo.vsc : 1, f09 = geo.f0 || 0;
-            // the tap, as a CYCLE FRACTION — one inverse of the draw's own
-            // mapping, shared by the bar row and the chord band above it
-            const fr9 = f09 + ((px - gx0) / Math.max(1, geo.w)) * vsc9;
+            const reg = regAtTap(cvz, geo, px, py);
+            if (!reg) return;
             if (!BSEL || BSEL.id !== (L2.id | 0) || BSEL.sig !== bselSig(L2)) {
               BSEL = { id: L2.id | 0, sig: bselSig(L2), bars: new Map() };
             }
-            const selToggle = (key, nm) => {
-              if (BSEL.bars.has(key)) BSEL.bars.delete(key); else BSEL.bars.set(key, nm);
-              const cS = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
-              try { drawPartViz(cS, L2, E); } catch (e) {}
-            };
-            // ── THE CHORD BAND SELECTS A CHANGE ──────────────────────────
-            // "should also be able to click the Chord headers to select all of
-            // a chord (just like bar selection but by chord instead)". The
-            // ruler is two rows and they now answer two questions: the top one
-            // picks a CHANGE, the numbers below pick a BAR.
-            //
-            // THE SELECTION IS STILL IN BARS, and that is not a shortcut — it
-            // is the granularity the re-roll HAS: the splice and the composite
-            // both bucket notes with `floor(t * bars)`, and the per-bar stores
-            // (`takeb`, `ruleb`) are keyed by bar index. So a chord tap picks
-            // every bar the change OVERLAPS, and when the change does not fill
-            // whole bars it says so rather than quietly selecting more than
-            // its name (a control that does more than it says is the trap this
-            // file keeps paying for).
-            const cg9 = cvz._chordGeo;
-            if (cg9 && py <= cg9.top && Array.isArray(cg9.marks) && cg9.marks.length) {
-              const m9 = cg9.marks.find((x) => fr9 >= x.f0 - 1e-6 && fr9 < x.f1 - 1e-6);
-              if (!m9) return;
-              // THE CHANGE'S OWN SPAN, to the slot. Reported as "clicking F♯m
-              // should only select the F♯m area" — it used to widen to whole
-              // bars, which on a cadence where F♯m runs from the middle of a
-              // bar to its end selected twice the change.
-              // SNAP FIRST: `_ambChordSpanAt` BISECTS, so a change's edges carry
-              // float noise (measured 1.00005 bars for a chord ending exactly on
-              // bar 1). The 1/48-bar grid is where every real boundary sits, and
-              // is the same snap the window start and the rubato edges use.
-              const top9 = Math.max(1, Math.round(geo.barsF * SPB));
-              const sa = Math.max(0, Math.min(top9 - 1, Math.round(m9.f0 * geo.barsF * SPB)));
-              const sb = Math.max(sa + 1, Math.min(top9, Math.round(m9.f1 * geo.barsF * SPB)));
-              selToggle(regKey(sa, sb), m9.nm || regLabel(regKey(sa, sb)));
-              return;
-            }
-            const b2 = Math.max(0, Math.min(Math.ceil(geo.barsF) - 1, Math.floor(fr9 * geo.barsF)));
-            selToggle(regBarKey(b2), 'bar ' + (b2 + 1));
+            // `BSEL.bars` is a Map of region key → the name you pressed.
+            if (BSEL.bars.has(reg.key)) BSEL.bars.delete(reg.key);
+            else BSEL.bars.set(reg.key, reg.nm);
+            const cS = document.querySelector('.v2-layer[data-v2id="' + (L2.id | 0) + '"]') || ctx.card;
+            try { drawPartViz(cS, L2, E); } catch (e) {}
             return;
           }
           const wasRec = L2.part.kind === 'recorded';

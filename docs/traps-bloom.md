@@ -213,6 +213,11 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **THE RULER STRIP IS READ BY TWO FEATURES AND HAS ONE IMPLEMENTATION (`regAtTap`).** The chord
+  band picks a CHANGE, the numbers below pick a BAR — and the press means the same thing in both
+  modes ("pick this region"); only what is picked changes: 🎲 New take reads it as which bars
+  re-roll, ⬚ Multi (2026-09-23) as which notes gather. Two copies of a chord's span is how the two
+  come to disagree about where that chord ends, so add a reader, not a second copy.
 - **A DISABLED `<select>` STILL SHOWS ITS FIRST OPTION, so it wears the name of the state you are
   NOT in.** e44cd61 moved the 👁 View / ✎ Edit axis to the Parts strip and left the card's
   `.v2-modepick` disabled in View — where it went on displaying "✎ Edit", and a press did nothing,

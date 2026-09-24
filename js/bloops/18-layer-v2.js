@@ -1697,6 +1697,21 @@
         if (Object.keys(outFx).length) t.stepFx = outFx; else delete t.stepFx;
       } else if (t.stepFx !== undefined) delete t.stepFx;
 
+      // ── ↔ ANSWER (2026-09-23) ─────────────────────────────
+      // Which other layer this one plays off, and how. ABSENT BY DEFAULT and
+      // pruned the moment it says nothing, so every project saved before this
+      // reads and re-saves byte for byte. `src` arrives from a <select> as a
+      // STRING; coerced here, which is the only place that can promise the
+      // emitter never sees one.
+      // 'gaps' IS THE DEFAULT AND IS NOT STORED — a mode field is kept only
+      // when it is the one that is not implied.
+      if (p.answer && typeof p.answer === 'object' && ((p.answer.src | 0) > 0)) {
+        const an = p.answer;
+        an.src = an.src | 0;
+        if (an.mode !== 'hits') delete an.mode;
+        Object.keys(an).forEach((k) => { if (k !== 'src' && k !== 'mode') delete an[k]; });
+      } else if (p.answer !== undefined) delete p.answer;
+
       const s = (p.shape && typeof p.shape === 'object') ? p.shape : (p.shape = {});
       s.lenRatio = clamp(Number.isFinite(s.lenRatio) ? s.lenRatio : 90, 1, 400);   // % of the onset span
       // 0 = off, i.e. Length governs. Stored only when it is doing something.
@@ -3575,6 +3590,116 @@
     res.sort((a, b) => a.at - b.at);
     return res;
   }
+  // ── ↔ ANSWER — ONE LAYER PLAYS OFF ANOTHER (2026-09-23) ──────────
+  // user: "need a way to chain layer content events in successive ways", and
+  // of the four readings offered, this one: "layer B fires only where layer A
+  // rests" — call and response.
+  // THIS CROSSES A LINE THE FILE DREW ON PURPOSE. `notesFor` is a pure function
+  // of ONE layer, and `vRnd` is isolated per layer precisely "so a v2 layer can
+  // never shift a v1 layer's draws". Answer does not break either: it never
+  // draws from the source's randomness, it only READS the notes the source
+  // already decided, and it reads them through `notesFor` — the same seam the
+  // ear and the picture use, so an answer cannot disagree with what it answers.
+  const ANSWER_MODES = {
+    gaps: 'In the gaps — answers where the other rests',
+    hits: 'On the hits — doubles the other',
+  };
+  // A LAYER ALREADY BEING RESOLVED IS NOT ASKED AGAIN. A answers B answers A is
+  // a cycle the user can build in two taps, and it would recurse until the
+  // stack gave out — inside a `try/catch` that would read as the layer silently
+  // going quiet. The set also caps DEPTH: a chain four deep costs 2^4 calls of
+  // `notesFor` per frame, and this runs on every draw.
+  const ANSWERING = new Set();
+  const ANSWER_DEPTH = 4;
+  // …and a bound on how many source cycles one window may pull. The source can
+  // be SHORTER than the answering layer (a 1-bar kit under an 8-bar line), so
+  // the window is tiled — bounded, because a free-clock source could otherwise
+  // tile without end.
+  const ANSWER_MAX_CYCLES = 16;
+
+  function answerSrcOf(ctx, id) {
+    const want = id | 0; if (!(want > 0)) return null;
+    let list = null;
+    try { list = (ctx && ctx.cfg && ctx.cfg.layers) || null; } catch (e) {}
+    if (!list) return null;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] && (list[i].id | 0) === want) return list[i];
+    }
+    return null;   // named layer deleted — the answer plays as written, not silent
+  }
+
+  // WHEN THE SOURCE IS SOUNDING, over the answering layer's window. Asked cycle
+  // by cycle on the SOURCE's own grid, because the two layers need not share a
+  // length or an anchor — `cycleWindowAt` is the one place that knows where a
+  // given layer's cycle falls, per-part layers included.
+  function answerSpans(S, ctx, from, to) {
+    const out = [];
+    let st = null;
+    try { st = (ctx.E && ctx.E._v2Phase) ? ctx.E._v2Phase['v2:' + (S.id | 0)] : null; } catch (e) {}
+    let cs = from, cy = 0;
+    try {
+      const w = cycleWindowAt(S, ctx.E, ctx.cfg, from, st);
+      if (w) { cs = w.cs; cy = w.cyc; }
+    } catch (e) {}
+    if (!(cy > 0)) { try { cy = Math.max(0.05, cycSecOf(S, ctx.cfg)); } catch (e) { return out; } }
+    for (let k = 0; k < ANSWER_MAX_CYCLES && cs < to; k++) {
+      let ns = null;
+      try {
+        ns = notesFor(S, { E: ctx.E, cfg: ctx.cfg, key: 'v2:' + (S.id | 0),
+                           cycleStart: cs, cycleSec: cy });
+      } catch (e) { ns = null; }
+      for (let i = 0; ns && i < ns.length; i++) {
+        const n = ns[i];
+        if (!n || !Number.isFinite(n.at)) continue;
+        const t1 = n.at + Math.max(0, (+n.durMs || 0) / 1000);
+        if (t1 > from && n.at < to) out.push([n.at, t1]);
+      }
+      const prev = cs;
+      const nx = cs + Math.max(0.05, cy);
+      try {
+        const w2 = cycleWindowAt(S, ctx.E, ctx.cfg, nx + 1e-6, st);
+        if (w2) { cs = w2.cs; cy = w2.cyc; } else cs = nx;
+      } catch (e) { cs = nx; }
+      if (!(cs > prev + 1e-9)) break;      // no forward progress — never spin
+    }
+    out.sort((a, b) => a[0] - b[0]);
+    return out;
+  }
+
+  function answerStage(L, ctx, ns) {
+    const a = L && L.part && L.part.answer;
+    if (!a || !((a.src | 0) > 0) || !ns || !ns.length) return ns;
+    const me = L.id | 0;
+    if (ANSWERING.has(me) || ANSWERING.size >= ANSWER_DEPTH) return ns;
+    const S = answerSrcOf(ctx, a.src);
+    if (!S || (S.id | 0) === me) return ns;
+    const from = +ctx.cycleStart || 0, to = from + (+ctx.cycleSec || 0);
+    if (!(to > from)) return ns;
+    let spans = [];
+    ANSWERING.add(me);
+    try { spans = answerSpans(S, ctx, from, to); }
+    finally { ANSWERING.delete(me); }
+    const hits = (a.mode === 'hits');
+    // A SILENT SOURCE IS ALL REST. Answering nothing in the gaps is the whole
+    // part; doubling nothing is nothing. Both follow from the rule rather than
+    // being special cases.
+    if (!spans.length) return hits ? [] : ns;
+    // THE ONSET IS WHAT IS TESTED, not the answering note's whole span: "fires
+    // where the other rests" is about where a note STARTS. A long source note
+    // therefore masks everything under it, which is the point of it being long.
+    const sounding = (t) => {
+      for (let i = 0; i < spans.length; i++) {
+        if (spans[i][0] > t) return false;     // sorted — nothing later can hold t
+        if (t < spans[i][1]) return true;
+      }
+      return false;
+    };
+    // MUTE IS NOT A COMPOSITIONAL STATE. The source's WRITTEN material decides
+    // the answer whether or not the source is audible, so soloing one layer to
+    // listen to it cannot silently rewrite another. `notesFor` is asked for the
+    // notes, and `on`/`present` are never consulted here.
+    return ns.filter((n) => n && Number.isFinite(n.at) && (sounding(n.at) === hits));
+  }
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
@@ -3584,7 +3709,19 @@
     // — read it, and audio, drawing and outlines all come through here, so
     // the three cannot disagree. Saved and restored: `notesFor` nests.
     let sv = null; try { sv = window._ambSaltLayer; window._ambSaltLayer = L; } catch (e) {}
-    try { return accentStage(L, tightClip(L, timingStage(L, ctx, xfStage(L, ctx, notesForRaw(L, ctx))))); }
+    // ONE PIPELINE, WRITTEN AS A LIST. It was a single nested expression; at
+    // six stages that is unreadable and the ORDER is the contract — ↔ Answer
+    // has to run last, because it tests where a note finally falls and
+    // `timingStage` (swing, humanize) is what decides that.
+    try {
+      let ns = notesForRaw(L, ctx);
+      ns = xfStage(L, ctx, ns);
+      ns = timingStage(L, ctx, ns);
+      ns = tightClip(L, ns);
+      ns = accentStage(L, ns);
+      ns = answerStage(L, ctx, ns);
+      return ns;
+    }
     finally { try { window._ambSaltLayer = sv; } catch (e) {} }
   }
   function notesForRaw(L, ctx) {
@@ -7501,6 +7638,9 @@
     // of one table is how the two halves come to disagree about what a figure
     // is called.
     LEN_SHAPES,
+    // ↔ The same rule for the answer modes — the card names them, the engine
+    // decides them, and one table means they cannot come to disagree.
+    ANSWER_MODES,
     // ── THE RULES, RESOLVED INTO A GRID YOU CAN EDIT ───────────────────────
     // Entering ▦ Pattern on a kit SEEDS the lanes from the beat, exactly as the
     // single-row form seeds `cells` from the euclid. Without it the form opens
@@ -14822,6 +14962,37 @@
               // scatter: a short figure of length AND weight per bar. A PEER
               // of the two rows under it — while it is set it decides both, and
               // they grey rather than lying about what they still control.
+              // ── ↔ ANSWER (2026-09-23) ──────────────────────
+              // Every other knob on this card describes the layer ALONE. This
+              // one is the first that describes a RELATION, so it sits at the
+              // top of the main knobs rather than under Fine-tune: what a layer
+              // is playing off changes how every control under it reads.
+              // NO OTHER LAYERS, NO ROW. An empty menu is a dead control, and
+              // the one-layer case is the first thing anybody sees.
+              (function () {
+                const cfgA = _cfgOf();
+                const others = (((cfgA && cfgA.layers) || []))
+                  .filter((x) => x && (x.id | 0) !== (L.id | 0));
+                if (!others.length) return '';
+                const an = (L.part.answer || {});
+                const cur = ((an.src | 0) > 0) ? String(an.src | 0) : '';
+                const modes = V2.ANSWER_MODES || {};
+                return gsel(L, 'part.answer.src', '\u2194 Answer', cur,
+                    [['', 'Off \u2014 plays on its own']].concat(
+                      others.map((x) => [String(x.id | 0), (x.name || ('Layer ' + (x.id | 0)))])),
+                    'play off another layer \u2014 this one is filtered against what that one plays',
+                    '').replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary v2-answer') +
+                  // THE MODE ROW ONLY EXISTS ONCE THERE IS SOMETHING TO ANSWER.
+                  // Picking a source re-renders the card (the `.v2-f` commit
+                  // lists `part.answer.src` beside the other structural paths),
+                  // so it appears on the same tap rather than a stale row
+                  // sitting there saying nothing.
+                  (cur ? gsel(L, 'part.answer.mode', 'Answer mode',
+                      (an.mode === 'hits') ? 'hits' : 'gaps',
+                      Object.keys(modes).map((k) => [k, modes[k]]),
+                      'where this layer is allowed to sound, measured against the other one',
+                      '') : '');
+              })() +
               gsel(L, 'part.shape.lenShape', '\u2441 Length shape',
                    (L.part.shape || {}).lenShape || '',
                    [['', 'Off \u2014 use the two below']].concat(
@@ -19951,8 +20122,10 @@
         // ⊞ RESOLUTION rebuilds too: the lane steppers are capped at the grid
         // and `beatScalePer` has just rewritten every one of their values, so
         // a regate alone would leave eight numbers showing the old beat.
+        // ↔ …and picking what to answer, which ADDS the mode row under it.
         if (path === 'instrument.voice' || path === 'part.rhythm.steps' ||
-            path === 'part.pitch.kind' || path === 'part.rhythm.beat.per') { h._sig = ''; V2.render(E); }
+            path === 'part.pitch.kind' || path === 'part.rhythm.beat.per' ||
+            path === 'part.answer.src') { h._sig = ''; V2.render(E); }
         // \u266b ConFugued keeps one interval row per gap, so the count moved the rows
         if (path === 'part.pitch.voices' && ((ctx.L.part.pitch || {}).kind === 'confug')) { h._sig = ''; V2.render(E); }
         // The gate's pattern length IS its step count, and `_ambNormalizeFx`

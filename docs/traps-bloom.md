@@ -1190,6 +1190,19 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   exits (strummed onset, slipped onset, kit lane, recorded note) and the emitter sat downstream of
   all of them, so a stamp in one branch silently drops the axis from the rest; `accentStage` runs in
   `notesFor` where they have joined. v1's own `_ambAccentVol` callers stay on the shared stream.
+- **A LAYER MAY READ ANOTHER LAYER ONLY THROUGH `notesFor`, AND ONLY BEHIND A CYCLE GUARD.**
+  ↔ Answer (a layer sounding only in another's gaps, or only on its hits) is the first thing that
+  crosses the one-layer boundary. Four rules make the crossing safe, each of which was a real hazard:
+  (a) ask through `notesFor`, never `notesForRaw` — the answer must be tested against the times the
+  source ACTUALLY plays, and `timingStage` (swing, humanize) is what decides those, so the stage runs
+  LAST in the pipeline; (b) hold a `Set` of layer ids being resolved — A↔B is two taps away and
+  unguarded it recurses until the stack gives out INSIDE a `try/catch`, which reads as the layer
+  silently going quiet, not as a crash; the same set caps depth, because a chain four deep is 2^4
+  `notesFor` calls per draw frame; (c) the source's cycle need not match or align with the reader's —
+  tile it on the SOURCE's own grid via `cycleWindowAt`, bounded, and break the loop the moment it
+  stops advancing; (d) **mute is not a compositional state** — read the source's written notes and
+  never its `on`/`present`, or soloing one layer to audition it silently rewrites another.
+  Reading the source's RANDOMNESS would still be wrong; only its finished notes are fair game.
 - **▶ Preview's changes anchor at the CYCLE START (`t0 - off`), never at the press (`t0`).** The
   first note lands on the press, so the cycle begins `off` earlier — anchoring the changes at `t0`
   put chord 1 that far INTO the part while the stopped drawing aligns them with the part's own first

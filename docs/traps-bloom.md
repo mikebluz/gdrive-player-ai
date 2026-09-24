@@ -213,6 +213,14 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **A DISABLED `<select>` STILL SHOWS ITS FIRST OPTION, so it wears the name of the state you are
+  NOT in.** e44cd61 moved the 👁 View / ✎ Edit axis to the Parts strip and left the card's
+  `.v2-modepick` disabled in View — where it went on displaying "✎ Edit", and a press did nothing,
+  with the reason only in a `title` no touch device shows. Reported as a regression 2026-09-23.
+  Fixed by making it live again with all four states: **picking a gesture turns the axis on**, the
+  rule the strip's own part `<select>` already follows. And the second half of the same bug: the
+  strip only renders when there IS an arrangement, so with no parts the axis had NO door at all —
+  **a MOVE is a delete plus an add, and the new home must render in every state the old one did.**
 - **THE LAYER ID IS THE SEED** (`seedIdOf`, six sites: `seedBase`, `seedOf`, the lane `sd`, and the
   slide / motion / ornament draws at emit). So anything that copies a layer must carry `seedId`
   across or the copy plays a DIFFERENT melody from identical rules — which is what ⧉ Clone does.

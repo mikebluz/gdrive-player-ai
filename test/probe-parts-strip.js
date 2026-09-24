@@ -161,10 +161,21 @@ const ok = (name, cond, detail) => {
   const axis = await page.evaluate(() => {
     const L0 = (_masterEng.getCfg().layers || [])[0];
     const inView = window._v2.viewMode();
-    return { inView, cardPickerDisabled: !!document.querySelector('.v2-modepick[disabled]') };
+    const mp = document.querySelector('.v2-modepick');
+    return { inView, cardPickerDisabled: !!document.querySelector('.v2-modepick[disabled]'),
+             value: mp && mp.value, opts: mp ? [...mp.options].map((o) => o.value) : [] };
   });
-  ok('…and the card’s own picker stands down — in View a tap selects a bar',
-    axis.inView === 'view' && axis.cardPickerDisabled, JSON.stringify(axis));
+  // RE-BASELINED 2026-09-23 (user: "regression: clicking Edit dropdown does
+  // nothing"). This check used to assert the card picker was DISABLED in View
+  // — the same mistake the strip dropdown three checks above already had
+  // RESTATED out of it, one control over. Two things made it worse here: the
+  // disabled picker still displayed "✎ Edit", its first option, so a dead
+  // control wore the name of the mode you were NOT in; and the strip only
+  // renders when there IS an arrangement, so with no parts the axis had no
+  // door at all. What View owes is an HONEST FACE, not a dead one.
+  ok('…and the card’s own picker reads 👁 View and stays operable',
+    axis.inView === 'view' && !axis.cardPickerDisabled && axis.value === 'view' &&
+    axis.opts.join(',') === 'view,edit,draw,multi', JSON.stringify(axis));
 
   // THE AXIS CAN BE MOVED FROM THE CARD TOO (✎ Draw means "I am editing this"),
   // and the strip is its face — a readout with no second writer is a confident

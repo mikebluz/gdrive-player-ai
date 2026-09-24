@@ -9544,23 +9544,32 @@
         // is really four states of the same question — and three of the four
         // combinations they offered meant the same thing, since drawing and
         // gathering both imply you are working on the record you are editing.
-        // A <select> is safe HERE: a mode change redraws the CANVAS and never
-        // rebuilds the card, so the picker cannot be replaced under an open
-        // list (the documented trap that made the euclid page bar use buttons).
+        // A <select> is safe HERE: picking commits on `change`, with the list
+        // already closed — the documented trap is a rebuild that replaces the
+        // picker WHILE it is open, which nothing here does.
         '<label class="v2-modesel">' +
-          // 👁 VIEW / ✎ EDIT LEFT THIS PICKER for the Parts strip, which asks it
-          // once for the session. What stays is the GESTURE axis — what a tap
-          // does while you are editing — so in View there is nothing here to
-          // choose. RENDERED AND DISABLED, with the reason in the title: a
-          // control that vanishes in a state cannot be found or learned (the
-          // conditionally-rendered-control rule).
-          '<select class="ambient-select v2-modepick"' + (vm2 === 'view' ? ' disabled' : '') +
-            ' title="' + (vm2 === 'view'
-              ? 'What a tap does \u2014 available while the Parts strip is set to \u270e Edit. In \ud83d\udc41 View a tap selects a bar.'
-              : 'What a tap on the drawing does.') + '">' +
-            [['edit', '\u270e Edit', 'a tap opens a note'],
-             ['draw', '\u270e Draw', 'a tap on empty space adds a note'],
-             ['multi', '\u2b1a Multi', 'tap notes to gather, then move or resize them together']]
+          // 全 FOUR STATES ARE BACK IN THIS PICKER (2026-09-23 regression fix,
+          // user: "clicking Edit dropdown does nothing"). e44cd61 moved the
+          // 👁 View / ✎ Edit half of the axis to the Parts strip and left this
+          // control DISABLED in View — where it still displayed "✎ Edit", its
+          // first option, so a dead control wore the name of the mode you were
+          // NOT in. Two things were wrong and both are fixed by it being live:
+          //   · A MOVE IS A DELETE PLUS AN ADD, and the strip only renders when
+          //     there IS an arrangement. With no parts there is no strip, so the
+          //     axis had NO door at all and View could never be left.
+          //   · A disabled control gives no reason on a touch device (its title
+          //     needs a hover), so "does nothing" is all it can say.
+          // The strip keeps its button — both write the one global axis and each
+          // refreshes the other (`axisMoved` → strip; the handler → the cards).
+          // Picking a GESTURE turns the axis on for you, which is the rule the
+          // strip's own part <select> already follows ("choosing a part is the
+          // intent to hold it — doing it for them beats a dead control").
+          '<select class="ambient-select v2-modepick"' +
+            ' title="What a tap on the drawing does — and whether this layer follows what plays or holds the part you are editing.">' +
+            [['view', '\ud83d\udc41 View', 'follow playback — a tap selects a bar'],
+             ['edit', '\u270e Edit', 'hold the part you are editing — a tap opens a note'],
+             ['draw', '\u270e Draw', 'hold — a tap on empty space adds a note'],
+             ['multi', '\u2b1a Multi', 'hold — tap notes to gather, then move or resize them together']]
               .map(([v, lab, why]) => '<option value="' + v + '"' + (vm2 === v ? ' selected' : '') +
                 ' title="' + esc(why) + '">' + lab + '</option>').join('') +
           '</select></label>' +
@@ -19891,7 +19900,25 @@
         const msel = ev.target.closest && ev.target.closest('.v2-modepick');
         if (msel) {
           const ctx = layerOf(msel); if (!ctx) return;
+          const was = globalMode();
           setMode(ctx.L, msel.value);
+          // \ud83d\udc41 VIEW / \u270e EDIT IS SESSION-WIDE, so flipping it here is not a
+          // repaint of one canvas: every OTHER card is drawing the other answer
+          // and would sit there stale. `setMode` already refreshes the strip
+          // (`axisMoved`); the cards are ours — the same sweep the strip's own
+          // button does. The GESTURE half (edit ↔ draw ↔ multi) changes nothing
+          // outside this canvas and still costs only a redraw.
+          if (globalMode() !== was) {
+            try {
+              if (typeof showToast === 'function') {
+                showToast(globalMode() === 'edit'
+                  ? '\u270e Edit \u2014 every layer holds the part you are editing while the arrangement runs on.'
+                  : '\ud83d\udc41 View \u2014 every layer follows playback, with a playhead.', { ms: 4000 });
+              }
+            } catch (e) {}
+            h._sig = ''; V2.render(E);
+            return;
+          }
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { multiSync(ctx.card, ctx.L); } catch (e) {}
           return;

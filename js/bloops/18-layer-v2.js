@@ -8679,10 +8679,39 @@
   // four blown up.
   const viewBarsMax = () => (window.innerWidth <= 540) ? 4 : 8;
   const mselOf = (L) => MSEL.get(L && (L.id | 0)) || null;
+  // WHICH GATHERING THE KEYBOARD IS AIMED AT. `NE` answers this for the single
+  // note — it names its own layer — but a ⬚ Multi gathering is per layer and
+  // two cards can hold one at once, so the hotkeys need the same answer and
+  // there is nothing on a keypress to derive it from. THE LAST ONE YOU
+  // GATHERED INTO, which is the card you are working on; re-validated on every
+  // press by `multiTarget`, because that layer can be deleted, emptied or
+  // taken out of ⬚ Multi under it.
+  let MLAST = 0;
   const mselSet = (L, set) => {
     if (!L) return;
-    if (set && set.size) MSEL.set(L.id | 0, set); else MSEL.delete(L.id | 0);
+    if (set && set.size) { MSEL.set(L.id | 0, set); MLAST = L.id | 0; }
+    else { MSEL.delete(L.id | 0); if (MLAST === (L.id | 0)) MLAST = 0; }
   };
+  // …and the resolver. Falls back to the ONE gathering on screen when there is
+  // exactly one — after a reload or a rebuild `MLAST` is 0, and refusing to act
+  // while a single gathering sits there ringed would be a dead keyboard.
+  // Ambiguity (two gatherings, no last) does nothing rather than guessing at
+  // which notes to move.
+  function multiTarget(E) {
+    const pick = (id) => {
+      let L = null;
+      try { L = _ambLayerByKey && _ambLayerByKey(E, 'v2:' + (id | 0)); } catch (e) { L = null; }
+      if (!L || !L.part || L.part.kind !== 'recorded') return null;
+      if (modeOf(L) !== 'multi') return null;
+      const s = mselOf(L);
+      return (s && s.size) ? L : null;
+    };
+    const last = MLAST ? pick(MLAST) : null;
+    if (last) return last;
+    let only = null, n = 0;
+    MSEL.forEach((v, id) => { const L2 = pick(id); if (L2) { only = L2; n++; } });
+    return (n === 1) ? only : null;
+  }
   // DOES THE PICTURE FOLLOW WHAT PLAYS? The record DRAWN and the window it is
   // drawn OVER have to be the same length, and only one of the two modes gets
   // that for free. VIEW follows the sounding part, so the sounding window is
@@ -13628,7 +13657,11 @@
     bar.hidden = !n;
     if (!n) return;
     const lab = bar.querySelector('.v2-multin');
-    const txt = '\u2b1a ' + n + ' note' + (n === 1 ? '' : 's') + ' gathered';
+    // …AND THAT THE KEYBOARD MOVES THEM. The same sentence the note editor's
+    // hint carries, in the same words, because they are the same three
+    // gestures — a hotkey nobody is told about is a hotkey nobody presses.
+    const txt = '\u2b1a ' + n + ' note' + (n === 1 ? '' : 's') + ' gathered \u00b7 ' +
+      '\u21e7 + arrows move them, \u2325 + \u2190/\u2192 resize';
     if (lab && lab.textContent !== txt) lab.textContent = txt;
   }
   function neApply(E, host, sf, v, rebuild) {
@@ -20870,7 +20903,6 @@
         window.__v2NoteKeys = 1;
         document.addEventListener('keydown', (ev) => {
           try {
-            if (!NE) return;
             if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight' &&
                 ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
             // NEVER while typing: ⇧+arrow extends a text selection, and a
@@ -20884,6 +20916,33 @@
             if (!wantMove && !wantSize) return;
             const E2 = (typeof _masterEng !== 'undefined') ? _masterEng : null;
             if (!E2) return;
+            // ── ⬚ MULTI TAKES THE SAME KEYS (2026-09-23) ──────────────
+            // user: "keyboard shortcuts to move note events should work in
+            // Multi too". Same three gestures, same meanings — ⇧←/→ a grid
+            // cell, ⇧↑/↓ a half-step, ⌥←/→ a cell of length — so the hand
+            // does not have to learn a second set for a gathering.
+            // THROUGH `multiApply`, the one writer, exactly as the ⬚ bar's own
+            // steppers go: it clamps the delta ONCE against the whole set (so
+            // the leading note cannot stop while the rest carry on), pins the
+            // notes on a remapping part, persists, and re-finds them by
+            // IDENTITY after normalize replaces every object. A hotkey is
+            // another door to that, never a second implementation — the same
+            // rule `neApply` states for the single note.
+            // THE EDITOR WINS WHEN IT IS OPEN: `NE` is a single-note surface
+            // and gathering nulls it, so the two can never both be live.
+            if (!NE) {
+              const LM = multiTarget(E2);
+              if (!LM) return;
+              ev.preventDefault(); ev.stopPropagation();
+              const up = (ev.key === 'ArrowRight' || ev.key === 'ArrowUp');
+              const what = wantSize ? 'dur'
+                : ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') ? 'midi' : 't');
+              if (!multiApply(E2, LM, what, up ? 1 : -1)) return;
+              const cK = document.querySelector('.v2-layer[data-v2id="' + (LM.id | 0) + '"]');
+              try { drawPartViz(cK, LM, E2); } catch (e) {}
+              try { multiSync(cK, LM); } catch (e) {}
+              return;
+            }
             const card = document.querySelector('.v2-layer[data-v2id="' + (NE.id | 0) + '"]');
             const host = card && card.querySelector('.v2-neinline');
             if (!host || host.hidden) return;

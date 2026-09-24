@@ -213,6 +213,13 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **THE NOTE HOTKEYS SERVE TWO SURFACES AND `NE` ONLY NAMES ONE.** ⇧/⌥ + arrows route through
+  `neApply` for the open note and `multiApply` for a ⬚ Multi gathering (2026-09-23) — one writer
+  each, never a third implementation behind the key. A gathering is PER LAYER and two can be held at
+  once, so the press has nothing to derive its target from: `MLAST` (the last layer gathered into)
+  is that answer, re-validated every press and falling back to the single gathering on screen.
+  A GRID MOVE SNAPS, so an off-grid note does not round-trip — a fixture that starts off the grid
+  tests the snap, not the move.
 - **THE RULER STRIP IS READ BY TWO FEATURES AND HAS ONE IMPLEMENTATION (`regAtTap`).** The chord
   band picks a CHANGE, the numbers below pick a BAR — and the press means the same thing in both
   modes ("pick this region"); only what is picked changes: 🎲 New take reads it as which bars

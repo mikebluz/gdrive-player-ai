@@ -1399,6 +1399,15 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   2026-09-22). Gate `bt` on `!inSteps`; leave `rhythm.beat` alone so switching back finds it intact.
   And SEED the other half when entering a form — a kit's grid is `rhythm.lanes` sized to the beat's
   own `per × bars`, not `cells`, so the single-row seeding left drum layers opening empty and silent.
+- **NOTHING ON SCREEN MAY LEAD THE EAR, and the pre-roll is a REAL third of a second.** A press
+  schedules the first voices a lead ahead — measured 0.350 s cold (`_AMB_LEAD_COLD`), 0.06 s warm —
+  and `_barGridAnchor` / `_progAnchor` / the layer phase are all correctly pinned to it while
+  `_playStartAt` stays at the press. So `now < startAt` is a window every playhead has to answer,
+  and the answer is CLEAR: the ⌗ Roll sweep always did, and ▦ Pattern now does too. This is the
+  THIRD answer to that window — it lit the LAST step (wrong step), then clamped to step 1
+  (a93d858, "what 'about to start' looks like"), which came straight back as "the playhead starts
+  and then music starts shortly after so it's out of sync". An affordance only its author can
+  decode is a bug. `test/probe-preroll.js` pins it.
 - **A CYCLE THAT HAS NOT BEGUN WRAPS TO ITS LAST STEP.** `startAt` is snapped to the SHARED BAR GRID,
   so on a press it is stamped slightly in the FUTURE and the first frames run with `now < startAt`:
   the cycle index floors to -1, `cs` lands a whole cycle early and the fraction comes out just under

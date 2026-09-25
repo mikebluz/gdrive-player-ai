@@ -12873,18 +12873,31 @@
     const cyc = w && w.cyc > 0 ? w.cyc : null;
     if (cs == null || cyc == null) return;
     let f = ((now - cs) / cyc) % 1; if (f < 0) f += 1;
-    // A CYCLE THAT HAS NOT BEGUN WAITS ON ITS FIRST STEP. `startAt` is snapped
-    // to the SHARED BAR GRID, so on a press it is stamped slightly in the
-    // FUTURE and the first frames run with `now < startAt` — the cycle index
-    // floors to -1, `cs` lands a whole cycle early, and the fraction comes out
-    // just under 1. The grid lit its LAST step for the length of the pre-roll
-    // and then jumped to the first: reported 2026-09-22 as "the playhead starts
-    // on the last step for a split second then playback starts", and measured
-    // at step 15 of 16 fifty milliseconds out.
-    // The roll's sweep has carried this guard all along (`nowT >= stp.startAt`);
-    // this is the same rule, and the step grid waits rather than clearing
-    // because a column sitting on step 1 is what "about to start" looks like.
-    if (ps && Number.isFinite(ps.startAt) && now < ps.startAt) f = 0;
+    // ── NOTHING LIGHTS BEFORE THE FIRST NOTE SOUNDS ────────────────────
+    // user, 2026-09-24: "playhead starts and then music starts shortly after so
+    // it's out of sync".
+    // A CYCLE THAT HAS NOT BEGUN HAS NOTHING TO REPORT. `startAt` is snapped to
+    // the shared bar grid AND a press schedules the first voices a LEAD ahead —
+    // measured 0.350 s cold, 0.06 s warm — so the first frames genuinely run
+    // with `now < startAt`, and the cycle index floors to -1 (`cs` a whole cycle
+    // early, the fraction just under 1).
+    // THE HISTORY, because this is the second answer to the same third of a
+    // second: it first lit the LAST step ("the playhead starts on the last step
+    // for a split second", measured at 15 of 16), then a93d858 clamped it to
+    // step 1 on the reasoning that "a column sitting on step 1 is what 'about to
+    // start' looks like". Read without knowing the lead exists, that IS the
+    // playhead starting early — which is exactly what came back. So: CLEAR.
+    // The roll's sweep has stayed dark here all along (`nowT >= stp.startAt`),
+    // and ONE RULE FOR EVERY PLAYHEAD beats an affordance only its author can
+    // decode. `_phStep = null` is the same "nothing lit" the stop path uses.
+    if (ps && Number.isFinite(ps.startAt) && now < ps.startAt) {
+      if (wrap._phStep !== null) {
+        wrap._phStep = null;
+        wrap.querySelectorAll('.v2-cell.playing, .v2-lanecell.playing')
+          .forEach((c1) => c1.classList.remove('playing'));
+      }
+      return;
+    }
     const i = Math.min(st - 1, Math.floor(f * st));
     if (wrap._phStep === i) return;
     wrap._phStep = i;

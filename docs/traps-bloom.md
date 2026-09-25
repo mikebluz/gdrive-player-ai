@@ -213,6 +213,240 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **PRUNE WHEN A STORE SAYS NOTHING, NOT WHEN IT HAPPENS TO BE SILENT.** The mod matrix pruned on
+  "no depth anywhere → `delete L.mod`", which threw away **Rate, Shape and Rate timing** whenever
+  depth was 0 — so setting a rate FIRST (the natural order: pick a speed, then dial the amount in)
+  vanished on the very next `getCfg`, and pulling depth to 0 to A/B a sound destroyed the rate and
+  shape just tuned. Measured: rate-only, shape-only and sync-only each normalised to `null`, and
+  depth 50 → 0 lost an 80/square it had been holding. The test is **"is every field at its
+  default?"**, not "is the effect currently audible?" — a matrix at its defaults still prunes, so
+  byte-identity for an untouched layer is unchanged (verified: fresh layer and defaults-only both
+  still give `null`). `L.mod` is v1's own store read by `_ambSyncTarget`, so this was the control
+  surface destroying the engine's input, not the engine.
+  **Where it lives:** Mix ▸ Mod — Rate timing, then VCA · amplitude (tremolo), VCO · pitch (vibrato),
+  VCF · cutoff (sweep), each with Depth · Rate · Shape. Verified reaching the audio: depth 60 builds
+  a live source at `E.mod['v2:<id>']`.
+
+- **A MERGED CONTROL MUST MEAN THE SAME DISTANCE IN EVERY MODE.** ⇢ Spread kept each mode's original
+  range on the reasoning that nothing already made would change — but Random's was
+  `min(0.18, span*0.5)`, a few ms on an ordinary part, so one entry of a shared picker did nothing
+  audible: "Random doesn't work at all", and it was right. It now spreads across `cyc / ons.length`,
+  the same slot the ordered arms use. **Preserving old behaviour is not free when the control is
+  shared** — the number has to mean one thing or the mode reads as broken.
+- **⇢ SPREAD'S FOUR MODES, AND WHAT SEPARATES THEM.** Ordered ascending and descending are a fixed
+  order at even spacing (`strumDown` is a flag, stored only when set, and `spreadSet` clears it on
+  Wandering because a shuffled order has no direction); Wandering is a new ORDER each pass at even
+  spacing; Random is a new PLACEMENT each pass at uneven spacing. Random seeded off `seedBase` at
+  first, which made it one fixed uneven order repeated for ever — **the third control found frozen
+  that way** (⚅ Rnd figures, ⇢ Spread wander were the first two). Per-pass means the note's absolute
+  time, every time.
+
+- **NO PHASE ANCHOR IS THE SAME AS "NOT STARTED" — A NULL-GUARD IS NOT A GUARD.** `stepsPlayhead`
+  asked `if (ps && Number.isFinite(ps.startAt) && now < ps.startAt)`, where the `ps &&` was only
+  protecting the comparison — so the ONE state it let through was the very state it exists to catch.
+  `E._v2Phase` is **cleared on every stop/start** (17-ambient, deliberately, against a stale absolute
+  time), and `_v2Phase[key]` is re-created by the first `emit` tick — so on EVERY press there is a
+  window with no anchor, and `cycleWindowAt(…, null)` falls back to `startAt: 0`, the AudioContext
+  epoch. Measured: with no anchor the column lit **step 26 of 32**, instantly, with nothing sounding.
+  Reported twice as "the playhead starts with the press and the music comes a hair later". The other
+  two painters already require their anchor (`stp && nowT >= stp.startAt`; `!st → clear`) — one rule
+  for every playhead: **no anchor, or not yet reached, means nothing lit.**
+
+- **✺ EVERY PASS MEANS THE PLAY TIME, NEVER `seedBase`.** `cycIdx` only follows the clock while the
+  LAYER's own ✺ vary is on; otherwise it is constant for the whole take, so anything seeded off
+  `seedBase` is frozen however loudly its tab is named. Strum order sat in ✺ Every pass promising
+  "wandering, each pass" and measured IDENTICAL across passes (64, 71, 67, 60 every time). The
+  family's own idiom is the note's ABSOLUTE time — `motion` uses `seedIdOf(L) ^ round(at*1000)`,
+  `accentStage` seeds on `n.at` "so the accents fall differently from cycle to cycle", `humanize`
+  uses `Math.random()` outright. Strum order now takes motion's seed and gives four different orders
+  in four passes. **This is the second control found frozen for this exact reason** (⚅ Rnd figures
+  were the first) — when a feature says "per pass", grep its seed for `seedBase` before believing it.
+
+- **TWO ROWS SHARE A LABEL SAFELY ONLY IF THEIR GATES CONFLICT — CHECK THE CLAUSES, NOT THE INTENT.**
+  Both "Vary" rows read as instrument-scoped, but only one said so: `rhythm.beat.vary` is
+  `voice:kit` while `rhythm.vary` was `rhythm:euclid,drawn` with **no voice clause**, and those sets
+  do not conflict — a kit layer whose rhythm is `drawn` (simply what drawing on a kit grid does)
+  passed both and showed the word twice for two mechanisms. The voice clause was also the truth:
+  measured, `rhythm.vary` at 90 on a kit is byte-identical to absent, because the kit branch varies
+  through `beat.vary` and `onsetsOf`'s `perturb` — the only reader — is on the single-row path. One
+  clause closed a duplicate name and a dead control at once.
+  **Diagnostic:** two gate strings are mutually exclusive iff some piece they SHARE has disjoint
+  value sets. `pitch:walk` vs `pitch:chord` conflicts; `voice:kit` vs `rhythm:euclid,drawn` shares
+  no piece at all and therefore conflicts nowhere.
+- **`Repeat` / `Repeats` / `Hold for`.** `pitch.stutter` (a note repeating) and `pitch.repeats` (a
+  voicing kept for N cycles) were one letter apart. Their gates DO conflict (walk/mixed vs chord), so
+  they never share a screen — the cost was entirely off-screen, in searching and remembering. Renamed
+  the second to **Hold for** (label-only; the key stays). The two `Repeats` in FX — delay taps and
+  pitch echo — keep the word: there it is the standard term with nothing competing for it.
+
+- **A CONTROL NARROWER THAN ITS STORE DESTROYS WHAT OTHER CONTROLS SET.** `shape.lenRatio` is clamped
+  [1, 400] and had FOUR sliders offering 5–100, 5–200, 1–400 and 5–100. Stored 300 read back as
+  **100 / 200 / 300 / 100**, and touching any narrow one wrote its lie into the store — silently, with
+  nothing on screen to say a value had just been thrown away. Several shipped Characters set 190
+  ("Held" bass, Pad), so the narrow sliders were a trap on the presets themselves. **Every control on
+  a field spans the field's own range**, or it is not a curated range, it is a value shredder.
+- **HOW MANY COPIES OF A KNOB IS THE RIGHT NUMBER: ONE PER SHEET.** The four above were two pairs —
+  a context pair in one panel (normal rhythm / Groundwork, mutually exclusive, mergeable into one row
+  whose hint names the unit) and a deliberate copy in a second sheet, which exists because Note length
+  and Hold are ALTERNATIVES and "the two alternatives to one question were on different sheets"
+  (2026-09-18). Reduced to two: ⚙ Generate ▸ Main knobs, and Tweaks ▸ Size beside Hold. Going to ONE
+  would put the loudest knob on a generated part behind another sheet, or split the Length/Hold pair
+  again — so one per sheet is the floor, with the gates mirrored verbatim.
+
+- **⇢ SPREAD IS THE MERGE OF STRUM AND SLIP (2026-09-25).** One amount + one order picker
+  (Ordered / Wandering / Random). The silent override is gone BY CONSTRUCTION — there is one amount,
+  so nothing can sit behind it. **All three fields stay** (`strum`, `strumFidelity`, `shape.slip`):
+  the picker decides which one carries the amount, so nothing migrates and a pre-merge project reads
+  back in whichever mode it was already in (measured: strum→Ordered, strum+fid→Wandering,
+  slip→Random). Exactly one field is set at a time; 0 prunes all three. The modes keep their own
+  ranges deliberately — Ordered spans a whole slot, Random is capped at ~180 ms — so the merge
+  changed no existing sound. `Strum order` became **Spread wander** for the one-vocabulary rule.
+- **[historical] STRUM AND SLIP WERE ONE QUESTION WITH TWO ANSWERS, AND THEY DID NOT COMPOSE.** Both spread the
+  notes of ONE onset in time — Strum deterministically in order, Slip as a seeded random hair late on
+  each note — and the emitter is `if (strum > 0) {…} else { slip }`, so **any Strum silently switches
+  Slip off**. The comment there claimed they composed; measured 2026-09-25, Strum 80 alone and
+  Strum 80 + Slip 80 give the identical offsets (0, 533, 1067, 1600 ms) while Slip 80 alone gives
+  (109, 0, 62, 73). Slip's ROW was also gated `rhythm:ground` while its effect applies to any onset
+  with more than one note — a control narrower than its own effect, the mirror of the dead-control
+  shape. Both now carry the emitter's real condition (`pitch:chord,stack,mixed`), sit together, and
+  say which outranks which. **Swing is NOT on this axis**: it delays every odd slot of the GRID
+  (periodic, whole-part), where these two spread one STACK.
+- **WHEN ONE FIELD NEEDS TO BE IN TWO SHEETS, MIRROR THE GATE VERBATIM.** The established answer here
+  is a COPY, not a move (⚙ Deep's Note length already does it) — "one field with two controls and two
+  different gates is how the two come to disagree about whether the knob applies at all".
+
+- **`euclid` IS MAXIMALLY EVEN BY DEFINITION, WHICH IS WHY EVERYTHING SOUNDED THE SAME.** The same
+  (pulses, steps, rotate) is the same pattern for ever, and `fill` tiles it identically in every bar
+  — three bars of a Bass were three copies. `vary` is not the cure: it drops and adds hits at random,
+  a disturbance rather than an idea. ⚄ **Figures** (`rhythm.kind = 'fig'`) are the generator for the
+  ORDER of onsets: a named pattern written on a 16-step bar (the same reference ♦ Beat's Characters
+  use) and scaled to ⊞ Resolution, then pushed by three knobs.
+- **THE KNOBS ARE ORTHOGONAL, AND THAT IS A PROPERTY OF THE SALTS.** Only Bar variation draws on the
+  bar index; Grouping and Syncopation deliberately do not, so they transform the figure the same way
+  in every bar. The first cut salted the cluster starts with `bar` too and the bars then differed
+  with Bar variation at **0** — which leaves that knob describing something that happens without it,
+  and three controls nobody can tell apart.
+- **A FIGURE NEEDS THE GRID IT WAS WRITTEN ON.** They are 16ths; a new layer is on 8, where a
+  tresillo's six onsets round onto four cells and read as straight quarters — the shape you picked it
+  FOR is the thing that disappears. The picker lifts a grid below 16 once, on the way in.
+- **THE PICKER IS THE DOOR, BECAUSE RHYTHM KIND IS TWO FOLDS DOWN.** `part.rhythm.kind` lives under
+  ⚠ Advanced: recipe, so a feature that only appeared once you had switched kind there would be
+  unreachable in practice. One select does both: choosing a figure switches the rhythm onto it, the
+  empty entry hands it back to `euclid`. And it is gated on `rhythm:pulse,…` — **`pulse` is in that
+  list although ⊞ Resolution's is not**, because a new layer IS `pulse`, the most even rhythm there
+  is and exactly the one that sounds the same; gating the cure on having already left the illness
+  hides it from every fresh layer.
+- **A FRESHLY ADDED v2 LAYER IS `recorded`/`compose`, NOT `live`** — so EVERY `kind:live` row on it
+  greys to `.v2-rowna` (`pointer-events: none`), by design. A probe that adds a layer and then finds
+  a generation control inert has found that rule, not a bug: set `part.kind = 'live'` first.
+
+- **A BINARY QUESTION GETS TWO LOOKS.** ⚅ Rnd's grid first had THREE — sounding, drawn-but-not-
+  sounding (a faint outline), and empty — on the reasoning that the drawn row is the density Rnd
+  redistributes. That is true and it is still not a thing to SHOW: reported within the hour as "why
+  are there seemingly 3 visual states". The lit COUNT already states the density and the stored row is
+  untouched, so the drawn-only cell is neutralised to the unlit look. **But a class with no look is a
+  tap with no answer** — so the cell handler repaints the generated row on a Rnd lane, where the edit
+  changes the count and you watch a cell arrive or leave. Neutralising must also beat
+  `.ambient-euclid-cell.on` (0,2,0) explicitly, or the cell borrows the ordinary lit mint.
+- **A GENERATED ROW NEEDS ONE WRITER AND A SECOND PAINTER.** ⚅ Rnd's row is built by `V2.rndRow`,
+  asked by BOTH the emitter and the grid — two copies of that shuffle is how the picture comes to lie
+  about the sound. It is seeded on (layer, lane, PASS) alone, deliberately NOT on `seedBase`, because
+  take-independence is what lets the card reproduce the row without knowing the take. And a generated
+  face with no repaint is FROZEN: the markup can only draw pass 0 (it has no clock), so
+  `stepsPlayhead` — the one frame loop that already knows the layer's cycle window — re-marks it at
+  every pass boundary, cached on `wrap._rndPass` so a frame inside the same pass touches no DOM.
+- **`lanesHtml` BUILDS THE LANE GRID FOR BOTH FORMS**, ▦ Pattern's `.v2-partsteps` and ⌗ Roll's
+  `.v2-lanerow`. A rule or a painter scoped to one leaves the other unstyled or showing a stale pass —
+  measured: the Roll grid carried the generated marks with no colour at all. Scope lane state to
+  **`.v2-layer`**, which covers both and still excludes v1 (never inside `.v2-layer`).
+- **`.v2-gen` WAS A COLLISION WAITING TO HAPPEN** — 87 rules in `bloops.css` already begin `v2-gen`
+  (`v2-genpop`, `v2-genwrap`, `v2-genrows`, `v2-genopen`…). Renamed `.v2-lanegen`. **Before adding a
+  v2 class, grep the PREFIX, not the exact name**: this file's own rule is that a duplicate class
+  makes `querySelector` answer for the wrong thing, and a prefix family is one typo away from that.
+- **MEASURE THE STATE YOU MEAN, AT THE MOMENT YOU MEAN IT.** Chasing "my CSS rule matches but does not
+  apply" cost several rounds and the rule was fine — the probe was reading a cell from the HIDDEN
+  Roll-form grid, then a stale moment before a re-render. `c.matches(selectorText)` ignores the
+  enclosing at-rule and tells you nothing about which element the app actually shows: scope the query
+  to the visible grid and re-measure after the repaint that is supposed to have happened.
+
+- **`cycIdx` IS NOT THE PASS.** It follows `ctx.cycleStart` only when the LAYER's own ✺ vary is on;
+  otherwise it is `take + epoch`, constant for every cycle of a take — that IS the ⚙ Deep / ✺ Live
+  distinction. So anything that must differ **per pass regardless of the layer's setting** (⚅ Rnd's
+  per-lane re-roll) has to take the pass from the clock: `Math.round(cs / cyc)`. Seeding off `cycIdx`
+  measured as five identical passes and looked like a broken RNG rather than the wrong clock.
+- **A RANDOM LANE KEEPS ITS WEIGHT AND MOVES ITS PLACEMENT.** ⚅ Rnd redistributes the drawn row's HIT
+  COUNT by a seeded shuffle; a coin flip per step is the obvious reading and the wrong one, because it
+  changes how BUSY the lane is pass to pass — a kick that anchored the bar can simply stop, which is
+  noise, not variation. An EMPTY lane has no weight to keep, so it takes a quarter of the grid rather
+  than staying silent: a Rnd lane that makes no sound reads as a broken button.
+- **THE MIXER RULE, AND WHERE IT IS ASKED.** With no solo anywhere every unmuted lane plays; with any
+  solo only the soloed ones do; a MUTE on a soloed lane still wins (you muted it on purpose). "Is
+  anything soloed" is asked ONCE per emit and once per repaint, never per lane. All three flags live
+  in `laneFx` beside `c`/`t` and are stored ONLY when true, so `false` is written as absence and the
+  prune rule stays "an entry that says nothing is deleted".
+- **A TRANSIENT FIRES ON PRESS; A STATE CHANGE WAITS FOR THE RELEASE.** ▸ Hear sounds on
+  `pointerdown`; ✎ Edit, ⊘ Mute, ◉ Solo and ⚅ Rnd all act on `click`, because a scroll that begins on
+  a lane name must not silently mute it — a drum hit is transient and forgiving, a mute is not.
+  Splitting the modes across the two events is also what makes a double-fire impossible with no flag.
+
+- **AN AUDITION FIRES ON `pointerdown`, AND `Tone.now()` IS ALREADY THE CUSHION.** A trigger wired to
+  `click` sounds when the finger LIFTS, so its lag is however long you held it plus the touchend→click
+  hop — reported as "lag on press" the day the lane audition landed. Two fixes, both of them rule 4
+  verbatim: fire on PRESS, and pass `Tone.now()` with nothing added, because it is already
+  `currentTime + lookAhead` (25 ms, 02-wraps) and a `+0.03` lead on top doubles the delay for nothing.
+  Measured 0.3 ms press→sound after, and the sound starts before the finger lifts. **A dialog is the
+  opposite case** — it opens on RELEASE, so a scroll begun on the control does not throw a panel up
+  mid-gesture. Splitting the two modes across the two events is also what makes a double-fire
+  impossible without a flag. And **compute nothing before the sound that the sounding arm will not
+  read**: the synth arm never looks at `durMs`, so computing it up front put a `getCfg()` (the
+  normalize chokepoint) between the press and the drum.
+
+- **`laneFx` AND `cellFx` COMPOSE, THEY DO NOT OVERRIDE** — chance MULTIPLIES (a 50% lane under a 50%
+  cell sounds a quarter of the time), tune ADDS (lane +2 with a cell at +3 plays +5). An override
+  would force a cell at 100% to mean "certain" and "whatever the lane says" at once. Both identities
+  when absent, so an untouched project is byte-identical — and the composed chance takes **ONE draw**
+  (`vRnd(sd, 101)` against the product), never two: a second draw consumes the seeded stream
+  differently and breaks byte-identity for every project that has a cell chance and no lane chance.
+- **A SYNTH KIT'S VOICES ARE GENERATED ON READ AND STORED ONLY ONCE EDITED** (`_ambSynthVoiceOf`
+  falls back to `_ambGenSynthVoice(seed, role)`), so an editor must MATERIALIZE `L.synthKit` before
+  writing one voice or the first drag lands in an object nothing reads. `V2.laneVoice` does it via
+  v1's `_ambGenSynthKit`, seeded exactly as the fallback would have been — so materializing changes
+  no sound. The v2 emitter has been playing these voices all along; what was missing was the door.
+- **A 20–4000 RANGE IS NOT A STEPPER.** The lane editor's first cut gave Tune (Hz) and Decay (ms) ±1
+  steppers — thousands of presses to cross. v1's synth-kit editor has always used `.ambient-sl`
+  sliders for exactly those six parameters. **Match the v1 twin's CONTROL TYPE, not just its store**:
+  semitones and counts step, continuous ranges drag. A slider states its value in `value`; the
+  stepper carries it in `data-sv` and shows a FACE ("+2", "97%") that would not parse.
+
+- **A KIT HAS TWO REALIZATIONS AND THEY TAKE DIFFERENT PLAYERS** — a synth kit is a recipe played by
+  `_ambPlaySynthDrum` (which takes a LANE INDEX), a sample kit an ordinary note on `sample:<id>` at
+  `36 + _V2_VDRUM[lane]`. Any new way to SOUND a drum must write both arms; fixing one and leaving
+  the other is silent, not loud. `V2.hitLane` (the ▦ Pattern lane-name audition, 2026-09-25) is the
+  third caller of that pair, after `emit` and v1's `_ambTriggerLaneStep`.
+- **THE LANE NAME IS A TRIGGER, AND v1'S GRID ALREADY KNEW IT.** v2 rendered
+  `.ambient-euclid-drumlbl` as a `<span>` while 17-ambient rendered the same class as a `<button>` —
+  so the `<button>` swap needed no stylesheet change. **Before building chrome for a v2 control, grep
+  the class in 17-ambient: the v1 twin usually defines the behaviour already.** But INHERITING A
+  SHARED LABEL RULE IS NOT AN AFFORDANCE: that rule is `background: transparent; border: none`, which
+  was right for a caption and wrong the moment it played a drum — reported at once as "they should be
+  more obviously buttons". A control that reads as text is a control nobody presses. Fixed with the
+  card's OWN pressable token (`rgba(159,122,234,.14)` + purple hairline = `.ambient-step-btn`),
+  scoped to `.v2-partsteps` so v1's grid — where the label is a lane SELECTOR with an `.on` state —
+  keeps the look its states are built around. Widening it to fit the chrome (46→54px) also ended the
+  truncation that made "Open hat" read "Open …"; cells lost 1px and nothing scrolls.
+
+- **`#bloom-v2-layers` IS A SINGLETON AND `host(E)` HANDS IT TO WHOEVER ASKS** — master, lane, shape
+  and the bounce previews all get the same element, so the last engine to render owns the screen.
+  An engine with NO v2 layers fell into `V2.render`'s `!list.length` branch and blanked the cards
+  another engine had drawn: `setBpm` syncs master then lane (`_ambSyncLayerUnits(_masterEng);
+  _ambSyncLayerUnits(_laneEng)`), so **one tempo change wiped every layer card off the master panel**
+  while `cfg.layers` was untouched — it kept PLAYING, which is the tell that a vanished card is a
+  RENDER bug, not a data one (reported 2026-09-25). Fixed by stamping `data-v2eng` with the owning
+  `E.hostId`: a non-owner never writes a host that holds cards, an EMPTY host is unowned so this
+  self-heals, and `_cardE` (what every card handler reads its cfg through) is only re-pointed once
+  the engine has been allowed to render — it used to follow the LAST caller, aiming the master's own
+  controls at the lane's config.
+
 - **TWO CONTROLS SHARE `data-f="part.pitch.kind"`** — Groundwork's melody picker (Run / Wander /
   Arpeggio / One note) and the real Pitch rule — and `querySelector` answers for whichever comes
   first in the DOM. Setting a value the first one does not offer leaves `value === ''` and normalize

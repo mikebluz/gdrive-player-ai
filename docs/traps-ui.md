@@ -44,6 +44,41 @@
 
 ### CSS, layout and DOM traps
 
+- **A DELEGATED `<select>` NEEDS `input` AND `change`, BOTH.** `fxPick` has been bound to both since
+  it was written; the two selects added later (⇢ Spread order, ⚄ Figure) were bound to `input` only
+  and reported as "still buggy… doesn't work at all", which is exactly what a select whose handler
+  never runs looks like. The `change` listener FORWARDS to the `input` one rather than copying the
+  arms, and each arm carries an idempotence guard ("already this value → return"), so answering both
+  events costs nothing. **A probe that dispatches `input` will not catch this** — drive selects with
+  `change` alone, which is what a real pick delivers.
+
+- **IN THE SECTION SHEET, AN UNTAGGED ROW BECOMES ITS OWN TAB, NAMED AFTER ITS LABEL.**
+  `popTabName` falls back to the row's label text when there is no `data-v2tab`, so a loose row is not
+  "always visible" — it is a one-row tab. A single loose row gets away with it (the old `Strum` did
+  for months); **a PAIR does not** — Spread and Spread order landed as two separate chips, with the
+  picker in a different tab from the amount it configures. Reported as "Spread order doesn't seem to
+  be working", because from the Spread tab there was no picker to be seen. Wrap related rows in
+  `tb('<name>', …)` so one tab name stamps them all.
+
+- **THE VIEW ALLOW-LISTS HIDE EVERY UNNAMED BODY-LEVEL CHILD WITH `!important`.**
+  `body.view-mix > *:not(…):not(…)` (and the same for `view-harvest` / `view-serialbox`) switches off
+  any direct child of `body` it does not name — so a full-screen overlay that is not on the list is
+  dead however correct its own `.open` rule is. `#sd-overlay` (✦ Design) was never added: the panel
+  BUILT COMPLETELY on every press — ~17 KB of DOM, `.sd-overlay.open`, z-index 10400 — and computed
+  `display: none`. Reported as "clicking Design does nothing", which is exactly how it reads.
+  **Any new body-level overlay must be added to every view it can be opened from**, beside
+  `.sm-overlay` / `.modal-overlay`. Diagnostic: when a button seems dead, measure whether the DOM
+  GREW on the press before looking at the handler — a built-but-hidden panel and a handler that never
+  ran look identical from the outside, and they are opposite bugs.
+
+- **A SHEET'S DEFAULT TAB IS `visTabs[0]`, SO TAB ORDER DECIDES WHERE IT OPENS.** FX opened on
+  `Chain` purely because Chain is first in that group's list — and since Chain sits BESIDE the
+  effect dropdown rather than inside it, the select read "Delay" while Chain was lit: two controls
+  each claiming to be the current view. A view of how things are WIRED is somewhere you go, never
+  where you land; pick the default explicitly rather than inheriting list order.
+  While checking it: **no tab choice survives closing the section sheet** — it reopens on the default
+  whatever you left it on, for every group.
+
 - **`.ambient-select` is `width: 100%` and declared LATE.** Dropped into an auto-sized inline-flex or
   flex row it demands the whole line and crushes its siblings — it has swallowed at least five
   controls. Fix with a COMPOUND selector (`select.ambient-select.<its-class>`), an explicit width and

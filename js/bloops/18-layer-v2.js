@@ -688,7 +688,7 @@
     const v = m[String(idx | 0)];
     return (v && typeof v === 'object') ? v : null;
   }
-  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground']);
+  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground', 'fig']);
   // up · down · up-down were v1's; down-up and converge (outside in) join them.
   const SERIES_DIRS = new Set(['up', 'down', 'updown', 'downup', 'converge']);
   // ── PRESETS — MACROS OVER A SHAPE'S CONTROLS (2026-09-16) ─────────────────
@@ -1110,7 +1110,8 @@
   // ranges the PART's own normalizer uses — a region and a part must not
   // disagree about what a value means.
   const BAR_RULE_F = {
-    rhythm: { kind: ['pulse', 'euclid', 'chance', 'ground', 'drawn'],
+    rhythm: { kind: ['pulse', 'euclid', 'chance', 'ground', 'drawn', 'fig'],
+              figSync: [0, 100], figGrp: [0, 100], figVar: [0, 100],
               // n is [1, 64] BECAUSE THE PART'S IS: at [1, 32] a fast Character
               // over a long stretch came out at half speed, silently clamped
               // on the way in — the same too-narrow-range bug as `lenRatio`.
@@ -1254,6 +1255,9 @@
     if (L.strum !== undefined) {
       if (Number.isFinite(L.strum) && L.strum > 0) L.strum = clamp(L.strum, 0, 100); else delete L.strum;
     }
+    // ↓ DESCENDING — a flag, stored only when set, so absent means ascending
+    // and an untouched project carries nothing new.
+    if (L.strumDown) L.strumDown = 1; else delete L.strumDown;
     if (L.strumFidelity !== undefined) {
       if (Number.isFinite(L.strumFidelity) && L.strumFidelity > 0) L.strumFidelity = clamp(L.strumFidelity, 0, 100);
       else delete L.strumFidelity;
@@ -1310,7 +1314,22 @@
           m.rate = clamp(Number.isFinite(m.rate) ? m.rate : d[t].rate, 0, 100);
           if (typeof m.shape !== 'string' || !m.shape) m.shape = 'sine';
         });
-        if (!['vca', 'vco', 'vcf'].some((t) => (L.mod[t].depth | 0) > 0)) delete L.mod;
+        // PRUNED WHEN IT SAYS NOTHING — not merely when it is SILENT. The rule
+        // was "no depth anywhere → delete", which threw away Rate, Shape and
+        // Rate timing every time depth happened to be 0: setting a rate first
+        // (the natural order — pick a speed, then dial the amount in) vanished
+        // on the very next `getCfg`, and taking depth to 0 to A/B a sound
+        // destroyed the rate and shape you had just tuned. Measured: rate-only,
+        // shape-only and sync-only all normalised to `null`.
+        // A MATRIX AT ITS DEFAULTS still stores nothing, so an untouched layer
+        // is byte-identical and a saved project is unchanged — which is all the
+        // old rule was actually for.
+        const modDflt = (t) => {
+          const m = L.mod[t];
+          return (m.depth | 0) === 0 && m.rate === d[t].rate &&
+                 m.shape === ((d[t] && d[t].shape) || 'sine');
+        };
+        if (L.mod.sync === 'free' && ['vca', 'vco', 'vcf'].every(modDflt)) delete L.mod;
       }
     }
     // SPEECH FX and the WORD translator, coerced by v1's own normalizers. The
@@ -1512,6 +1531,18 @@
       // Absent or 0 = the pattern exactly as drawn, and no RNG draw at all.
       if (Number.isFinite(r.vary) && r.vary > 0) r.vary = clamp(r.vary, 0, 100); else delete r.vary;
       if (Number.isFinite(r.syncop) && r.syncop > 0) r.syncop = clamp(r.syncop, 0, 100); else delete r.syncop;
+      // ⚄ THE FIGURE AND ITS THREE KNOBS. Distinct keys from `syncop`, which is
+      // the CHANCE branch's "weight the odd slots" and a different mechanism
+      // wearing the same word — one word for two rules is how a panel comes to
+      // read as two mechanisms (and vice versa). All absent by default and
+      // pruned at their no-ops, so a project that never opened this stores
+      // nothing and plays byte for byte as before.
+      if (typeof r.fig === 'string' && FIGURES.some((f) => f[0] === r.fig)) { /* keep */ }
+      else if (r.fig !== undefined) delete r.fig;
+      if (Number.isFinite(r.figSeed) && r.figSeed > 0) r.figSeed = clamp(r.figSeed | 0, 0, 1e9); else delete r.figSeed;
+      ['figSync', 'figGrp', 'figVar'].forEach((k) => {
+        if (Number.isFinite(r[k]) && r[k] > 0) r[k] = clamp(r[k] | 0, 0, 100); else delete r[k];
+      });
       // Absent or 1 = a single euclid row, which is what v2 has always played.
       if (Number.isFinite(r.voices) && r.voices > 1) r.voices = clamp(r.voices | 0, 1, 8); else delete r.voices;
       // RATE VAR — v1's steady → rushes, absent by default so nothing moves.
@@ -1574,6 +1605,46 @@
         });
         if (Object.keys(keep).length) r.cellFx = keep; else delete r.cellFx;
       } else if (r.cellFx !== undefined) delete r.cellFx;
+      // ── AND WHAT A WHOLE LANE SAYS — THE SAME TWO WORDS (2026-09-25) ──
+      // user: "add option for Edit, which should open a popover for editing
+      // that lane (tone modification and stochastic/probability adjustments
+      // including pitch shift)".
+      //   laneFx = { "<lane>": { c: chance%, t: semitones,
+      //                            m: muted, s: soloed, r: re-rolled every pass } }
+      // EXACTLY `cellFx`'s shape, keyed by LANE alone — a sparse object,
+      // additive, ABSENT BY DEFAULT, and every entry that says nothing
+      // (chance 100, tune 0) pruned. Saying "this hat sounds two bars in three"
+      // took 16 cell edits before this; now it is one number on the lane.
+      // THEY COMPOSE, they do not override: chance MULTIPLIES (a 50% lane under
+      // a 50% cell sounds a quarter of the time) and tune ADDS (a lane tuned +2
+      // with a cell at +3 plays +5). Each control then keeps meaning exactly
+      // what it says, which an override could not — a cell set to 100% would
+      // have to mean "certain" and "whatever the lane says" at once.
+      if (r.laneFx && typeof r.laneFx === 'object' && !Array.isArray(r.laneFx)) {
+        const keepL = {};
+        Object.keys(r.laneFx).forEach((k) => {
+          if (!/^\d+$/.test(String(k))) return;
+          const li = String(k) | 0;
+          if (li < 0 || li >= _V2_LANES) return;
+          const v = r.laneFx[k];
+          if (!v || typeof v !== 'object') return;
+          const e2 = {};
+          const c2 = Number.isFinite(v.c) ? clamp(v.c | 0, 0, 100) : 100;
+          const t2 = Number.isFinite(v.t) ? clamp(v.t | 0, -24, 24) : 0;
+          if (c2 !== 100) e2.c = c2;
+          if (t2 !== 0) e2.t = t2;
+          // THE THREE FLAGS — stored ONLY when true, so `false` is written as
+          // absence and the prune rule stays "an entry that says nothing is
+          // deleted". `m`/`s` are the mixer pair (mute wins over solo — you
+          // muted it on purpose); `r` bypasses the drawn row for a fresh
+          // placement every pass.
+          if (v.m) e2.m = 1;
+          if (v.s) e2.s = 1;
+          if (v.r) e2.r = 1;
+          if (Object.keys(e2).length) keepL[String(li)] = e2;
+        });
+        if (Object.keys(keepL).length) r.laneFx = keepL; else delete r.laneFx;
+      } else if (r.laneFx !== undefined) delete r.laneFx;
       // ── ♦ BEAT: THE RULES BEHIND A KIT (2026-09-21) ────────────────
       // user: "what about drums? we should probably have a Beat material type".
       // Drums were the ONE layer type with no generator: the kit emitter read
@@ -2546,6 +2617,106 @@
   }
 
   // Stage 1 — RHYTHM: where the onsets fall inside one cycle, as fractions.
+  // ── ⚄ FIGURES — THE ORDER OF ONSETS, AS A THING YOU CAN NAME ────────────
+  // (2026-09-25, user: "why are all rhythmic generate patterns the same? … the
+  // basic rhythmic pattern is opaque, the user needs to be able to edit and
+  // generate that".)
+  // THE DIAGNOSIS WAS EXACT. `euclid` is MAXIMALLY EVEN BY DEFINITION, so the
+  // same (pulses, steps, rotate) is the same pattern for ever, and `fill` tiles
+  // it identically in every bar — three bars of a Bass were three copies. Shape
+  // moved lengths, Resolution moved the grid, and NOTHING moved the order of
+  // onsets. `vary` is not that control either: it drops and adds hits at
+  // random, which is a disturbance, not an idea.
+  // A FIGURE IS WRITTEN ON A 16-STEP BAR, the reference grid ♦ Beat's Characters
+  // already use, and scaled to whatever ⊞ Resolution the layer is on — so a
+  // figure keeps its shape instead of halving the tempo at a finer grid (the
+  // documented `presetBeatVal` rule, same reasoning, same reference).
+  const FIGURES = [
+    ['straight',   'Straight — on the beats',      [0, 4, 8, 12]],
+    ['eighths',    'Eighths — steady',             [0, 2, 4, 6, 8, 10, 12, 14]],
+    ['offbeat',    'Offbeat — the ands',           [2, 6, 10, 14]],
+    ['charleston', 'Charleston — 1 and the and',   [0, 6]],
+    ['tresillo',   'Tresillo — 3+3+2',             [0, 3, 6, 8, 11, 14]],
+    ['clave',      'Clave — son, 3-2',             [0, 3, 6, 10, 12]],
+    ['bossa',      'Bossa — 3-2 turned round',     [0, 3, 6, 10, 13]],
+    ['gallop',     'Gallop — long, short-short',   [0, 3, 4, 8, 11, 12]],
+    ['dotted',     'Dotted — a 3-step cycle',      [0, 3, 6, 9, 12, 15]],
+    ['fourfloor',  'Four on the floor + pickup',   [0, 4, 8, 12, 15]],
+  ];
+  const FIG_REF = 16;                       // the bar every figure is written on
+  const figRec = (id) => FIGURES.find((f) => f[0] === id) || FIGURES[0];
+  // ONE BAR OF A FIGURE, as a boolean row of `st` steps, after the three knobs.
+  // Pure function of (figure, st, knobs, seed, bar) — so the card can draw
+  // exactly what the emitter will play by asking the same question.
+  //
+  //  · SYNCOPATION pushes an onset OFF a strong step. A strong step is a beat
+  //    (a multiple of st/4); the push is one step LATE, which is what a human
+  //    playing behind the beat does — moving it early reads as a mistake.
+  //  · GROUPING is even ↔ clustered. Euclid is one end of this axis already, so
+  //    the low end IS euclid; the high end pulls the onsets into runs, which is
+  //    where 3+3+2 and every gallop live. Blended per onset, so the knob sweeps
+  //    rather than switching.
+  //  · BAR VARIATION decides how much bar 2 differs from bar 1. Bar 0 is ALWAYS
+  //    the figure as named — an idea you cannot hear stated once is not an idea
+  //    — so this only moves later bars.
+  // THE KNOBS ARE ORTHOGONAL, AND THAT IS A PROPERTY OF THE SALTS. Only Bar
+  // variation draws on `bar`; Grouping and Syncopation deliberately do not, so
+  // they transform the figure the SAME way in every bar. The first cut salted
+  // the cluster starts with `bar` too, and the bars then differed with Bar
+  // variation at 0 — which leaves that knob describing something that happens
+  // without it, and three controls nobody can tell apart.
+  function figRow(r, st, bar, seed) {
+    st = Math.max(1, st | 0);
+    const rec = figRec(r.fig);
+    const sync = clamp(r.figSync | 0, 0, 100) / 100;
+    const grp  = clamp(r.figGrp  | 0, 0, 100) / 100;
+    const barv = clamp(r.figVar  | 0, 0, 100) / 100;
+    const sd = ((seed | 0) * 2246822519) ^ (((r.figSeed | 0) + 1) * 2654435761);
+    // the figure, scaled from its 16-step bar onto this grid
+    let pos = rec[2].map((x) => Math.round(x * st / FIG_REF)).filter((x) => x < st);
+    pos = [...new Set(pos)].sort((a, b) => a - b);
+    const n = pos.length;
+    if (!n) return new Array(st).fill(0);
+    // ── GROUPING ────────────────────────────────────────────────────────
+    if (grp > 0.001) {
+      // EVEN is the euclid placement of the same count — the same spread the
+      // old generator gave, so grouping 0 lands exactly where it used to.
+      const even = [];
+      for (let i = 0; i < n; i++) even.push(Math.round(i * st / n));
+      // CLUSTERED packs them into a few runs whose starts are drawn per bar.
+      const runs = Math.max(1, Math.round(n / 3));
+      const per = Math.ceil(n / runs);
+      const clus = [];
+      for (let g = 0; g < runs; g++) {
+        const start = Math.floor(vRnd(sd, 401 + g * 7) * st);
+        for (let k = 0; k < per && clus.length < n; k++) clus.push((start + k) % st);
+      }
+      clus.sort((a, b) => a - b);
+      pos = pos.map((_, i) => Math.round(even[i] * (1 - grp) + clus[i] * grp));
+    }
+    // ── BAR VARIATION ───────────────────────────────────────────────────
+    if (barv > 0.001 && bar > 0) {
+      pos = pos.map((x, i) => {
+        if (vRnd(sd, 601 + i * 13 + bar * 97) >= barv) return x;
+        // a SMALL displacement, not a new note: the bar has to stay the same
+        // figure heard differently, or "variation" is just another pattern.
+        const step = (vRnd(sd, 701 + i * 13 + bar * 97) < 0.5) ? -1 : 1;
+        return ((x + step) % st + st) % st;
+      });
+    }
+    // ── SYNCOPATION ─────────────────────────────────────────────────────
+    const beat = Math.max(1, Math.round(st / 4));
+    if (sync > 0.001) {
+      pos = pos.map((x, i) => {
+        if (x % beat !== 0) return x;                       // already off the beat
+        if (vRnd(sd, 811 + i * 17) >= sync) return x;
+        return (x + 1) % st;
+      });
+    }
+    const row = new Array(st).fill(0);
+    pos.forEach((x) => { if (x >= 0 && x < st) row[x] = 1; });
+    return row;
+  }
   function onsetsOf(part, seed) {
     const r = part.rhythm;
     const out = [];
@@ -2629,6 +2800,24 @@
     // ninth.
     const fbars = Math.max(1, +part.bars || 1);
     const fill = part.barsMode === 'fill' && fbars > 1 + 1e-9;
+    // ⚄ A FIGURE IS PER BAR BY DEFINITION — it is written on a bar and named
+    // after what one bar sounds like — so it tiles whatever `barsMode` says,
+    // and Bar variation is what makes the copies differ. `perturb` still runs
+    // per slot so ✺ Vary composes with it exactly as it does with euclid.
+    if (r.kind === 'fig') {
+      const st = Math.max(1, r.steps | 0);
+      const nb = Math.max(1, Math.ceil(fbars - 1e-9));
+      for (let b = 0; b < nb; b++) {
+        const row = figRow(r, st, b, seed);
+        for (let i = 0; i < st; i++) {
+          const on = perturb(!!row[i]);
+          const atBar = b + i / st;
+          if (atBar >= fbars - 1e-9) break;
+          if (on) out.push(atBar / fbars);
+        }
+      }
+      return out;
+    }
     if (r.kind === 'euclid') {
       const pat = euclidCells(r.pulses, r.steps, r.rotate);
       if (pat) {
@@ -4277,8 +4466,7 @@
       const bt = (!inSteps && p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
       // ⊞ RESOLUTION decides the per-bar grid; absent is sixteenths.
       const btPer = bt ? beatPerOf(bt) : 0;
-      const btSt = bt ? Math.max(btPer,
-        Math.round(btPer * Math.max(0.125, +p.bars || 1))) : 0;
+      const btSt = bt ? kitStepsFn(p) : 0;
       const bl = bt ? beatLanes(p, btSt, seedBase, btPer) : null;
       const lanes = bl || p.rhythm.lanes || [];
       const st = bl ? btSt : Math.max(1, p.rhythm.steps | 0);
@@ -4292,12 +4480,52 @@
       // so it thins more than it thickens and the pattern stays itself.
       const dvary = (!bl && p.rhythm.beat) ? clamp(p.rhythm.beat.vary | 0, 0, 100) / 100 : 0;
       const cfx = (p.rhythm.cellFx && typeof p.rhythm.cellFx === 'object') ? p.rhythm.cellFx : null;
+      // …and the LANE's own two words, which COMPOSE with the cell's rather
+      // than overriding them (see the normalizer): chance multiplies, tune
+      // adds. Both identities when absent — 100% and 0 semitones — so a project
+      // that has never opened the lane editor emits byte for byte as before.
+      const lfx = (p.rhythm.laneFx && typeof p.rhythm.laneFx === 'object') ? p.rhythm.laneFx : null;
       const pvar = Math.max(0, Math.min(12, +L.pitchVary || 0));
+      // THE MIXER RULE, asked ONCE: with no solo anywhere every unmuted lane
+      // plays; with any solo only the soloed ones do. Absent → false → the loop
+      // below is what it always was.
+      let anySolo = false;
+      if (lfx) { for (const k in lfx) if (lfx[k] && lfx[k].s) { anySolo = true; break; } }
       for (let li = 0; li < _V2_LANES; li++) {
         const row = lanes[li] || [];
+        const lf = lfx ? lfx[String(li)] : null;
+        const lch = (lf && Number.isFinite(lf.c)) ? (lf.c | 0) : 100;
+        const ltu = (lf && Number.isFinite(lf.t)) ? (lf.t | 0) : 0;
+        // MUTE WINS OVER SOLO on the same lane — you muted it on purpose.
+        if (lf && lf.m) continue;
+        if (anySolo && !(lf && lf.s)) continue;
+        // ── \u2685 RND: A LANE THAT RE-DECIDES ITSELF EVERY PASS ──────────
+        // "bypass whatever is programmed for that voice and generate a pattern
+        // that differs on every pass for just that drum lane".
+        // IT KEEPS THE LANE'S WEIGHT AND MOVES ITS PLACEMENT: the drawn row's
+        // hit COUNT is the density, redistributed over the bar by a seeded
+        // shuffle. A coin flip per step would be the obvious reading and the
+        // wrong one — it changes how BUSY the lane is from pass to pass, so a
+        // kick that anchored the bar can simply stop, which is noise, not
+        // variation. An EMPTY lane has no weight to keep, so it takes a
+        // quarter of the grid rather than staying silent (a Rnd lane that
+        // makes no sound reads as a broken button).
+        // THE SEED CARRIES THE PASS, AND `cycIdx` IS NOT THE PASS. `cycIdx`
+        // only follows `ctx.cycleStart` when the LAYER's own ✺ vary is on;
+        // otherwise it is `take + epoch`, constant for every cycle of a take —
+        // which is the whole ⚙ Deep / ✺ Live distinction. Seeding off it made
+        // every pass identical (measured: five passes, one placement). Rnd is a
+        // PER-LANE live control and has to differ per pass whatever the layer
+        // is set to — that is the point of asking for it on one lane — so the
+        // pass is taken from the clock directly.
+        // `vRnd` is the layer's ISOLATED stream, so a Rnd lane cannot shift any
+        // other layer's draws (the documented shared-stream rule).
+        const src = (lf && lf.r)
+          ? rndRowFn(L, li, row, st, Math.round(cs / Math.max(0.001, cyc)))
+          : row;
         for (let i = 0; i < st; i++) {
           const sd = seedIdOf(L) * 9176 ^ (cycIdx * 2246822519) ^ (li * 7919) ^ (i * 40503);
-          let on = row[i] ? 1 : 0;
+          let on = src[i] ? 1 : 0;
           if (dvary > 0) {
             if (on && vRnd(sd, 61) < dvary * 0.40) on = 0;
             else if (!on && vRnd(sd, 67) < dvary * 0.22) on = 1;
@@ -4309,8 +4537,12 @@
           // independently of Rests, so the two compose rather than one hiding
           // the other.
           const fx = cfx ? cfx[li + ':' + i] : null;
-          if (fx && Number.isFinite(fx.c) && fx.c < 100 &&
-              vRnd(sd, 101) * 100 >= fx.c) continue;
+          // ONE DRAW against the COMPOSED probability, never two — two draws
+          // would consume the stream differently and break byte-identity for
+          // every project that has a cell chance and no lane chance.
+          const cch = (fx && Number.isFinite(fx.c)) ? (fx.c | 0) : 100;
+          const pch = (cch * lch) / 100;
+          if (pch < 100 && vRnd(sd, 101) * 100 >= pch) continue;
           if (rest > 0 && vRnd(sd, 11) * 100 < rest) continue;
           let dm = durMs;
           if (lvar > 0) dm = Math.max(20, Math.round(durMs * (1 + (vRnd(sd, 23) * 2 - 1) * (lvar / 100) * 0.6)));
@@ -4318,7 +4550,7 @@
           // A DRUM'S PITCH IS A NUMBER NOW: its lane's semitone, plus what the
           // cell states, plus the stochastic spread. `midiToFreq` takes a
           // FRACTION, so Pitch vary detunes continuously rather than stepping.
-          let semi = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0);
+          let semi = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0) + ltu;
           if (pvar > 0) semi += (vRnd(sd, 83) * 2 - 1) * pvar;
           out.push({ at: at0, freq: midiToFreq(semi), durMs: dm, lane: li });
           if (ghost > 0 && vRnd(sd, 37) * 100 < ghost * 0.6) {
@@ -4326,7 +4558,7 @@
             // A GHOST TAKES ITS OWN DRAW from the same spread — it is a
             // separate hit, and two hits at one pitch is not what "vary" means.
             let gs = semi;
-            if (pvar > 0) gs = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0) + (vRnd(sd, 89) * 2 - 1) * pvar;
+            if (pvar > 0) gs = 36 + _V2_VDRUM[li] + ((fx && fx.t | 0) || 0) + ltu + (vRnd(sd, 89) * 2 - 1) * pvar;
             if (gAt < cs + cyc) out.push({ at: gAt, freq: midiToFreq(gs), durMs: Math.max(20, Math.round(dm * 0.45)), lane: li, ghost: 1 });
           }
         }
@@ -5009,7 +5241,20 @@
         const order = [];
         for (let k2 = 0; k2 < ms.length; k2++) order.push(k2);
         if (fid > 0) {
-          const sSeed = seedBase ^ ((si * 61 + 7) * 2654435761);
+          // ✺ EVERY PASS MEANS THE PLAY TIME, NOT `seedBase`. This shuffle
+          // seeded off `seedBase`, which carries `cycIdx` — and `cycIdx` only
+          // follows the clock while the LAYER's own ✺ vary is on; otherwise it
+          // is constant for the whole take. So a control living in the ✺ Every
+          // pass tab, whose hint promises "wandering, each pass", measured
+          // IDENTICAL on pass 1 and pass 2 (64, 71, 67, 60 both times) unless
+          // an unrelated switch happened to be on. Its family-mates already do
+          // this correctly: `motion` seeds on `seedIdOf(L) ^ round(at*1000)`,
+          // the note's absolute play time, which moves every pass by
+          // construction — so this takes the same seed, which also decorrelates
+          // the onsets from each other for free.
+          // GUARDED BY `fid > 0`, so a layer with Strum order at 0 takes no
+          // draw at all and is byte-identical.
+          const sSeed = seedIdOf(L) ^ Math.round(at * 1000);
           for (let k2 = ms.length - 1; k2 > 0; k2--) {
             if (vRnd(sSeed, 191 + k2) < fid) {
               const j2 = Math.floor(vRnd(sSeed, 227 + k2) * (k2 + 1));
@@ -5017,6 +5262,12 @@
             }
           }
         }
+        // ↓ DESCENDING — the same spread read the other way. `ms` is ascending,
+        // so reversing the ORDER (not the times) strikes high to low while the
+        // span and the spacing stay exactly what Ordered ascending gives.
+        // Only meaningful with no shuffle, and `spreadSet` clears the flag when
+        // the mode is Wandering, so the two can never both apply.
+        if (L.strumDown) order.reverse();
         for (let k = 0; k < ms.length; k++) {
           const v = order[k];
           out.push({ at: at + (spanSec * k) / Math.max(1, ms.length - 1), freq: midiToFreq(ms[v]), durMs: dmFor(ms[v]) });
@@ -5026,12 +5277,36 @@
         // later by its own seeded draw, so a block chord arrives as a hand
         // would play it rather than as a machine. Distinct from v1's Strum,
         // which is a DETERMINISTIC spread in a fixed order — slip has no order
-        // and no fixed spacing, and the two compose. Seeded on (onset, voice)
-        // so a take replays; 0 draws nothing and is byte-identical.
+        // and no fixed spacing. Seeded on (onset, voice) so a take replays; 0
+        // draws nothing and is byte-identical.
+        // THEY DO NOT COMPOSE, WHATEVER THIS COMMENT USED TO SAY. This is the
+        // `else` of `strum > 0`, so ANY Strum silently switches Slip off —
+        // measured 2026-09-25: Strum 80 alone and Strum 80 + Slip 80 give the
+        // identical four offsets (0, 533, 1067, 1600 ms), while Slip 80 alone
+        // gives (109, 0, 62, 73). They are two ANSWERS TO ONE QUESTION — how a
+        // stack is spread in time — so the card names the precedence rather
+        // than pretending to a blend the emitter never had.
         const slipAmt = gset ? gset.slip : clamp((p.shape && p.shape.slip) | 0, 0, 100);
-        const slipMax = slipAmt > 0 ? (slipAmt / 100) * Math.min(0.18, span * 0.5) : 0;
+        // THE SAME SPAN AS ORDERED — this is the SAME control now (⇢ Spread on
+        // Random), so the number has to mean the same distance or the mode
+        // reads as broken. It was `min(0.18, span*0.5)`: capped at 180 ms and
+        // halved again by the gap, which on an ordinary part is a few
+        // milliseconds — reported as "Random doesn't work at all", and it was
+        // right, you could not hear it. `cyc / ons.length` is the slot the
+        // ordered arm spreads across, verbatim.
+        const slipMax = slipAmt > 0 ? (slipAmt / 100) * (cyc / Math.max(1, ons.length)) : 0;
         for (let v = 0; v < ms.length; v++) {
-          const off = slipMax > 0 ? vRnd(seedBase ^ ((si * 31 + v) * 2246822519), 137) * slipMax : 0;
+          // …AND IT DIFFERS EVERY PASS, which is what "Random" says. This drew
+          // on `seedBase` — the take seed — so it produced ONE fixed uneven
+          // placement repeated for ever: measured identical on pass 1 and 2,
+          // which reads as a strange static order rather than randomness. The
+          // note's ABSOLUTE time is the per-pass seed this file's ✺ family uses
+          // (`motion`, `accentStage`, and ⇢ Spread wander since 2026-09-25).
+          // THAT IS ALSO WHAT SEPARATES THE THREE: ordered is a fixed order at
+          // even spacing, Wandering a new ORDER each pass at even spacing,
+          // Random a new PLACEMENT each pass at uneven spacing.
+          const off = slipMax > 0
+            ? vRnd((seedIdOf(L) ^ Math.round(at * 1000)) ^ (v * 2246822519), 137) * slipMax : 0;
           const nt2 = { at: at + off, freq: midiToFreq(ms[v]), durMs: dmFor(ms[v]) };
           // ⑁ THE FIGURE'S WEIGHT rides with the note so the EMITTER can lean
           // on it and skip Accent — a separate field, never `vel`, because
@@ -6148,6 +6423,208 @@
         }
       } catch (e) {}
     });
+  }
+  // THE KIT GRID'S STEP COUNT — ONE WRITER. ⌗ Roll resolves its grid from
+  // ⊞ Resolution × bars; ▦ Pattern from the drawn `rhythm.steps`. The lane
+  // audition needs the same number to state how long one hit lasts, and two
+  // copies of this arithmetic is how a preview comes to disagree with the beat
+  // it is previewing (the same rule `LANE_NAMES` is exported under).
+  function kitStepsFn(p) {
+    const bt = (p.form !== 'steps' && p.rhythm.beat && Array.isArray(p.rhythm.beat.lanes)) ? p.rhythm.beat : null;
+    if (!bt) return Math.max(1, p.rhythm.steps | 0);
+    const per = beatPerOf(bt);
+    return Math.max(per, Math.round(per * Math.max(0.125, +p.bars || 1)));
+  }
+  // ── AUDITION ONE KIT LANE ───────────────────────────────────────────────
+  // A tap on a ▦ Pattern lane's NAME plays that drum once, so you can hear what
+  // a lane is before drawing on it. Asked for 2026-09-25: the labels were inert
+  // spans, which meant the only way to hear a lane was to put a hit in it.
+  // THE EXACT EMIT PATH (the hang-audition rule): the same two arms `emit`
+  // takes below, the same `dest`, the same staging level, the same lane →
+  // semitone map. A KIT HAS TWO REALIZATIONS AND THEY TAKE DIFFERENT PLAYERS —
+  // a synth kit is a recipe played by `_ambPlaySynthDrum` (which takes a LANE
+  // INDEX), a sample kit is an ordinary note on `sample:<id>` — and fixing one
+  // arm while leaving the other is how a v1 hang burst went silent.
+  // NO CHAIN IS NOT NO SOUND: `_ambLayerDest` is null while the engine is
+  // stopped, which is exactly when auditioning matters most, and playNote's
+  // default routing is audible. Both players ramp their own edges, so this
+  // carries no bare start/stop (rule 3).
+  function hitLaneFn(E, L, li) {
+    if (!E || !L || !L.instrument || typeof Tone === 'undefined') return false;
+    if (L.instrument.voice !== 'kit') return false;
+    const lane = Math.max(0, Math.min(_V2_LANES - 1, li | 0));
+    try { if (Tone.start) Tone.start(); } catch (e) {}
+    const key = 'v2:' + (L.id | 0);
+    const dest = (typeof _ambLayerDest === 'function') ? _ambLayerDest(key) : undefined;
+    // NOW, WITH NO CUSHION. `Tone.now()` is ALREADY `currentTime + lookAhead`
+    // (25 ms, set in 02-wraps), which is the headroom the graph needs — adding
+    // a lead on top of it doubles the delay for no benefit and is exactly the
+    // "no unconditional time cushions on interactive triggers" rule. The pad's
+    // own immediate path passes no time at all, for the same reason. Reported
+    // as "lag on press" the day this landed.
+    const at = (Tone.now ? Tone.now() : 0);
+    // THE LANE'S OWN TUNE RIDES ON THE AUDITION — a preview that ignored it
+    // would answer a question about a lane you are not listening to, which is
+    // the whole failure the hang-audition rule names. `_ambPlaySynthDrum` takes
+    // it as its `stPitch` argument; the sample arm folds it into the semitone.
+    let ltu = 0;
+    try {
+      const lf = L.part.rhythm.laneFx && L.part.rhythm.laneFx[String(lane)];
+      if (lf && Number.isFinite(lf.t)) ltu = lf.t | 0;
+    } catch (e) {}
+    try {
+      if (L.instrument.kit === 'synth') {
+        // NOTHING BETWEEN THE PRESS AND THE SOUND on the default path: the
+        // recipe builds its own envelope, so the grid arithmetic below is not
+        // just unnecessary here, it is a `getCfg()` (the normalize chokepoint)
+        // run for a value this arm never reads.
+        _ambPlaySynthDrum(E, dest, L, lane, at, _AMB_V2_STAGE, null, 0, ltu);
+      } else {
+        // A SAMPLE IS GATED BY ITS LENGTH, so this arm does need one — computed
+        // HERE, after the branch, where it is the thing being asked for.
+        let durMs = 90;
+        try {
+          const cyc = cycSecOf(L, E.getCfg && E.getCfg());
+          durMs = Math.max(20, Math.round((cyc / kitStepsFn(L.part)) * 1000 * (L.part.shape.lenRatio / 100)));
+        } catch (e) {}
+        playNote(midiToFreq(36 + _V2_VDRUM[lane] + ltu), { type: 'sample:' + L.instrument.kit, volume: _AMB_V2_STAGE },
+          durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
+      }
+    } catch (e) { return false; }
+    return true;
+  }
+  // THE LANE'S TWO WORDS, read and written through one pair — the popover, the
+  // grid's faces and the audition all ask here, so none of them can invent a
+  // different default. Writing prunes what says nothing, exactly as the
+  // normalizer would, so the store never grows an entry meaning "unchanged".
+  // ⚅ THE RANDOM LANE'S ROW FOR ONE PASS — ONE WRITER. The GRID has to draw
+  // exactly what the emitter will play, or the picture is a confident lie; two
+  // copies of this shuffle is how they would come to disagree. Seeded on
+  // (layer, lane, PASS) alone — deliberately NOT on `seedBase`, which carries
+  // the take: a lane that re-rolls every pass has nothing to gain from also
+  // moving on 🎲 New take, and take-independence is what lets the card
+  // reproduce the row without knowing the take.
+  function rndRowFn(L, li, row, st, pass) {
+    st = Math.max(1, st | 0);
+    let want = 0;
+    for (let k = 0; k < st; k++) if (row && row[k]) want++;
+    if (!want) want = Math.max(1, Math.round(st / 4));
+    const rs = (seedIdOf(L) * 6151) ^ ((pass | 0) * 2654435761) ^ ((li | 0) * 40499);
+    const idx = new Array(st);
+    for (let k = 0; k < st; k++) idx[k] = k;
+    for (let k = st - 1; k > 0; k--) {
+      const j = Math.floor(vRnd(rs, 211 + k) * (k + 1));
+      const t = idx[k]; idx[k] = idx[j]; idx[j] = t;
+    }
+    const out = new Array(st).fill(0);
+    for (let k = 0, n = Math.min(want, st); k < n; k++) out[idx[k]] = 1;
+    return out;
+  }
+  // ── SPREAD: ONE AMOUNT, ONE ORDER ───────────────────────────────────────
+  // (2026-09-25 — Strum and Slip were two amounts for ONE question: how far
+  // apart the notes of a single onset land.) The emitter is
+  // `if (strum > 0) {…} else { slip }`, so any Strum silently switched Slip off
+  // — measured, Strum 80 + Slip 80 is byte-identical to Strum 80 alone. A
+  // SINGLE amount makes that impossible by construction, and the thing the two
+  // actually disagreed about — the ORDER the notes are struck in — becomes its
+  // own control instead of being implied by which slider you happened to use.
+  // ALL THREE FIELDS STAY. `strum`, `strumFidelity` and `shape.slip` are what
+  // saved projects hold and what the emitter reads; the picker only decides
+  // which one carries the amount. Nothing migrates, and a project made before
+  // this reads back in whichever mode it was already in.
+  const SPREAD_MODES = [
+    ['up',     'Ordered ascending \u2014 low to high'],
+    ['down',   'Ordered descending \u2014 high to low'],
+    ['wander', 'Wandering \u2014 a new order each pass'],
+    ['random', 'Random \u2014 no order at all'],
+  ];
+  function spreadGetFn(L) {
+    const st = clamp((L && L.strum) | 0, 0, 100);
+    const sp = clamp((((L && L.part && L.part.shape) || {}).slip) | 0, 0, 100);
+    const fid = clamp((L && L.strumFidelity) | 0, 0, 100);
+    if (st > 0) return { amt: st, mode: fid > 0 ? 'wander' : (L.strumDown ? 'down' : 'up') };
+    if (sp > 0) return { amt: sp, mode: 'random' };
+    return { amt: 0, mode: 'up' };
+  }
+  function spreadSetFn(L, patch) {
+    const cur = spreadGetFn(L);
+    const mode = patch.mode || cur.mode;
+    const amt = clamp(Number.isFinite(patch.amt) ? (patch.amt | 0) : cur.amt, 0, 100);
+    const sh = (L.part && L.part.shape) || (L.part.shape = {});
+    if (mode === 'random') {
+      delete L.strum; delete L.strumFidelity; delete L.strumDown;
+      if (amt > 0) sh.slip = amt; else delete sh.slip;
+    } else {
+      delete sh.slip;
+      if (amt > 0) L.strum = amt; else delete L.strum;
+      // WANDERING KEEPS WHATEVER FINE VALUE IS ALREADY THERE — ✺ Every pass ▸
+      // Spread wander is the same field's full control, and snapping it to 100
+      // every time this picker was touched would throw that setting away.
+      if (mode === 'wander') {
+        if (!((L.strumFidelity | 0) > 0)) L.strumFidelity = 100;
+        delete L.strumDown;          // a shuffled order has no direction
+      } else {
+        delete L.strumFidelity;
+        if (mode === 'down') L.strumDown = 1; else delete L.strumDown;
+      }
+    }
+    return spreadGetFn(L);
+  }
+  function laneFxGetFn(L, li) {
+    const r = (L && L.part && L.part.rhythm) || {};
+    const e = (r.laneFx && r.laneFx[String(li | 0)]) || null;
+    return { c: (e && Number.isFinite(e.c)) ? (e.c | 0) : 100,
+             t: (e && Number.isFinite(e.t)) ? (e.t | 0) : 0,
+             m: !!(e && e.m), s: !!(e && e.s), r: !!(e && e.r) };
+  }
+  function laneFxSetFn(L, li, patch) {
+    const r = L.part.rhythm || (L.part.rhythm = {});
+    const cur = laneFxGetFn(L, li);
+    const c = clamp(Number.isFinite(patch.c) ? patch.c | 0 : cur.c, 0, 100);
+    const t = clamp(Number.isFinite(patch.t) ? patch.t | 0 : cur.t, -24, 24);
+    const m = ('m' in patch) ? !!patch.m : cur.m;
+    const so = ('s' in patch) ? !!patch.s : cur.s;
+    const rr = ('r' in patch) ? !!patch.r : cur.r;
+    const map = (r.laneFx && typeof r.laneFx === 'object') ? r.laneFx : (r.laneFx = {});
+    const e = {};
+    if (c !== 100) e.c = c;
+    if (t !== 0) e.t = t;
+    if (m) e.m = 1;
+    if (so) e.s = 1;
+    if (rr) e.r = 1;
+    if (Object.keys(e).length) map[String(li | 0)] = e; else delete map[String(li | 0)];
+    if (!Object.keys(map).length) delete r.laneFx;
+    return { c, t, m, s: so, r: rr };
+  }
+  // IS ANYTHING SOLOED — asked once per emit and once per repaint, never per
+  // lane. The mixer rule: with NO solo every unmuted lane plays; with ANY solo
+  // only the soloed ones do, and a mute still wins over a solo on the same lane
+  // (you muted it on purpose).
+  function laneAnySoloFn(L) {
+    const m = L && L.part && L.part.rhythm && L.part.rhythm.laneFx;
+    if (!m) return false;
+    for (const k in m) if (m[k] && m[k].s) return true;
+    return false;
+  }
+  const laneAudibleFn = (L, li, anySolo) => {
+    const f = laneFxGetFn(L, li);
+    if (f.m) return false;
+    return (anySolo === undefined ? laneAnySoloFn(L) : anySolo) ? f.s : true;
+  };
+  // THE PER-LANE VOICE, MATERIALIZED. A synth kit is GENERATED FROM A SEED and
+  // stored only once edited (`_ambSynthVoiceOf` generates on read), so the
+  // editor has to bring the kit into being before it can write one voice —
+  // otherwise the first drag writes into an object nothing reads. v1's own
+  // `_ambGenSynthKit` builds it, seeded exactly as `_ambSynthVoiceOf` would
+  // have, so materializing changes NO sound.
+  function laneVoiceFn(L, li) {
+    if (!L || typeof _ambGenSynthKit !== 'function') return null;
+    const sk = L.synthKit;
+    if (!sk || !Array.isArray(sk.voices) || sk.voices.length !== 8) {
+      const seed = (sk && Number.isFinite(sk.seed)) ? sk.seed : (((L.id | 0) * 40503 + 1));
+      L.synthKit = _ambGenSynthKit(seed);
+    }
+    return L.synthKit.voices[Math.max(0, Math.min(7, li | 0))] || null;
   }
   function emit(E, L, key, now, horizon, lead, space, cfg) {
     // A FREEZE OUTRANKS THE LIVE PIPELINE — v1's own precedence ("Recorded
@@ -8006,6 +8483,22 @@
     // duplicated: two copies of a drum map is how the two halves come to
     // disagree about which lane is a clap.
     LANES: _V2_LANES, VDRUM: _V2_VDRUM, LANE_NAMES: _V2_LANE_NAMES,
+    // ⚄ The figure table crosses the seam for the same reason the lane table
+    // does — the card names them, the emitter decides them, and two copies of
+    // one list is how the two halves come to offer a rhythm that never plays.
+    // `figRow` crosses too, so the GRID can draw exactly what will sound.
+    FIGURES, figRow,
+    // …and the lane AUDITION with them. The card's IIFE cannot see
+    // `_ambPlaySynthDrum`'s two arms, `_AMB_V2_STAGE` or the semitone map, so a
+    // label press asks the model to make the sound rather than making it itself.
+    hitLane: hitLaneFn,
+    // …and the lane EDITOR's stores with it, for the same scope reason: the
+    // card's IIFE can see neither `clamp` nor `_ambGenSynthKit`'s seeding rule.
+    laneFxGet: laneFxGetFn, laneFxSet: laneFxSetFn, laneVoice: laneVoiceFn,
+    laneAnySolo: laneAnySoloFn, laneAudible: laneAudibleFn, rndRow: rndRowFn,
+    // ⇢ Spread crosses the seam: the card names the modes, the engine decides
+    // which field carries the amount, and one table means they cannot drift.
+    SPREAD_MODES, spreadGet: spreadGetFn, spreadSet: spreadSetFn,
     // ⊞ RESOLUTION crosses the same way and for the same reason — the card
     // builds its row and its scaler from these, and a second copy of the list
     // is how the panel comes to offer a grid the emitter will not honour.
@@ -9665,6 +10158,21 @@
              ['tune', '♪ Tune', 'Tap a cell to move that hit in semitones — the door for pitched drums. The number on the cell is its offset.']]
               .map(([m, lab, tip]) => '<button type="button" class="ambient-seg v2-cellmode' +
                 (cellModeOf(L) === m ? ' on' : '') + '" data-cellmode="' + m + '" title="' + esc(tip) + '">' + lab + '</button>').join('') +
+            // ── WHAT A LANE NAME DOES (2026-09-25) ────────────────────────
+            // user: "there should also be a mode cycle button in this bank
+            // that changes the function of the label buttons".
+            // A SECOND AXIS IN THE SAME BANK, and it has to read as one: the
+            // three on the left say what a CELL tap edits, this one says what a
+            // LANE NAME does. A CYCLE, not a third pair of segments — it has
+            // two states and a two-button group next to a three-button group
+            // reads as five choices on one axis. It wears the state it is IN
+            // (the ✎ Edit dropdown's own lesson: a control showing the state
+            // you are NOT in is a control nobody presses).
+            '<span class="v2-lanemodesep" aria-hidden="true"></span>' +
+            '<button type="button" class="ambient-seg v2-lanemode v2-lm-' + laneModeRec(L)[0] +
+              (laneModeOf(L) === 'hear' ? '' : ' on') +
+              '" title="' + esc(laneModeRec(L)[2] + ' Tap to cycle.') +
+              '">' + laneModeRec(L)[1] + '</button>' +
           '</span>'
         : '') +
       (kit
@@ -12283,7 +12791,7 @@
       // where one is tuned, and the question the open one answers
       const TABQ = { rhythm: 'When the notes land, and for how long.', notes: 'Which pitches, and how they are stacked.',
         form: 'How the part repeats itself.',
-        accomp: 'The lines that move over the changes, and how many notes each change states.',
+        accomp: 'What each change states \u2014 chords or a line \u2014 and how it is voiced.',
         take: 'Chance rolled once per take — 🎲 New take rolls it again.' };
       let cur = (([...host.classList].find((k) => k.indexOf('v2-ftt-') === 0)) || 'v2-ftt-rhythm').slice(7);
       if (!TABQ[cur]) cur = 'rhythm';
@@ -12855,6 +13363,23 @@
   // layers have their own, which is why this asks `cycleWindowAt` rather than
   // dividing the bar grid), and the step is the fraction through it. Cached on
   // the wrapper so a frame that lands inside the same step touches no DOM.
+  // Re-mark `.v2-lanegen` on every ⚅ Rnd lane for `pass`. Class changes only, on
+  // cells that stay put — never an innerHTML rewrite, which would destroy the
+  // control under the finger mid-edit.
+  // `root` is the CARD, not one grid: `lanesHtml` builds lanes for BOTH forms
+  // (▦ Pattern's `.v2-partsteps` and ⌗ Roll's `.v2-lanerow`), and painting only
+  // the one left the other showing a stale pass the moment you switched form.
+  function paintRndRows(root, L, st, pass) {
+    const lanes = ((L.part && L.part.rhythm) || {}).lanes || [];
+    root.querySelectorAll('.v2-lanecells[data-lane]').forEach((cells) => {
+      const li = cells.getAttribute('data-lane') | 0;
+      if (!V2.laneFxGet(L, li).r) return;
+      const gen = V2.rndRow(L, li, lanes[li] || [], st, pass);
+      cells.querySelectorAll('.v2-lanecell[data-ci]').forEach((c) => {
+        c.classList.toggle('v2-lanegen', !!gen[c.getAttribute('data-ci') | 0]);
+      });
+    });
+  }
   function stepsPlayhead(card, L, E, cfg, now) {
     const wrap = card.querySelector('.v2-partsteps'); if (!wrap) return;
     const r = (L.part && L.part.rhythm) || {};
@@ -12890,13 +13415,35 @@
     // The roll's sweep has stayed dark here all along (`nowT >= stp.startAt`),
     // and ONE RULE FOR EVERY PLAYHEAD beats an affordance only its author can
     // decode. `_phStep = null` is the same "nothing lit" the stop path uses.
-    if (ps && Number.isFinite(ps.startAt) && now < ps.startAt) {
+    // …AND NO ANCHOR AT ALL IS THE SAME ANSWER. `_v2Phase[key]` is created by
+    // the first `emit` tick, so between the press and that tick `ps` is NULL —
+    // and `cycleWindowAt(…, null)` falls back to `startAt: 0`, the AudioContext
+    // epoch. The column then sweeps a lattice the notes are not on: measured
+    // with no anchor it lit step 26 of 32, instantly, while nothing had
+    // sounded. That is "the playhead starts with the press and the music comes
+    // a hair later", reported a second time 2026-09-25.
+    // THE OTHER TWO PAINTERS ALREADY REQUIRE THE ANCHOR — the roll's sweep is
+    // `stp && nowT >= stp.startAt`, and the drawing's clears on `!st`. This one
+    // asked `ps &&` only as a null-guard on the COMPARISON, so the one state it
+    // let through was the very state it exists to catch. One rule for every
+    // playhead: no anchor, or not yet reached, means nothing lit.
+    if (!ps || !Number.isFinite(ps.startAt) || now < ps.startAt) {
       if (wrap._phStep !== null) {
         wrap._phStep = null;
         wrap.querySelectorAll('.v2-cell.playing, .v2-lanecell.playing')
           .forEach((c1) => c1.classList.remove('playing'));
       }
       return;
+    }
+    // ⚅ RND LANES REDRAW AT THE PASS BOUNDARY — the second writer the grid's
+    // generated row needs, and the reason it is HERE: this is the one frame
+    // loop that already knows the layer's own cycle window. Guarded on the pass
+    // number, so a frame inside the same pass touches no DOM (the same rule the
+    // step cache below follows).
+    const pass = Math.round(cs / Math.max(0.001, cyc));
+    if (wrap._rndPass !== pass) {
+      wrap._rndPass = pass;
+      try { paintRndRows(card, L, st, pass); } catch (e) {}
     }
     const i = Math.min(st - 1, Math.floor(f * st));
     if (wrap._phStep === i) return;
@@ -14227,6 +14774,7 @@
   // else the user can see — the polyrhythm hint says "euclid rows" — so it is
   // not new jargon, it is the word already in use. Key unchanged.
   const RHYTHM_OPTS = [['pulse', 'Pulse — evenly'], ['euclid', 'Euclid — spread over a step count'],
+                       ['fig', 'Figure — a named rhythm'],
                        ['chance', 'Chance — scattered'], ['ground', 'Groundwork — on every change']];
   // What the select should SHOW for a given kind. A `<select>` whose value
   // matches no option renders BLANK (documented trap), and 'drawn' has no
@@ -14266,6 +14814,90 @@
     48: '32nd triplets', 64: 'sixty-fourths' };
   const CELLMODE = new Map();
   const cellModeOf = (L) => CELLMODE.get(L && (L.id | 0)) || 'hit';
+  // WHAT A LANE NAME DOES — 'hear' (audition, the default) or 'edit'. Module
+  // state keyed by layer id, exactly as CELLMODE is, and for the documented
+  // reason: a `_`-prefixed field on the layer WOULD BE SAVED
+  // (`persistWorkspace` serialises them — the `_soloLane` trap), and which mode
+  // a knob is in is not part of the piece.
+  const LANEMODE = new Map();
+  // THE CYCLE, in order. One press moves to the next, and the button wears the
+  // mode it IS in. `hear` is first because it is the default and the one you
+  // want back: five states means the way home has to be short, and it is never
+  // more than four presses.
+  const LANE_MODES = [
+    ['hear', '\u25b8 Hear', 'Tapping a lane NAME plays that drum.'],
+    ['edit', '\u270e Edit', 'Tapping a lane NAME opens that lane\u2019s editor \u2014 its sound, how often it plays, how it is tuned.'],
+    ['mute', '\u2298 Mute', 'Tapping a lane NAME silences it. A muted lane stays drawn \u2014 you have not lost the pattern.'],
+    ['solo', '\u25c9 Solo', 'Tapping a lane NAME plays it alone. Solo several and you hear those. Nothing soloed = everything plays.'],
+    ['rnd',  '\u2685 Rnd',  'Tapping a lane NAME makes it re-decide itself EVERY pass \u2014 same number of hits, somewhere else each time.'],
+  ];
+  const laneModeOf = (L) => LANEMODE.get(L && (L.id | 0)) || 'hear';
+  const laneModeRec = (L) => LANE_MODES.find((m) => m[0] === laneModeOf(L)) || LANE_MODES[0];
+  const laneModeNext = (L) => {
+    const i = LANE_MODES.findIndex((m) => m[0] === laneModeOf(L));
+    return LANE_MODES[(i < 0 ? 0 : i + 1) % LANE_MODES.length][0];
+  };
+  // WHAT A LANE IS, drawn on its own name — in EVERY mode, not only while its
+  // mode is picked. This is the drum-solo rule the cell modes already follow: a
+  // muted hat that looks like every other hat is a setting you cannot see, and
+  // you would go looking for the bug in the audio. One writer, used by
+  // `lanesHtml` on a build and by the toggles on a press, so the two cannot
+  // draw different pictures.
+  function laneStateCls(L, li, anySolo) {
+    const f = V2.laneFxGet(L, li);
+    let c = '';
+    if (f.m) c += ' v2-lnmute';
+    if (f.s) c += ' v2-lnsolo';
+    if (f.r) c += ' v2-lnrnd';
+    if (anySolo && !f.s && !f.m) c += ' v2-lndim';
+    return c;
+  }
+  function laneStamp(card, L) {
+    const anySolo = V2.laneAnySolo(L);
+    const r = (L.part && L.part.rhythm) || {};
+    const st = Math.max(1, r.steps | 0);
+    card.querySelectorAll('.ambient-euclid-drumlbl[data-lane]').forEach((b) => {
+      const li = b.getAttribute('data-lane') | 0;
+      const f = V2.laneFxGet(L, li);
+      b.classList.remove('v2-lnmute', 'v2-lnsolo', 'v2-lnrnd', 'v2-lndim');
+      laneStateCls(L, li, anySolo).trim().split(/\s+/).filter(Boolean)
+        .forEach((k) => b.classList.add(k));
+      b.title = laneTitle(L, li);
+      // THE WHOLE ROW WEARS THE STATE, not just the name — the cells are what
+      // you are looking at while you work, so a muted lane whose cells still
+      // shout is a mute you cannot see.
+      const row = b.closest('.ambient-euclid-kitrow');
+      if (row) {   // one row per grid; `laneStamp` sweeps every label in the card
+        row.classList.toggle('v2-rowmute', f.m);
+        row.classList.toggle('v2-rowsolo', f.s);
+        row.classList.toggle('v2-rowrnd', f.r);
+        row.classList.toggle('v2-rowdim', anySolo && !f.s && !f.m);
+        // ⚅ off → the generated marks go with it, and the DRAWN row (still
+        // there all along) is what is lit again.
+        if (!f.r) row.querySelectorAll('.v2-lanecell.v2-lanegen').forEach((c) => c.classList.remove('v2-lanegen'));
+      }
+    });
+    // …and ⚅ on → paint the pass that is sounding NOW, rather than waiting for
+    // the next boundary (while stopped there is no next boundary at all — the
+    // documented invisible-while-stopped trap).
+    const wrap = card.querySelector('.v2-partsteps');
+    try { paintRndRows(card, L, st, (wrap && wrap._rndPass) | 0); } catch (e) {}
+  }
+  // …AND IT SAYS SO IN WORDS TOO, because a colour alone is not a state a
+  // screen reader or a hesitant user can read.
+  function laneTitle(L, li) {
+    const f = V2.laneFxGet(L, li);
+    const nm = V2.LANE_NAMES[li];
+    const bits = [];
+    if (f.m) bits.push('MUTED');
+    if (f.s) bits.push('SOLOED');
+    if (f.r) bits.push('re-rolled every pass');
+    else if (!V2.laneAudible(L, li)) bits.push('silent \u2014 another lane is soloed');
+    return nm + (bits.length ? ' \u2014 ' + bits.join(', ') : '') + ' \u2014 ' +
+      (laneModeOf(L) === 'hear' ? 'tap to hear it'
+       : laneModeOf(L) === 'edit' ? 'tap to edit this lane'
+       : 'tap to ' + laneModeOf(L) + ' this lane');
+  }
   // THE VALUES A TAP WALKS. Coarse on purpose — four chances and a handful of
   // musical intervals, because this is a 22px cell being tapped, not a number
   // being typed. Chance descends so the FIRST tap thins (which is what the
@@ -14280,11 +14912,31 @@
     // three has to look like that on the grid, or the setting is invisible the
     // moment you switch back to ■ Hit (the drum-solo rule).
     const cfx = (r.cellFx && typeof r.cellFx === 'object') ? r.cellFx : null;
+    const anySolo = V2.laneAnySolo(L);
     let h = '<div class="ambient-euclid-grid v2-lanes">';
     for (let li = 0; li < V2.LANES; li++) {
       const row = lanes[li] || [];
-      h += '<div class="ambient-euclid-row ambient-euclid-kitrow">' +
-'<span class="ambient-euclid-drumlbl" title="' + esc(V2.LANE_NAMES[li]) + '">' + esc(V2.LANE_NAMES[li]) + '</span>' +
+      // ⚅ A RND LANE DRAWS WHAT IT WILL PLAY, not what is stored under it. The
+      // drawn row is still there (it is the DENSITY the roll keeps, and it
+      // comes back the moment Rnd is off) — it is simply not what sounds this
+      // pass, so it must not be the thing lit. PASS 0 HERE, because markup has
+      // no clock: `stepsPlayhead` takes over on the first frame and repaints
+      // this at every pass boundary. Without that second writer this would be
+      // a frozen readout — the documented computed-face trap.
+      const lf0 = V2.laneFxGet(L, li);
+      const gen = lf0.r ? V2.rndRow(L, li, row, st, 0) : null;
+      h += '<div class="ambient-euclid-row ambient-euclid-kitrow' +
+        (lf0.m ? ' v2-rowmute' : '') + (lf0.s ? ' v2-rowsolo' : '') +
+        (lf0.r ? ' v2-rowrnd' : '') + (anySolo && !lf0.s && !lf0.m ? ' v2-rowdim' : '') + '">' +
+        // A LANE NAME IS A TRIGGER, not a caption — press it to hear that drum.
+        // v1's own grid has rendered this label as a `<button>` all along
+        // (17-ambient `_ambEuclidCellsHtml`), so this is the span catching up
+        // to its sibling: the shared `.ambient-euclid-drumlbl` rule already
+        // carries `background: transparent; border: none; cursor: pointer`,
+        // and no new chrome is invented for it.
+        '<button type="button" class="ambient-euclid-drumlbl v2-lanehit' + laneStateCls(L, li, anySolo) +
+          '" data-lane="' + li + '" title="' + esc(laneTitle(L, li)) + '">' +
+          esc(V2.LANE_NAMES[li]) + '</button>' +
         '<div class="ambient-slice-grid ambient-euclid-cells v2-lanecells" data-lane="' + li + '" style="--eucols:' + Math.min(st, 16) + '">' +
           Array.from({ length: st }, (_, i) => {
             const fx = cfx ? cfx[li + ':' + i] : null;
@@ -14298,7 +14950,8 @@
               (ch < 100 ? ', sounds ' + ch + '% of the time' : '') +
               (tu !== 0 ? ', tuned ' + (tu > 0 ? '+' : '') + tu : '');
             return '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-lanecell' +
-              (row[i] ? ' on' : '') + (row[i] && ch < 100 ? ' v2-cellmaybe' : '') +
+              (row[i] ? ' on' : '') + (gen && gen[i] ? ' v2-lanegen' : '') +
+              (row[i] && ch < 100 ? ' v2-cellmaybe' : '') +
               (row[i] && tu !== 0 ? ' v2-celltuned' : '') + '"' + sty +
               ' data-lane="' + li + '" data-ci="' + i + '" aria-pressed="' + (row[i] ? 'true' : 'false') +
               '" title="' + says + '">' +
@@ -15546,6 +16199,60 @@
                       ' is cut — the pattern scales with it, so twice the grid is twice the speed',
                     'kind:live;voice:synth;rhythm:euclid,drawn,chance;form:roll');
               })(L.part.rhythm || {}) +
+              // ── ⚄ THE ORDER OF ONSETS IS A MAIN KNOB (2026-09-25) ────
+              // user: "why are all rhythmic generate patterns the same? … the
+              // basic rhythmic pattern is opaque, the user needs to be able to
+              // edit and generate that".
+              // THE PICKER IS THE DOOR. Rhythm KIND lives under ⚠ Advanced:
+              // recipe, two folds down — so a feature that only appeared once
+              // you had switched kind there would have been unreachable in
+              // practice (this file's own rule: name the door, and prove it is
+              // on screen in the view the user has open). One select does both:
+              // choosing a figure SWITCHES the rhythm to it, and the first
+              // entry hands the layer back to the Euclid spread it had.
+              // It sits right under ⊞ Resolution because the two are the same
+              // question asked twice — Resolution says how finely the bar is
+              // cut, this says which of those steps are struck.
+              (function (rr2) {
+                const isFig = rr2.kind === 'fig';
+                const cur = isFig ? (rr2.fig || 'straight') : '';
+                return '<div class="ambient-ctrl v2-figrow"' +
+                  // `pulse` IS IN THIS LIST AND ⊞ Resolution's does not have it —
+                  // deliberately. A new layer is `pulse`, which is the most
+                  // even rhythm there is and exactly the one that "sounds the
+                  // same"; gating the cure on already having left the illness
+                  // would put this behind ⚠ Advanced for every fresh layer.
+                  ' data-v2when="kind:live;voice:synth;rhythm:pulse,euclid,drawn,chance,fig;form:roll">' +
+                  '<label>\u2684 Figure</label>' +
+                  '<span class="v2-figpickwrap">' +
+                    '<select class="ambient-select v2-figpick">' +
+                      '<option value=""' + (isFig ? '' : ' selected') + '>' +
+                        '\u2014 none (even spread)</option>' +
+                      V2.FIGURES.map((f) => '<option value="' + f[0] + '"' +
+                        (cur === f[0] ? ' selected' : '') + '>' + esc(f[1]) + '</option>').join('') +
+                    '</select>' +
+                    // 🎲 RE-ROLLS WHAT THE KNOBS DECIDE, not the figure: the
+                    // figure is the idea you chose and a dice that replaced it
+                    // would be a different control. It moves `figSeed`, which
+                    // is the only thing Grouping and Bar variation draw on.
+                    '<button type="button" class="ambient-seg v2-figroll"' +
+                      ' title="Roll the grouping and the bar-to-bar variation again \u2014 same figure, new placement"' +
+                      (isFig ? '' : ' disabled aria-disabled="true"') + '>\ud83c\udfb2</button>' +
+                  '</span>' +
+                  '<span class="ambient-hint">' + (isFig
+                    ? 'a named rhythm, stated in bar 1 \u2014 the knobs below push it about'
+                    : 'the notes spread as evenly as the count allows \u2014 pick a figure to shape where they land') +
+                  '</span></div>' +
+                  gsl(L, 'part.rhythm.figSync', 'Syncopation', num(rr2.figSync, 0), 0, 100,
+                      'how often an onset ON a beat is pushed off it',
+                      'kind:live;voice:synth;rhythm:fig;form:roll') +
+                  gsl(L, 'part.rhythm.figGrp', 'Grouping', num(rr2.figGrp, 0), 0, 100,
+                      'even \u2192 clustered \u2014 where 3+3+2 and every gallop live',
+                      'kind:live;voice:synth;rhythm:fig;form:roll') +
+                  gsl(L, 'part.rhythm.figVar', 'Bar variation', num(rr2.figVar, 0), 0, 100,
+                      'how much later bars differ \u2014 bar 1 is always the figure as named',
+                      'kind:live;voice:synth;rhythm:fig;form:roll');
+              })(L.part.rhythm || {}) +
               // ── NOTE LENGTH IS A MAIN KNOB (2026-09-23) ──────────────
               // user: "Where is note length setting in generate menu? It should
               // be a primary value and highlighted".
@@ -15620,9 +16327,24 @@
                   ((L.part.shape || {}).lenTurn | 0), 0, 15,
                   'onsets \u2014 start the figure later in the bar',
                   'kind:live;rhythm:pulse,euclid,drawn,chance;shape:on') +
-              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 5, 100,
-                  '% of the slot each note sounds \u2014 short is stabbed, 100 is legato',
-                  'kind:live;rhythm:pulse,euclid,drawn,chance;shape:off')
+              // ── ONE FIELD, ONE RANGE (2026-09-25, user: "why are there 4
+              // instances of the same param? can we just reduce to 1") ──
+              // `shape.lenRatio` had FOUR controls over a store clamped to
+              // [1,400], offering 5–100, 5–200, 1–400 and 5–100 — so a part set
+              // to 300 READ BACK as 100 on three of them and was silently
+              // rewritten the moment one was touched (measured: stored 300 →
+              // shown 100/200/300/100). A range narrower than the store is not
+              // a curated range, it is a control that destroys what another set.
+              // TWO OF THE FOUR ARE GONE: the Groundwork copy (this row covers
+              // `ground` too now, and `lenHint` names the unit) and the loose
+              // untabbed one beside Ring out. The two that remain are one per
+              // SHEET — this, and Tweaks ▸ Size beside Hold, its ALTERNATIVE and
+              // the whole reason that copy exists (2026-09-18: "the two
+              // alternatives to one question were on different sheets").
+              // Gates mirrored verbatim.
+              gsl(L, 'part.shape.lenRatio', 'Note length', (L.part.shape || {}).lenRatio, 1, 400,
+                  lenHint(L),
+                  'kind:live;rhythm:pulse,euclid,drawn,chance,ground;shape:off')
                 .replace('class="ambient-ctrl', 'class="ambient-ctrl v2-primary') +
               gsl(L, 'lenVary', 'Length vary', num(L.lenVary, 0), 0, 100,
                   '% scatter on that length \u2014 0 is machine-even',
@@ -15758,8 +16480,7 @@
               // two fields is the documented two-vocabularies failure, and it
               // is what made someone ask what Hold does. LABEL-ONLY: the data
               // key is untouched.
-              gsl(L, 'part.shape.lenRatio', 'Length', (L.part.shape || {}).lenRatio, 5, 200,
-                  '% of the change each note fills', 'kind:live;rhythm:ground', '-gw') +
+
               gsel(L, 'part.rhythm.strike', 'Strike', (L.part.rhythm || {}).strike || '',
                    [['', 'Once per change'], ['half', 'Every half bar'], ['bar', 'Every bar'],
                     ['comp', 'Comp \u2014 the 1 and the & of 2']], '', 'kind:live;rhythm:ground') +
@@ -15837,7 +16558,14 @@
               '<div class="v2-gzbody" data-gz="3">' +
               '<div class="v2-fttabs" data-v2when="kind:live" role="tablist">' +
                 [['rhythm', 'Rhythm'], ['notes', 'Notes'], ['form', 'Repeats'],
-                 ['accomp', '♪ Lines'], ['take', '🎲 Take']].map(([k, lab]) =>
+                 // ⇶ ARRANGE, NOT "Lines" (2026-09-25, user: "this Lines tab
+                 // doesn't seem named right since it also has Chords"). The tab
+                 // holds the Chords/Line switch and the per-change settings for
+                 // BOTH, so naming it after one of the two said the other was
+                 // somewhere else. LABEL-ONLY — `accomp` is the data key and
+                 // stays, and every surface that names this tab uses the new
+                 // word (the one-vocabulary rule).
+                 ['accomp', '⇶ Arrange'], ['take', '🎲 Take']].map(([k, lab]) =>
                   '<button type="button" class="ambient-seg v2-fttab" role="tab" data-ft="' + k + '">' +
                     '<span class="v2-ftlab">' + lab + '<i class="v2-ftdot" hidden>●</i></span>' +
                     '<small class="v2-ftn"></small></button>').join('') +
@@ -15866,8 +16594,39 @@
               // be a primary value and highlighted"). It was the single loudest
               // thing about a generated line sitting behind a Fine-tune tab.
 
-              gsl(L, 'part.shape.slip', 'Slip', ((L.part.shape || {}).slip | 0), 0, 100,
-                  'nudge each note late by a random hair — a strum', 'kind:live;rhythm:ground') +
+              // SLIP AND STRUM ARE ONE QUESTION WITH TWO ANSWERS, so they sit
+              // together and share a gate. Slip's said `rhythm:ground` while the
+              // emitter applies it to ANY onset carrying more than one note —
+              // a control narrower than its own effect, which is the mirror of
+              // the dead-control shape this panel keeps weeding out. Both now
+              // name the condition the emitter actually tests (`ms.length > 1`,
+              // i.e. a pitch rule that stacks), and the gates are MIRRORED
+              // VERBATIM — the rule ⚙ Deep's Note length copy already states:
+              // one field with two controls and two different gates is how the
+              // two come to disagree about whether the knob applies at all.
+              // ── SPREAD — ONE AMOUNT, ONE ORDER ────────────────────
+              // Was Strum + Slip: two amounts for one question, where any
+              // Strum silently switched Slip off. One amount cannot do that.
+              (function () {
+                const sp0 = V2.spreadGet(L);
+                return '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed">' +
+                    '<label>Spread</label>' +
+                    '<input type="range" class="ambient-sl v2-spread" min="0" max="100" step="1"' +
+                      ' value="' + sp0.amt + '" aria-label="Spread">' +
+                    '<span class="ambient-sl-v v2-spread-v">' + sp0.amt + '</span>' +
+                    '<span class="ambient-hint">how far apart the notes of one chord land \u2014 ' +
+                      '0 strikes them together</span></div>' +
+                  '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed">' +
+                    '<label>Spread order</label>' +
+                    '<select class="ambient-select v2-spreadmode">' +
+                      V2.SPREAD_MODES.map(function (m) {
+                        return '<option value="' + m[0] + '"' +
+                          (sp0.mode === m[0] ? ' selected' : '') + '>' + esc(m[1]) + '</option>';
+                      }).join('') +
+                    '</select><span class="ambient-hint">which note is struck first' +
+                      (sp0.mode === 'wander' ? ' \u2014 \u273a Every pass \u25b8 Spread wander sets how much' : '') +
+                    '</span></div>';
+              })() +
               // ARRIVE SAYS WHAT IT DOES (2026-09-21, user: "why are chords
               // different lengths"). Its hint was EMPTY. It described a trade
               // of an 8th between neighbours until the day after, when the
@@ -15978,8 +16737,19 @@
                   'per chord', 'kind:live;voice:synth;pitch:chord') +
               gst(L, 'part.pitch.phraseLen', 'Phrase', num((L.part.pitch || {}).phraseLen, 4), 1, 16,
                   'chords', 'kind:live;voice:synth;pitch:chord') +
-              gst(L, 'part.pitch.repeats', 'Repeats', num((L.part.pitch || {}).repeats, 4), 1, 16,
-                  'times', 'kind:live;voice:synth;pitch:chord')) +
+              // ── "HOLD FOR", NOT "REPEATS" (2026-09-25) ──────────────
+              // `Repeat` (a note repeating, `pitch.stutter`) and `Repeats` (a
+              // voicing kept for N cycles) were one letter apart and meant
+              // different things. They never share a screen — walk/mixed vs
+              // chord are mutually exclusive — so this is not a gate bug; it is
+              // two words you cannot tell apart anywhere ELSE: in a search, in
+              // a note to yourself, in this file. "Hold for 4" says what the
+              // number does. LABEL-ONLY: `part.pitch.repeats` is the data key
+              // and stays. (The two `Repeats` in FX — delay taps and pitch echo
+              // — keep the word: there it is the standard term and nothing in
+              // that sheet competes for it.)
+              gst(L, 'part.pitch.repeats', 'Hold for', num((L.part.pitch || {}).repeats, 4), 1, 16,
+                  'cycles before a fresh voicing', 'kind:live;voice:synth;pitch:chord')) +
               // ── ♪ LINES — THE ACCOMPANIMENT (2026-09-21) ──────────────
               // user: "these Lines needs to be promoted to first class items in
               // the model … they don't feel right in Repeats, they seem hidden
@@ -16077,8 +16847,22 @@
                 // counterpart, and the two add.
                 gsl(L, 'pitchVary', 'Pitch vary', num(L.pitchVary, 0), 0, 12,
                     '± semitones per hit — tuned drums wander', 'kind:live;voice:kit') +
+                // TWO ROWS CALLED "Vary" COULD BOTH APPEAR. The kit one
+                // (`rhythm.beat.vary`) is gated `voice:kit`; this one was gated
+                // `rhythm:euclid,drawn` with NO voice clause, and those two
+                // clause sets do not conflict — so a kit layer whose rhythm is
+                // `drawn`, which is simply what happens when you draw on a kit
+                // grid, satisfied both and showed the word twice for two
+                // different mechanisms.
+                // THE VOICE CLAUSE IS ALSO THE TRUTH: a kit layer never reaches
+                // this field. `notesFor`'s kit branch varies through
+                // `rhythm.beat.vary` (`dvary`), and `onsetsOf`'s `perturb` —
+                // the only reader of `rhythm.vary` — is on the single-row path.
+                // So this was a dead control on a kit as well as a duplicate
+                // name, and one clause closes both.
                 gsl(L, 'part.rhythm.vary', 'Vary', num((L.part.rhythm || {}).vary, 0), 0, 100,
-                    'hits dropped or added off the pattern', 'kind:live;rhythm:euclid,drawn') +
+                    'hits dropped or added off the pattern',
+                    'kind:live;voice:synth;rhythm:euclid,drawn') +
                 gsl(L, 'part.rhythm.rateVar', 'Rate var', num((L.part.rhythm || {}).rateVar, 0), 0, 100,
                     'steady → rushes', 'kind:live;voice:synth') +
                 gsl(L, 'phrasing', 'Phrasing', num(L.phrasing, 0), 0, 100, 'even \u2192 shaped figures', 'kind:live;voice:synth'))) +
@@ -16315,7 +17099,6 @@
               sl(L, 'portamento', 'Glide', num(L.portamento, 0), 0, 2000, 'ms between notes') +
               sl(L, 'voiceTrim', 'Voice trim', num(L.voiceTrim, 0), -24, 12, 'dB — tame a hot voice'))) +
 
-          sl(L, 'part.shape.lenRatio', 'Length', sh.lenRatio, 1, 400, '% of the onset span', 'kind:live') +
           '<div data-v2tab="Length" class="ambient-ctrl"><label>Ring out</label>' +
             '<button type="button" class="ambient-seg v2-ringtoggle' + (L.ring ? ' on' : '') + '">' +
               (L.ring ? 'On \u2014 through the changes' : 'Off \u2014 released by the next change') + '</button>' +
@@ -16804,12 +17587,39 @@
           // for. GATE MIRRORED FROM DEEP'S COPY, verbatim: one field with two
           // controls and two different gates is how the two come to disagree
           // about whether the knob applies at all.
-            sl(L, 'part.shape.lenRatio', 'Note length', num(sh.lenRatio, 100), 5, 100,
-               lenHint(L), 'kind:live;rhythm:pulse,euclid,drawn,chance;size:length')) +
+            sl(L, 'part.shape.lenRatio', 'Note length', num(sh.lenRatio, 100), 1, 400,
+               lenHint(L),
+               'kind:live;rhythm:pulse,euclid,drawn,chance,ground;shape:off;size:length')) +
 
           // Only means something where an onset carries MORE THAN ONE note.
-          sl(L, 'strum', 'Strum', num(L.strum, 0), 0, 100, 'struck → arpeggiated',
-             'kind:live;voice:synth;pitch:chord,stack') +
+          // THE SAME PAIR AS ⚙ Deep's, built from the same table and the same
+          // getter — one field with two controls and two different pictures is
+          // how they come to disagree about what is even set.
+          // ── ONE TAB, NOT TWO. In this sheet an UNTAGGED row becomes a tab of
+          // its OWN, named after its label (`popTabName` falls back to the
+          // label text) — so the amount and its picker landed as two separate
+          // chips, "Spread" and "Spread order", and the picker could not be
+          // seen beside the thing it configures. `tb()` stamps both rows with
+          // one tab name, which is what every other pair in this sheet does.
+          // (The old loose `Strum` row had the same shape and got away with it
+          // because it was a single row — a pair cannot.)
+          tb('Spread', (function () {
+            const sp1 = V2.spreadGet(L);
+            return '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed">' +
+                '<label>Spread</label>' +
+                '<input type="range" class="ambient-sl v2-spread" min="0" max="100" step="1"' +
+                  ' value="' + sp1.amt + '" aria-label="Spread">' +
+                '<span class="ambient-sl-v v2-spread-v">' + sp1.amt + '</span>' +
+                '<span class="ambient-hint">how far apart the notes of one chord land</span></div>' +
+              '<div class="ambient-ctrl" data-v2when="kind:live;voice:synth;pitch:chord,stack,mixed">' +
+                '<label>Spread order</label>' +
+                '<select class="ambient-select v2-spreadmode">' +
+                  V2.SPREAD_MODES.map(function (m) {
+                    return '<option value="' + m[0] + '"' +
+                      (sp1.mode === m[0] ? ' selected' : '') + '>' + esc(m[1]) + '</option>';
+                  }).join('') +
+                '</select><span class="ambient-hint">which note is struck first</span></div>';
+          })()) +
           // (Strum order, Slide and Ornament moved to ✺ Playing — they draw per PASS.)
           // (Phrasing, Start and Twist moved to ⚙ Deep — seeded on the take.)
           // (Wobble moved to ✺ Playing — it is seeded on the note's play time.)
@@ -16911,8 +17721,16 @@
             // one differs pass to pass, so every one lives here — and
             // `liveness()` counts them, so the badge cannot say FIXED over them.
             sl(L, 'accent', 'Accent', num(L.accent, 0), 0, 100, 'flat → dynamic — a new pattern each pass') +
-            sl(L, 'strumFidelity', 'Strum order', num(L.strumFidelity, 0), 0, 100, 'low→high → wandering, each pass',
-               'kind:live;voice:synth;pitch:chord,stack') +
+            // ONE VOCABULARY: Strum is called Spread everywhere now, so this is
+            // Spread wander — the fine amount behind the picker's "Wandering".
+            sl(L, 'strumFidelity', 'Spread wander', num(L.strumFidelity, 0), 0, 100,
+               'how much the order shuffles — only heard on Spread order: Wandering',
+               // GATE MIRRORED WITH STRUM AND SLIP, verbatim — it had drifted to
+            // `chord,stack` while they carry `chord,stack,mixed`, so a MIXED
+            // layer offered the amount with its order control missing. A
+            // control whose partner is gated differently is the documented way
+            // the two come to disagree about whether the knob applies at all.
+            'kind:live;voice:synth;pitch:chord,stack,mixed') +
             sl(L, 'slide', 'Slide', num(L.slide, 0), 0, 100, 'glide across a leap', 'kind:live;voice:synth') +
             sl(L, 'ornament', 'Ornament', num(L.ornament, 0), 0, 100, 'grace-note flicks', 'kind:live;voice:synth') +
             sl(L, 'motion', 'Wobble', num(L.motion, 0), 0, 100, 'detune wobble', 'kind:live;voice:synth') +
@@ -19486,6 +20304,129 @@
     const cur = (m[String(i)] && typeof m[String(i)] === 'object') ? m[String(i)] : (m[String(i)] = {});
     if (Number.isFinite(v) && v > 0) cur.deg = clamp(v, 1, 24); else delete cur.deg;
   }
+  // ── THE LANE EDITOR ─────────────────────────────────────────────────────
+  // (2026-09-25, user: "add option for Edit, which should open a popover for
+  // editing that lane (tone modification and stochastic/probability
+  // adjustments including pitch shift)".)
+  // THE SAME CHROME AS THE STEP POPOVER, deliberately: `.v2-steppop-wrap` and
+  // its scrim, head, rows and close are already built, already styled and
+  // already dismissed by the delegated handler below. A lane editor with its
+  // own panel would be a second dialog idiom on one card — the bolted-on
+  // control this file keeps warning about.
+  // WHAT IT EDITS, and where each half lives:
+  //   · SOUND  → `L.synthKit.voices[lane]`, v1's own per-voice recipe, which
+  //     the v2 emitter has been playing all along (`_ambPlaySynthDrum` reads
+  //     it) with NO surface to edit it. The store is not new; the door is.
+  //   · CHANCE and PITCH → `rhythm.laneFx[lane]`, this change's own store.
+  // A SAMPLE KIT HAS NO RECIPE TO EDIT — its sound is the sample — so the Sound
+  // rows are not drawn at all there and the panel says why. A row that cannot
+  // do anything is worse than a row that is absent: it reads as broken.
+  const LANEPOP = new Map();       // card pop id -> lane index
+  function lanePopClose(card) {
+    const w = card && card.querySelector('.v2-lanepop-wrap');
+    if (w) w.remove();
+    LANEPOP.delete(popIdOf(card));
+  }
+  // ONE ROW BUILDER, the stepper markup `stepRow` already uses — so the ±
+  // buttons are driven by the same document-level delegation and there is no
+  // second copy of that rule.
+  const laneRow = (lab, cls, val, lo, hi, hint) =>
+    '<div class="ambient-ctrl ambient-ctrl-step"><label>' + esc(lab) + '</label>' +
+      '<span class="ambient-stepper">' +
+        '<button type="button" class="ambient-step-btn ambient-step-dn" tabindex="-1" aria-label="Lower">\u2212</button>' +
+        '<input type="text" readonly inputmode="none" class="ambient-step-inp ' + cls + '" ' +
+          'min="' + lo + '" max="' + hi + '" step="1" data-sv="' + val + '" ' +
+          'value="' + esc(laneFace(cls, val)) + '" aria-label="' + esc(lab) + '">' +
+        '<button type="button" class="ambient-step-btn ambient-step-up" tabindex="-1" aria-label="Raise">+</button>' +
+      '</span><span class="ambient-hint">' + esc(hint) + '</span></div>';
+  // A RANGE YOU DRAG, for everything with more than a handful of values.
+  // Decay is 20\u20132000 ms and Tune 20\u20134000 Hz \u2014 a \u00b11 stepper there is
+  // thousands of presses, and v1's own synth-kit editor has always used
+  // sliders for these six. Same control, same parameters, same feel.
+  const laneSl = (lab, cls, val, lo, hi, unit, hint) =>
+    '<div class="ambient-ctrl"><label>' + esc(lab) + '</label>' +
+      '<input type="range" class="ambient-sl ' + cls + '" min="' + lo + '" max="' + hi +
+        '" step="1" value="' + (val | 0) + '" aria-label="' + esc(lab) + '">' +
+      '<span class="ambient-sl-v ' + cls + '-v">' + (val | 0) + esc(unit) + '</span>' +
+      (hint ? '<span class="ambient-hint">' + esc(hint) + '</span>' : '') +
+    '</div>';
+  // A NUMBER WEARS ITS UNIT. "0" on a tune row and "0" on a chance row mean
+  // opposite things (unchanged / never), so neither is shown bare.
+  function laneFace(cls, v) {
+    if (cls === 'v2-lfc') return (v | 0) + '%';
+    if (cls === 'v2-lft') return (v > 0 ? '+' : '') + (v | 0);
+    return String(v);
+  }
+  // …and the panel SAYS what the lane will do, in one line, in the card's words.
+  function laneSays(L, li, fx) {
+    const nm = V2.LANE_NAMES[li];
+    const bits = [];
+    bits.push(fx.c >= 100 ? 'plays every hit you draw'
+      : (fx.c <= 0 ? 'never sounds' : 'sounds ' + fx.c + '% of the time'));
+    if (fx.t) bits.push('tuned ' + (fx.t > 0 ? '+' : '') + fx.t + ' semitone' + (Math.abs(fx.t) === 1 ? '' : 's'));
+    return nm + ' \u2014 ' + bits.join(', ') + '.';
+  }
+  function lanePopOpen(card, L, li) {
+    lanePopClose(card);
+    const lane = Math.max(0, Math.min(V2.LANES - 1, li | 0));
+    const fx = V2.laneFxGet(L, lane);
+    const synth = (L.instrument || {}).kit === 'synth';
+    const rec = synth ? V2.laneVoice(L, lane) : null;
+    const BODIES = (typeof _AMB_SYNTH_BODIES !== 'undefined' && Array.isArray(_AMB_SYNTH_BODIES))
+      ? _AMB_SYNTH_BODIES : ['kick', 'metal', 'sine', 'triangle', 'noise:white'];
+    const w = document.createElement('div');
+    w.className = 'v2-lanepop-wrap v2-steppop-wrap';
+    w.innerHTML =
+      '<div class="v2-stepscrim v2-lanescrim"></div>' +
+      '<div class="v2-steppop v2-lanepop" role="dialog" aria-label="' + esc(V2.LANE_NAMES[lane]) + ' lane">' +
+        '<div class="v2-stephead">' +
+          '<span class="v2-steptitle">' + esc(V2.LANE_NAMES[lane]) + '</span>' +
+          '<button type="button" class="v2-stepclose v2-laneclose" aria-label="Close" title="Close">\u2715</button>' +
+          '<span class="ambient-hint v2-lanesays">' + esc(laneSays(L, lane, fx)) + '</span>' +
+        '</div>' +
+        '<div class="v2-steprows">' +
+          // HEARING IT IS STILL ONE PRESS. In ✎ Edit the label opens this, so
+          // without a \u25b8 here the audition would be two mode switches away —
+          // and you tune a drum by ear, with the sound in front of you.
+          '<div class="v2-stepacts v2-laneacts">' +
+            '<button type="button" class="ambient-seg v2-lanehear" data-lane="' + lane + '" ' +
+              'title="Play this drum once, as it is set now">\u25b8 Hear it</button>' +
+          '</div>' +
+          laneSl('Chance', 'v2-lfc', fx.c, 0, 100, '%',
+            'how often a hit in this lane actually sounds \u2014 100% is every one. ' +
+            'It MULTIPLIES a cell\u2019s own chance rather than replacing it') +
+          laneRow('Pitch', 'v2-lft', fx.t, -24, 24,
+            'move the whole lane in semitones \u2014 the door for a tuned tom. ' +
+            'A cell\u2019s own \u266a Tune adds to this') +
+          (synth && rec
+            ? '<div class="ambient-hint v2-lanegrp">Sound</div>' +
+              '<div class="ambient-ctrl"><label>Body</label>' +
+                '<select class="ambient-select v2-lfbody">' +
+                  BODIES.map((b) => '<option value="' + esc(b) + '"' + (rec.body === b ? ' selected' : '') +
+                    '>' + esc(b) + '</option>').join('') +
+                '</select><span class="ambient-hint">what the tone is made of</span></div>' +
+              laneSl('Tune', 'v2-lvtune', rec.tune | 0, 20, 4000, ' Hz', 'the body\u2019s pitch') +
+              laneSl('Decay', 'v2-lvdecay', rec.decay | 0, 20, 2000, ' ms', 'how long it rings') +
+              laneSl('Drop', 'v2-lvdrop', rec.drop | 0, 0, 24, ' st', 'how far the pitch falls as it hits') +
+              laneSl('Snap', 'v2-lvsnap', rec.snap | 0, 0, 100, '%', 'the attack transient') +
+              laneSl('Noise', 'v2-lvnoise', rec.noise | 0, 0, 100, '%', 'how much of it is noise rather than tone') +
+              laneSl('Bright', 'v2-lvbright', rec.bright | 0, 200, 18000, ' Hz', 'the noise filter')
+            : '<div class="ambient-hint v2-lanegrp">Sound</div>' +
+              '<div class="ambient-hint">This lane plays a SAMPLE, so its tone is the recording ' +
+              'itself \u2014 there is no recipe to shape. Chance and Pitch above still apply. ' +
+              'Switch the layer\u2019s kit to the generated one to shape each drum.</div>') +
+        '</div>' +
+      '</div>';
+    card.appendChild(w);
+    // the backdrop-filter containing-block correction, as every fixed overlay
+    // on this card needs (a desktop measurement alone cannot prove it)
+    try {
+      const r = w.getBoundingClientRect();
+      if (Math.abs(r.left) > 0.5 || Math.abs(r.top) > 0.5)
+        w.style.transform = 'translate(' + (-r.left) + 'px,' + (-r.top) + 'px)';
+    } catch (e) {}
+    LANEPOP.set(popIdOf(card), lane);
+  }
   function stepPopOpen(card, L, i) {
     stepPopClose(card);
     const pt = L.part.pitch || (L.part.pitch = {});
@@ -19847,7 +20788,21 @@
     // (Shape's `Every pass` is ✺ Playing's), so one control has one door
     const excl = (POP && SEC_EXCL[POP.grp]) ? new Set(SEC_EXCL[POP.grp]) : null;
     const visTabs = tabs.filter(t => t.vis && (!allow || allow.has(t.name)) && (!excl || !excl.has(t.name)));
-    const act = visTabs.find(t => t.name === POP.tab) || visTabs[0] || null;
+    // FX OPENS ON AN EFFECT, NEVER ON THE WIRING (2026-09-25, user: "Chain in
+    // FX should be unselected by default"). `Chain` is first in the FX tab
+    // list, so the `visTabs[0]` fallback landed the sheet on it — and because
+    // Chain sits BESIDE the dropdown rather than inside it, the select was
+    // already reading "Delay" at the same time: two controls each claiming to
+    // be the current view. Chain is a view of how the stages are WIRED, not a
+    // stage; it is somewhere you go, never where you land — one press away, and
+    // it keeps the pane while the sheet stays open. It is only the DEFAULT that
+    // changes: a `POP.tab` already set still wins, and no tab choice survives a
+    // close here (measured — the sheet reopens on the default whichever tab you
+    // left it on, which is how every group already behaved).
+    const dflt = (POP.grp === 'FX')
+      ? (visTabs.find(t => t.name !== 'Chain') || visTabs[0])
+      : visTabs[0];
+    const act = visTabs.find(t => t.name === POP.tab) || dflt || null;
     POP.tab = act ? act.name : null;
     // TWO-LEVEL STRIP ("the scrollable section is way too small — condense
     // the families into tabs"): a FAMILY BAR of four chips, and only the
@@ -20122,11 +21077,30 @@
   V2.cascadeBars = cascadeBarsFn;
   V2.cascadeAsk = cascadeModalFn;
   V2.render = function (E) {
-    _cardE = E;
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
     const list = V2.layers(cfg);
     const h = host(E); if (!h) return;
-    if (!list.length) { h.innerHTML = ''; h._sig = ''; POPS.clear(); OVLS.clear(); return; }
+    // ONE HOST, MANY ENGINES. `#bloom-v2-layers` is a SINGLETON — `host()`
+    // hands the same element to master, lane, shape and the bounce previews
+    // alike — so the last engine to render wins the screen. An engine with no
+    // v2 layers fell into the `!list.length` branch below and BLANKED the
+    // cards another engine had drawn there: `setBpm` syncs master then lane
+    // (03-audio-bus-fx `_ambSyncLayerUnits(_masterEng); _ambSyncLayerUnits(_laneEng)`),
+    // the lane has no v2 layers, and one tempo change wiped every layer card
+    // off the master panel. Nothing touched the config, so it kept PLAYING —
+    // the tell that this is a render bug, not a data one.
+    // The host belongs to the engine that filled it. An empty host is unowned
+    // and anyone may claim it, so this self-heals rather than latching.
+    const owner = h.getAttribute('data-v2eng') || '';
+    const mine  = (E && E.hostId) || '';
+    if (owner && owner !== mine && h.querySelector('.v2-layer')) return;
+    // …and only NOW is this the engine whose cards are on screen. `_cardE` is
+    // what every card handler reads its cfg through (`_engOf` / `_cfgOf`), so
+    // setting it from an engine that renders nothing pointed the master's own
+    // controls at the lane's config.
+    _cardE = E;
+    if (!list.length) { h.innerHTML = ''; h._sig = ''; h.removeAttribute('data-v2eng'); POPS.clear(); OVLS.clear(); return; }
+    h.setAttribute('data-v2eng', mine);
     // STRUCTURE SIGNATURE — an innerHTML rewrite destroys the control under the
     // finger, which kills a slider drag after one pixel (the documented trap; it
     // cost a round on the Groove Humanize fader). Only rebuild when the set of
@@ -20361,6 +21335,22 @@
         try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}   // re-anchor on the next tick
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
+      // A `<select>` DOES NOT RELIABLY FIRE `input` EVERYWHERE. `fxPick` — the
+      // only other select on this card driven by delegation — has been bound to
+      // BOTH events all along, and the two selects added since (⇢ Spread order,
+      // ⚄ Figure) were bound to `input` only. Reported as "Spread order still
+      // buggy… Random doesn't work at all", which is what a select whose
+      // handler never runs looks like. Both arms are idempotent, so answering
+      // the second event costs nothing.
+      // The arms live in the `input` handler below, so a `change` on one of
+      // these two selects is FORWARDED to it rather than copied — one
+      // implementation, and both arms are idempotent so the forward costs
+      // nothing when `input` did fire as well.
+      h.addEventListener('change', (ev) => {
+        const t0 = ev.target;
+        if (!t0 || !t0.closest || !t0.closest('.v2-spreadmode, .v2-figpick')) return;
+        t0.dispatchEvent(new Event('input', { bubbles: true }));
+      });
       h.addEventListener('input', (ev) => {
         // A DICE MACRO writes the three fields it stands for, live under the
         // finger: the row is updated in place (never a re-render — that
@@ -20493,6 +21483,119 @@
         // WHAT THIS STEP PLAYS. Delegated for the same reason, and it REPAINTS
         // ITS OWN READOUT rather than rebuilding — rewriting the markup on every
         // press destroys the control under the finger (documented).
+        // THE LANE EDITOR'S ROWS. Delegated here for the reason every other
+        // control on this card is — `V2.render` rebuilds the card and a
+        // listener bound at build time dies with it. Each row REPAINTS ITS OWN
+        // FACE rather than rebuilding the panel: rewriting the markup on every
+        // press destroys the control under the finger (documented), and these
+        // are steppers you hold down.
+        const lfe = ev.target.closest && ev.target.closest('.v2-lfc, .v2-lft');
+        if (lfe) {
+          const ctx = layerOf(lfe); if (!ctx) return;
+          const li6 = LANEPOP.get(popIdOf(ctx.card)); if (!(li6 >= 0)) return;
+          const isC = lfe.classList.contains('v2-lfc');
+          // A SLIDER STATES ITS VALUE IN `value`; the stepper carries it in
+          // `data-sv` and shows a FACE ("+2", "97%") that would not parse.
+          const v = isC ? parseInt(lfe.value, 10)
+                        : parseInt(lfe.getAttribute('data-sv') || lfe.value, 10);
+          const out = V2.laneFxSet(ctx.L, li6, isC ? { c: v } : { t: v });
+          // a face repainted without its number is the subtle failure — it reads
+          // right and steps from a stale value
+          try {
+            if (isC) { const rv = ctx.card.querySelector('.v2-lfc-v'); if (rv) rv.textContent = out.c + '%'; }
+            else lfe.value = laneFace('v2-lft', out.t);
+          } catch (e) {}
+          commit(ctx);
+          try {
+            const says = ctx.card.querySelector('.v2-lanesays');
+            if (says) says.textContent = laneSays(ctx.L, li6, out);
+          } catch (e) {}
+          return;
+        }
+        // …AND THE VOICE RECIPE. `_ambPlaySynthDrum` reads these off
+        // `L.synthKit.voices[lane]` on the next hit, so nothing needs to be
+        // re-scheduled — the change is heard on the following note.
+        const lve = ev.target.closest && ev.target.closest(
+          '.v2-lvtune, .v2-lvdecay, .v2-lvdrop, .v2-lvsnap, .v2-lvnoise, .v2-lvbright, .v2-lfbody');
+        if (lve) {
+          const ctx = layerOf(lve); if (!ctx) return;
+          const li7 = LANEPOP.get(popIdOf(ctx.card)); if (!(li7 >= 0)) return;
+          const rec = V2.laneVoice(ctx.L, li7); if (!rec) return;
+          if (lve.classList.contains('v2-lfbody')) {
+            rec.body = String(lve.value || 'sine');
+          } else {
+            const k = ['tune', 'decay', 'drop', 'snap', 'noise', 'bright']
+              .find((x) => lve.classList.contains('v2-lv' + x));
+            if (!k) return;
+            const v = parseInt(lve.value, 10);
+            if (!Number.isFinite(v)) return;
+            rec[k] = v;
+            // the readout beside the slider, in the unit the row was built with
+            const U = { tune: ' Hz', decay: ' ms', drop: ' st', snap: '%', noise: '%', bright: ' Hz' };
+            try { const rv = ctx.card.querySelector('.v2-lv' + k + '-v'); if (rv) rv.textContent = v + U[k]; } catch (e) {}
+          }
+          commit(ctx);
+          return;
+        }
+        // ⇢ SPREAD — the amount, live under the finger. It writes to whichever
+        // of the three fields the current mode owns, so there is never a second
+        // amount sitting behind this one waiting to outrank it. Repaints its
+        // own readout rather than rebuilding: this is a slider being dragged,
+        // and a rewrite would replace the control mid-gesture (documented).
+        const spA = ev.target.closest && ev.target.closest('.v2-spread');
+        if (spA) {
+          const ctx = layerOf(spA); if (!ctx) return;
+          const out = V2.spreadSet(ctx.L, { amt: parseInt(spA.value, 10) });
+          try {
+            ctx.card.querySelectorAll('.v2-spread-v').forEach((e2) => { e2.textContent = String(out.amt); });
+            ctx.card.querySelectorAll('.v2-spread').forEach((e2) => { if (e2 !== spA) e2.value = String(out.amt); });
+          } catch (e) {}
+          commit(ctx);
+          return;
+        }
+        // …and the ORDER. A mode change MOVES the amount between fields, so the
+        // card is rebuilt: the hint under the picker changes with it, and the
+        // ✺ Every pass fine control appears or stops mattering.
+        const spM = ev.target.closest && ev.target.closest('.v2-spreadmode');
+        if (spM) {
+          const ctx = layerOf(spM); if (!ctx) return;
+          // ALREADY THERE IS NOTHING TO DO. This arm answers BOTH `input` and
+          // `change` (see the binding below), so it has to be idempotent —
+          // `fxPick`, the file's other select, carries the same guard for the
+          // same reason.
+          if (V2.spreadGet(ctx.L).mode === String(spM.value || '')) return;
+          V2.spreadSet(ctx.L, { mode: String(spM.value || 'up') });
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
+        // ⚄ THE FIGURE PICKER IS ALSO THE RHYTHM SWITCH. One control, two
+        // fields — choosing a figure moves the layer onto the `fig` rhythm and
+        // the empty entry hands it back to `euclid`. Rebuilds the card because
+        // three sliders and the 🎲 appear and disappear with it.
+        const fp = ev.target.closest && ev.target.closest('.v2-figpick');
+        if (fp) {
+          const ctx = layerOf(fp); if (!ctx) return;
+          const r3 = ctx.L.part.rhythm || (ctx.L.part.rhythm = {});
+          const v = String(fp.value || '');
+          // idempotent for the same reason as ⇢ Spread order above
+          if ((r3.kind === 'fig' ? (r3.fig || '') : '') === v) return;
+          if (v) {
+            r3.kind = 'fig'; r3.fig = v;
+            // A FIGURE MUST NOT OPEN ON A GRID THAT CANNOT HOLD IT. The
+            // figures are written on a 16-step bar; at ⊞ 4 a tresillo rounds
+            // its six onsets onto four cells and reads as straight quarters —
+            // the shape you picked it FOR is the thing that disappears. So a
+            // grid below 16 is lifted to it on the way in, once, and left alone
+            // after (you can still choose any resolution deliberately). A new
+            // layer is on 8, so without this the very first figure anyone picks
+            // is the one that does not survive the scaling.
+            if ((r3.steps | 0) < 16) r3.steps = 16;
+          } else if (r3.kind === 'fig') {
+            r3.kind = 'euclid'; delete r3.fig;
+          }
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
         const sfe = ev.target.closest && ev.target.closest('.v2-sfdeg, .v2-sfvox');
         if (sfe) {
           const ctx = layerOf(sfe); if (!ctx) return;
@@ -21606,6 +22709,31 @@
         h._sig = ''; V2.render(E);
         ev.stopPropagation();
       });
+      // ── THE AUDITION FIRES ON PRESS ────────────────────────────────────
+      // A drum pad that sounds on `click` sounds when the finger LIFTS, so the
+      // lag is however long you held it — plus the touchend→click hop. Reported
+      // as "lag on press". Every hardware pad fires on contact and so does
+      // this. Nothing else happens here: no re-render, no commit, no DOM work
+      // before the sound (rule 4), so the handler is the sound and nothing
+      // more. ▸ Hear it inside the lane editor rides the same path, so there is
+      // one way to sound a lane and one moment it happens.
+      h.addEventListener('pointerdown', (ev) => {
+        const t = ev.target;
+        if (!t || !t.closest) return;
+        const lh = t.closest('.v2-lanehear');
+        const dl = lh ? null : t.closest('.ambient-euclid-drumlbl');
+        if (!lh && !dl) return;
+        const el = lh || dl;
+        const ctx = layerOf(el); if (!ctx) return;
+        // ONLY ▸ Hear sounds on the press. Every other mode CHANGES STATE, and
+        // a state change belongs on the RELEASE for the same reason a dialog
+        // does: a scroll that begins on a lane name must not silently mute it.
+        // A drum hit is transient and forgiving; a mute is not.
+        // ▸ Hear it inside the editor only ever means "play it", so it sounds
+        // whatever mode the card is in.
+        if (dl && laneModeOf(ctx.L) !== 'hear') return;
+        try { V2.hitLane(E, ctx.L, el.getAttribute('data-lane') | 0); } catch (e) {}
+      });
       h.addEventListener('click', (ev) => {
         if (composeBlocks(ev.target)) { ev.stopPropagation(); return; }
         // SECTION TABS in the sheet head — six groups filling one row, so the
@@ -22268,6 +23396,62 @@
           h._sig = ''; V2.render(E);
           return;
         }
+        // WHAT A LANE NAME DOES — the cycle. Two states, so a press is a
+        // toggle; it repaints the whole card because the button wears the mode
+        // and every lane name's title changes with it.
+        // ⚄ 🎲 — a new placement for the SAME figure. Only the seed moves, so
+        // the idea you picked is kept and where it falls is re-decided.
+        const fr = t.closest && t.closest('.v2-figroll');
+        if (fr) {
+          const ctx = layerOf(fr); if (!ctx) return;
+          const r4 = ctx.L.part.rhythm || (ctx.L.part.rhythm = {});
+          if (r4.kind !== 'fig') return;
+          r4.figSeed = ((r4.figSeed | 0) + 1 + Math.floor(Math.random() * 997)) % 1000000;
+          // A ROLL WITH NOTHING TO ROLL IS A DEAD BUTTON. Grouping and Bar
+          // variation are the only things the seed feeds, so at 0/0 the figure
+          // is fixed by definition — give it something to move rather than
+          // letting the press do nothing, and say so in the hint.
+          if (!(r4.figGrp | 0) && !(r4.figVar | 0)) r4.figGrp = 35;
+          commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
+        const lm = t.closest && t.closest('.v2-lanemode');
+        if (lm) {
+          const ctx = layerOf(lm); if (!ctx) return;
+          LANEMODE.set(ctx.L.id | 0, laneModeNext(ctx.L));
+          h._sig = ''; V2.render(E);
+          return;
+        }
+        if (t.closest && (t.closest('.v2-laneclose') || t.closest('.v2-lanescrim'))) {
+          const ctx = layerOf(t); if (ctx) lanePopClose(ctx.card);
+          return;
+        }
+        // A LANE NAME IN ✎ EDIT — open its editor. THE AUDITION IS NOT HERE:
+        // it fires on `pointerdown` (below), because a drum has to sound when
+        // you PRESS it, not when you lift. A dialog is the opposite case — it
+        // opens on the release, so a scroll that begins on a label does not
+        // throw a panel up mid-gesture. The two modes therefore take two
+        // different events, and neither can double-fire the other.
+        const dl = t.closest('.ambient-euclid-drumlbl');
+        if (dl) {
+          const ctx = layerOf(dl); if (!ctx) return;
+          const li0 = dl.getAttribute('data-lane') | 0;
+          const md = laneModeOf(ctx.L);
+          if (md === 'edit') { lanePopOpen(ctx.card, ctx.L, li0); return; }
+          if (md === 'mute' || md === 'solo' || md === 'rnd') {
+            const f0 = V2.laneFxGet(ctx.L, li0);
+            V2.laneFxSet(ctx.L, li0, md === 'mute' ? { m: !f0.m }
+              : md === 'solo' ? { s: !f0.s } : { r: !f0.r });
+            commit(ctx);
+            // RE-STAMP, NEVER REBUILD. A solo changes how every OTHER lane
+            // reads (they dim), so all eight names are restamped — but they are
+            // class changes on nodes that stay put, not an innerHTML rewrite
+            // that would destroy the control under the finger.
+            laneStamp(ctx.card, ctx.L);
+            return;
+          }
+          return;   // \u25b8 Hear sounded on pointerdown; the release does nothing
+        }
         const lc = t.closest('.v2-lanecell');
         if (lc) {
           const ctx = layerOf(lc); if (!ctx) return;
@@ -22307,6 +23491,15 @@
           lc.classList.toggle('on', !!r2.lanes[li][ci]);
           lc.setAttribute('aria-pressed', r2.lanes[li][ci] ? 'true' : 'false');
           commit(ctx);
+          // ⚅ ON THIS LANE, `.on` HAS NO LOOK — so the tap would land in
+          // silence unless the thing it actually changed repaints. It changes
+          // the COUNT, and the count is what Rnd redistributes, so the
+          // generated row is rebuilt at once and you see a cell arrive or
+          // leave. Same pass, so nothing else moves.
+          if (V2.laneFxGet(ctx.L, li).r) {
+            const w2 = ctx.card.querySelector('.v2-partsteps');
+            try { paintRndRows(ctx.card, ctx.L, Math.max(1, r2.steps | 0), (w2 && w2._rndPass) | 0); } catch (e) {}
+          }
           return;
         }
         // A NOTE LABEL — raise this step's degree, wrapping. Rebuilds the row

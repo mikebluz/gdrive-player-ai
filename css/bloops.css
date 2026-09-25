@@ -4559,6 +4559,17 @@
     /* The mode row is the grid's own control, so it sits tight under the head
        and wraps rather than scrolling (UI rule 1). */
     .v2-cellmodes { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+    /* TWO AXES, ONE BANK. The segments to the left of this rule say what a CELL
+       tap edits; the button to its right says what a LANE NAME does. Without a
+       divider the five buttons read as one five-way choice. `align-self:
+       stretch` so it matches the buttons' height whatever they wrap to, and it
+       carries no width of its own beyond the rule — the row still wraps rather
+       than scrolling (rule 1). */
+    .v2-lanemodesep { flex: 0 0 auto; align-self: stretch; width: 1px; margin: 2px 6px;
+      background: rgba(159, 122, 234, 0.5); }
+    /* ✎ Edit is a MODE you are in, not a door you press, so it is lit the same
+       way the cell-mode segments are — same token, so the bank reads as one. */
+    .v2-lanemode.on { color: #12121c; background: #9f7aea; border-color: #9f7aea; }
     .v2-cellmodes .ambient-seg { padding: 3px 8px; font-size: 11px; }
     /* Cells the edit panel is currently pointed at (selected lane × step scope). */
     .ambient-euclid-cell.in-scope { outline: 1.5px solid rgba(159,122,234,0.85); outline-offset: 1px; }
@@ -11646,10 +11657,118 @@
     .v2-layer .v2-partsteps .ambient-euclid-kitrow:nth-child(odd) {
       background: rgba(159, 122, 234, 0.07);
     }
-    .v2-layer .v2-partsteps .ambient-euclid-drumlbl {
-      flex: 0 0 46px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-      white-space: nowrap; text-align: left;
+    /* A LANE NAME IS A TRIGGER, SO IT HAS TO LOOK LIKE ONE (2026-09-25, user:
+       "they should be more obviously buttons"). It inherited the shared label
+       rule's `background: transparent; border: none`, which was right while it
+       was a caption and wrong the moment it started playing a drum — a control
+       that reads as text is a control nobody presses.
+       THE CARD'S OWN PRESSABLE TOKEN, not a new one: `rgba(159,122,234,.14)` on
+       a purple hairline is exactly `.ambient-step-btn`, the ± the steppers use
+       all over this card. Scoped to `.v2-partsteps` so v1's own drum grid — a
+       different surface, where the label is a LANE SELECTOR and carries `.on`
+       for the selected lane — keeps the look its states are built around. */
+    .v2-layer .ambient-euclid-drumlbl {
+      flex: 0 0 54px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; text-align: center;
+      background: rgba(159, 122, 234, 0.14); border: 1px solid rgba(159, 122, 234, 0.30);
+      border-radius: 6px; padding: 3px 4px; color: #c9b8ef;
+      /* the press has to be FELT on a phone, where there is no hover to tell
+         you the thing is live */
+      transition: background 0.12s ease, color 0.12s ease, transform 0.06s ease;
+      touch-action: manipulation; user-select: none; -webkit-user-select: none;
     }
+    @media (hover: hover) {
+      .v2-layer .ambient-euclid-drumlbl:hover {
+        background: rgba(159, 122, 234, 0.30); color: #e6ddff; border-color: #9f7aea;
+      }
+    }
+    .v2-layer .ambient-euclid-drumlbl:active {
+      background: #9f7aea; color: #12121c; transform: scale(0.94);
+    }
+    /* WHAT A LANE IS, ON ITS OWN NAME — drawn in EVERY mode, not only while
+       that mode is picked (the drum-solo rule the cell modes already follow).
+       A muted hat that looks like every other hat is a setting you cannot see.
+       The hues are the ones these states already wear elsewhere in the app:
+       amber for solo (v1's own `.ambient-euclid-drumlbl.solo`), a flat grey
+       for muted, mint for a lane that re-decides itself. */
+    .v2-layer .ambient-euclid-drumlbl.v2-lnmute {
+      background: rgba(120, 120, 140, 0.16); border-color: rgba(120, 120, 140, 0.4);
+      color: #74748c; text-decoration: line-through;
+    }
+    .v2-layer .ambient-euclid-drumlbl.v2-lnsolo {
+      background: #f6ad55; border-color: #f6ad55; color: #1a1206; font-weight: 700;
+    }
+    .v2-layer .ambient-euclid-drumlbl.v2-lnrnd {
+      background: rgba(104, 211, 145, 0.18); border-color: rgba(104, 211, 145, 0.55);
+      color: #9ae6b4;
+    }
+    /* A Rnd lane that is ALSO soloed keeps the solo fill — solo is the louder
+       claim — and says the other half with a dotted edge rather than a second
+       colour fighting the first. */
+    .v2-layer .ambient-euclid-drumlbl.v2-lnrnd.v2-lnsolo { border-style: dashed; }
+    /* SILENCED BY SOMEONE ELSE'S SOLO — not a state you set on this lane, so it
+       reads as absence (faded), never as a colour of its own. */
+    .v2-layer .ambient-euclid-drumlbl.v2-lndim { opacity: 0.34; }
+    /* ── A LANE'S STATE IS WORN BY ITS WHOLE ROW ──────────────────────────
+       The cells are what you look at while you work, so a state carried only
+       by the name is a state you do not see. FOUR HUES, none of them the
+       default lit mint (#4fd1a5), so "what is this lane doing" is answered by
+       colour before it is read: grey MUTED, amber SOLOED, sky ⚅ RND.
+       COMPOUNDED past `.ambient-euclid-cell.on` (0,2,0), which sets background,
+       border, colour and shadow and sits EARLIER in the file — the documented
+       cascade trap this control family keeps hitting. */
+    .v2-layer .v2-rowmute .v2-lanecells,
+    .v2-layer .v2-rowdim  .v2-lanecells { opacity: 0.4; }
+    .v2-layer .v2-rowmute .ambient-euclid-cell.on {
+      background: #6b6b80; border-color: #8a8aa2; color: #1a1a24;
+      box-shadow: none;
+    }
+    .v2-layer .v2-rowsolo .ambient-euclid-cell.on {
+      background: #f6ad55; border-color: #fbd38d; color: #1a1206;
+      box-shadow: 0 0 6px rgba(246, 173, 85, 0.4);
+    }
+    /* ⚅ RND — the row is tinted so the lane reads as "not what is written here",
+       and a cell has exactly TWO looks: SOUNDING this pass, or not.
+       THE DRAWN ROW IS NOT A THIRD LOOK. It first kept a faint sky outline, on
+       the reasoning that it is the density Rnd redistributes — and that is a
+       real thing, but it is not a thing to SHOW: three states on a grid whose
+       whole question is binary read as a puzzle, and were reported as one
+       ("why are there seemingly 3 visual states"). The count of lit cells
+       already says the density, the stored row is untouched, and it comes
+       straight back the moment ⚅ goes off. So a drawn-but-not-generated cell
+       is neutralised to the UNLIT look — it must not borrow `.on`'s mint,
+       which would read as an ordinary playing cell. These three values are
+       `.ambient-euclid-cell`'s own; they are restated because this has to beat
+       `.ambient-euclid-cell.on` (0,2,0), which sets all of them. */
+    .v2-layer .v2-rowrnd { background: rgba(99, 179, 237, 0.07); }
+    .v2-layer .v2-rowrnd .ambient-euclid-cell.on {
+      background: rgba(255, 255, 255, 0.03); border-color: #2d2d3f;
+      color: #6a6a86; box-shadow: none; font-weight: 400;
+    }
+    .v2-layer .v2-rowrnd .ambient-euclid-cell.v2-lanegen,
+    .v2-layer .v2-rowrnd .ambient-euclid-cell.on.v2-lanegen {
+      background: #63b3ed; border-color: #90cdf4; color: #06192b;
+      box-shadow: 0 0 6px rgba(99, 179, 237, 0.45); font-weight: 700;
+    }
+    /* a soloed Rnd lane: solo is the louder claim, so it keeps the amber fill */
+    .v2-layer .v2-rowrnd.v2-rowsolo .ambient-euclid-cell.v2-lanegen {
+      background: #f6ad55; border-color: #fbd38d; color: #1a1206;
+      box-shadow: 0 0 6px rgba(246, 173, 85, 0.4);
+    }
+    /* ⚄ THE FIGURE PICKER — the select and its 🎲 are ONE control (pick an
+       idea, re-roll where it falls), so they share a row rather than the dice
+       becoming a second thing to find. `min-width: 0` on the select is what
+       keeps the pair inside the row at 390px instead of pushing it wide
+       (UI rule 1 — it shrinks, it never scrolls). */
+    .v2-figpickwrap { display: flex; gap: 6px; align-items: center; min-width: 0; }
+    .v2-figpickwrap .v2-figpick { flex: 1 1 auto; min-width: 0; }
+    .v2-figroll { flex: 0 0 auto; min-height: 38px; padding: 4px 10px; font-size: 0.95rem; }
+    .v2-figroll[disabled] { opacity: 0.35; cursor: default; }
+    /* THE CYCLE WEARS THE MODE IT IS IN, in that mode's own colour — so the
+       bank says what a lane name will do without being read. */
+    .v2-lanemode.v2-lm-mute.on { background: rgba(120,120,140,0.3); border-color: #74748c; color: #b6b6c8; }
+    .v2-lanemode.v2-lm-solo.on { background: #f6ad55; border-color: #f6ad55; color: #1a1206; }
+    .v2-lanemode.v2-lm-rnd.on  { background: rgba(104,211,145,0.28); border-color: #68d391; color: #9ae6b4; }
     .v2-layer .v2-partsteps .v2-lanecells { flex: 1 1 0; min-width: 0; }
     /* ▦ A STEP WEARS ITS PART. The roll's note events carry their part's hue and
        a step IS this form's note event, so it carries the same one. COMPOUNDED
@@ -13284,7 +13403,16 @@
        no empty gap between the Bloom panel and the project bar below it. The
        Shapes / Mixdown subtabs keep flex:1. */
     body.view-mix > #mix-view.mix-sub-bloom { flex: 0 0 auto; }
-    body.view-mix > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script):not(.grid-settings-panel) {
+    /* .sd-overlay JOINS THE MODAL FAMILY HERE (2026-09-25, user: "clicking
+       Design does nothing"). These allow-lists hide EVERY direct child of body
+       with `!important`, so a full-screen modal that is not named is switched
+       off no matter what its own `.open` rule says — `_sdOpenDesign` built the
+       whole panel (measured: ~17 KB of DOM, `#sd-overlay.sd-overlay.open`,
+       z-index 10400) and it computed `display: none`. It is the same kind of
+       thing as `.sm-overlay` and `.modal-overlay`, which were already listed;
+       any new body-level overlay has to be added to every view it can be
+       opened from, or it reads as a dead button. */
+    body.view-mix > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.sd-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script):not(.grid-settings-panel) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
@@ -13297,7 +13425,7 @@
     /* Harvest view — captured Blooms + Shapes bank. Same show/hide model as Mix. */
     #harvest-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 16px; }
     body.view-harvest > #harvest-view { display: block; }
-    body.view-harvest > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script):not(.grid-settings-panel) {
+    body.view-harvest > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.sd-overlay):not(#midi-overlay):not(#xport-menu):not(.bloops-toast):not(script):not(.grid-settings-panel) {
       display: none !important;
     }
     body.view-harvest { overflow-y: auto; }
@@ -16479,6 +16607,15 @@
 .v2-stepscrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
 .v2-stepacts { padding: 4px 14px calc(12px + env(safe-area-inset-bottom)); }
 .v2-stepacts .ambient-seg { width: 100%; min-height: 44px; }
+/* ── THE LANE EDITOR ──────────────────────────────────────────────────────
+   Borrows the step popover's band, scrim, head and scrolling rows wholesale —
+   the only things it needs of its own are a heading between its two halves and
+   an action row that sits INSIDE the scroller rather than under it (▸ Hear it
+   belongs with the rows it is auditioning, not pinned to the floor). */
+.v2-laneacts { padding: 4px 0 8px; }
+.v2-lanegrp { display: block; margin: 12px 0 4px; padding-top: 10px;
+  border-top: 1px solid #22222f; color: #9f7aea; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; }
 /* a step that SAYS what it plays must not look like one that follows the rule
    (the absent-is-inherit grammar the mask cells and the bar rules follow) */
 .ambient-euclid-notelbl.v2-noteown { color: #d6bcfa; border-color: #9f7aea; }

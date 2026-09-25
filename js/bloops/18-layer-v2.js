@@ -619,6 +619,68 @@
   // A PER-STEP SAY over what the pitch rule produced: `{deg, voices}` keyed by
   // step index, sparse, absent = the rule decides. Kept as an OBJECT rather
   // than an array so a layer that names one step stores one entry.
+  // ── ⌸ THE PITCH GRID ────────────────────────────────────
+  // user, 2026-09-24: "a pattern per note on the piano, all at a set length
+  // with resolution control … then if select adjacent notes, can choose to
+  // either have those remain separate hits, or elide them into a single
+  // sustained note".
+  //
+  // `part.pitch.rows = { "<midi>": { c: [[start, len], …], ind?: 1 } }`
+  //
+  // ONE REPRESENTATION FOR A HIT AND A TIE. `[i, 1]` is a hit and `[i, 4]` is a
+  // four-cell run — eliding MERGES two runs and un-eliding SPLITS one, so there
+  // is no separate tie flag that can fall out of step with the cells. The kit's
+  // "a silent lane stores `{}`" rule, one axis over.
+  //
+  // SPARSE, because a chromatic grid is 128 possible rows: a dense array per
+  // row would put kilobytes of zeroes in every save for a pattern nobody drew.
+  // A row with no runs is deleted and an empty `rows` is deleted, so a layer
+  // that never opens the grid stores no field at all.
+  //
+  // ROWS ARE ABSOLUTE MIDI, not degrees (the choice, 2026-09-24): the grid is a
+  // piano and a drawn C4 is a C4. What happens when the chords move under it is
+  // the EXISTING `L.harmony` axis (plays as written / diatonic / chordlock),
+  // default as written — so this adds no second harmony mechanism.
+  const gridRowsOf = (part) => {
+    const t = part && part.pitch;
+    if (!t || t.kind !== 'grid') return null;
+    const rw = t.rows;
+    return (rw && typeof rw === 'object' && Object.keys(rw).length) ? rw : null;
+  };
+  // WHICH NOTES START AT THIS STEP, with the length of each run in CELLS.
+  // Returns `[]` for a step nothing starts on, so the caller never distinguishes
+  // "no grid" from "nothing here" — both mean no notes, which is the honest
+  // answer either way.
+  function gridAt(part, step) {
+    const rw = gridRowsOf(part); if (!rw) return [];
+    const si = step | 0, out = [];
+    Object.keys(rw).forEach((k) => {
+      const runs = (rw[k] && rw[k].c) || [];
+      for (let i = 0; i < runs.length; i++) {
+        if ((runs[i][0] | 0) === si) { out.push({ midi: k | 0, len: Math.max(1, runs[i][1] | 0) }); break; }
+      }
+    });
+    // LOW TO HIGH, so a chord's voices arrive in a stable order — `Object.keys`
+    // on a numeric-keyed object is already ascending, but only by accident of
+    // the spec's integer-key rule, and a reader should not depend on that.
+    out.sort((a, b) => a.midi - b.midi);
+    return out;
+  }
+  // …and the ONSET LIST the rest of the engine reads, as 0/1 per cell. This is
+  // what `rhythm.cells` is derived from at the normalize chokepoint: ONE writer,
+  // so it is a cache rather than a second opinion about where the notes are.
+  function gridCellsOf(part, n) {
+    const out = new Array(Math.max(0, n | 0)).fill(0);
+    const rw = gridRowsOf(part); if (!rw) return out;
+    Object.keys(rw).forEach((k) => {
+      const runs = (rw[k] && rw[k].c) || [];
+      for (let i = 0; i < runs.length; i++) {
+        const st = runs[i][0] | 0;
+        if (st >= 0 && st < out.length) out[st] = 1;
+      }
+    });
+    return out;
+  }
   function stepFxAt(part, idx) {
     const t = part && part.pitch;
     const m = t && t.stepFx;
@@ -809,7 +871,11 @@
   ];
   const PRESET_BY_ID = {};
   PRESETS.forEach((pr) => { PRESET_BY_ID[pr.id] = pr; });
-  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed', 'confug']);
+  // '\u2338 grid' — A ROW PER SEMITONE, authored (2026-09-24). It is a PITCH kind
+  // rather than a rhythm one because it decides WHICH NOTES; that it also
+  // decides where they fall is a consequence, and `rhythm.cells` is derived
+  // from it so every existing onset reader keeps working unchanged.
+  const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed', 'confug', 'grid']);
   const KINDS = new Set(['live', 'recorded']);
 
   // Divisions per bar. Triplet values are in the list because a swung or
@@ -1716,6 +1782,73 @@
         if (Object.keys(outFx).length) t.stepFx = outFx; else delete t.stepFx;
       } else if (t.stepFx !== undefined) delete t.stepFx;
 
+      // ── ⌸ THE PITCH GRID — A ROW PER SEMITONE (2026-09-24) ──────────
+      // `rows = { "<midi>": { c: [[start, len], …], ind?: 1 } }`. See `gridAt`
+      // for what it means; this is the one place it is made safe, and it is
+      // TOTAL — an unknown value can never reach the emitter.
+      //
+      // ADDITIVE AND ABSENT BY DEFAULT: a layer that never opens the grid
+      // stores no `rows`, so every project saved before today reads and
+      // re-saves byte for byte.
+      //
+      // COERCED WHICHEVER PITCH KIND IS ACTIVE — the both-halves rule that keeps
+      // every door two-way. Switching to `walk` to hear an idea and back must
+      // not cost you the grid you drew, exactly as `cells` survives a trip
+      // through ⌗ Roll.
+      if (t.rows && typeof t.rows === 'object' && !Array.isArray(t.rows)) {
+        const outRows = {};
+        Object.keys(t.rows).forEach((k) => {
+          const midi = k | 0;
+          if (!(midi >= 0 && midi <= 127)) return;
+          const src = t.rows[k];
+          if (!src || typeof src !== 'object') return;
+          const runs = Array.isArray(src.c) ? src.c : [];
+          // SORTED, CLIPPED, NON-OVERLAPPING — in that order, because a trim
+          // needs to know which run comes next. Two runs that overlap are not a
+          // user intent this grid can express (a row plays one note at a time),
+          // so the earlier one is SHORTENED to meet the later rather than the
+          // later being dropped: the onset you drew is the thing to keep.
+          const cleaned = [];
+          runs.map((rn) => (Array.isArray(rn) ? rn : []))
+              .map((rn) => [rn[0] | 0, rn[1] | 0])
+              .filter((rn) => rn[0] >= 0 && rn[0] < keepN && rn[1] >= 1)
+              .sort((a, b) => a[0] - b[0])
+              .forEach((rn) => {
+                // A SECOND RUN ON THE SAME CELL IS ONE RUN — keep the longer.
+                const last = cleaned[cleaned.length - 1];
+                if (last && last[0] === rn[0]) { last[1] = Math.max(last[1], rn[1]); return; }
+                cleaned.push([rn[0], rn[1]]);
+              });
+          for (let i = 0; i < cleaned.length; i++) {
+            const nxt = (i + 1 < cleaned.length) ? cleaned[i + 1][0] : keepN;
+            cleaned[i][1] = clamp(cleaned[i][1], 1, Math.max(1, nxt - cleaned[i][0]));
+          }
+          if (!cleaned.length) return;              // one representation for a silent row
+          const row = { c: cleaned };
+          // ⟳ EVOLVE ROTATES A DRAWN PATTERN rather than re-rolling it, and the
+          // rows rotate TOGETHER by default so a drawn chord survives. `ind`
+          // marks a row that opted OUT of the shared rotation — absent is the
+          // default, which is the only value most rows will ever have.
+          if (src.ind) row.ind = 1;
+          outRows[String(midi)] = row;
+        });
+        if (Object.keys(outRows).length) t.rows = outRows; else delete t.rows;
+      } else if (t.rows !== undefined) delete t.rows;
+
+      // …AND THE ONSETS ARE DERIVED FROM IT. `rhythm.cells` is what every
+      // existing onset reader consults (`onsetsOf`'s drawn branch, `viewCells`,
+      // the readouts, the euclid seed), so the grid writes THROUGH it rather
+      // than beside it — one writer, here, at the chokepoint. Two stores that
+      // both claim to say where the notes are is the two-pictures-of-one-thing
+      // trap this file keeps paying for.
+      // ONLY WHILE THE GRID IS THE MATERIAL. Switching to another pitch kind
+      // leaves `cells` holding the pattern the grid last derived, which is the
+      // honest flattening of what you drew — and `rows` is still there, so
+      // nothing is lost by the trip.
+      if (t.kind === 'grid' && t.rows) {
+        r.cells = gridCellsOf(p, keepN);
+      }
+
       // ── ↔ ANSWER (2026-09-23) ─────────────────────────────
       // Which other layer this one plays off, and how. ABSENT BY DEFAULT and
       // pruned the moment it says nothing, so every project saved before this
@@ -2459,9 +2592,22 @@
     // played the ROLL's euclid pattern, reported verbatim as "it sounds like
     // the Roll part is playing". `r.kind` is left alone, so switching back to
     // ⌗ Roll finds it exactly as it was (the two forms stay parallel).
-    if (r.kind === 'drawn' || part.form === 'steps') {
+    // ⌸ THE GRID IS ALWAYS READ FROM CELLS, whatever the rhythm kind says.
+    // `rhythm.cells` is derived from the rows at the chokepoint, so this is the
+    // same branch the drawn grid takes — without it, a layer whose pitch is a
+    // grid but whose rhythm still says 'euclid' would sound the euclid formula
+    // and draw the rows, which is the two-pictures trap at its loudest.
+    if (r.kind === 'drawn' || part.form === 'steps' ||
+        ((part.pitch || {}).kind === 'grid')) {
       const st = Math.max(1, r.steps | 0), cells = r.cells || [];
-      for (let i = 0; i < st; i++) if (perturb(!!cells[i])) out.push(i / st);
+      // ⌸ ON A GRID THE DICE ARE ROLLED PER ROW, in the pitch stage — so they
+      // must NOT also be rolled here, over the union of the rows. Perturbing
+      // both would thin twice and the two draws would disagree about which
+      // steps exist.
+      const gridMat = ((part.pitch || {}).kind === 'grid');
+      for (let i = 0; i < st; i++) {
+        if (gridMat ? !!cells[i] : perturb(!!cells[i])) out.push(i / st);
+      }
       return out;                                        // an empty grid is a rest, and says so on the card
     }
     // ── ◫ FILL MEANS PER BAR, SO THE GRID IS A BAR (2026-09-22) ──────
@@ -2772,6 +2918,32 @@
   }
   function pitchesBase(part, E, cfg, at, reg, ctxSeed, idx, mem, L) {
     const t = part.pitch, set = v2Recolour(toneSetAt(E, cfg, at, L), t);
+    // ── ⌸ GRID — THE ROWS THAT START ON THIS STEP (2026-09-24) ─────────
+    // FIRST, before `stepFx` and every kind below, because the grid IS the
+    // material: a per-step degree override beside it would be a second opinion
+    // about the same note. Returns ABSOLUTE MIDI — a drawn C4 is a C4 — so the
+    // register and the pitch-span controls do not apply and the card greys them.
+    // What happens when the chords move under it is `L.harmony`, the axis a
+    // recorded part already uses; its default is "as written", which is what
+    // this returns, and the diatonic/chordlock opt-in is not wired yet.
+    if (t.kind === 'grid') {
+      const gr = gridAt(part, idx);
+      // THE RHYTHM DICE THIN A GRID PER ROW, not per step. On every other
+      // material `vary` perturbs the onset list, which here is the UNION of the
+      // rows — so it would drop a whole chord at once, and its "add a silent
+      // slot" half is a no-op because an added step names no note. Per row it
+      // means what it says: any one voice may sit a turn out.
+      // SEEDED ON (onset seed, row), so a take replays and two rows never share
+      // a draw — the same isolation the kit's lanes keep.
+      // ONLY THINS. `vary`'s asymmetry is deliberate everywhere else ("it thins
+      // more than it thickens"); here thickening has nothing to thicken WITH,
+      // since a row that holds no note at a step has no pitch to offer.
+      const vr = clamp((part.rhythm && part.rhythm.vary) | 0, 0, 100);
+      const keep = (vr > 0)
+        ? gr.filter((g) => vRnd((ctxSeed | 0) ^ ((g.midi | 0) * 7919), 61) >= vr * 0.40 / 100)
+        : gr;
+      return keep.map((g) => clamp(g.midi | 0, 0, 127));
+    }
     const N = Math.max(1, set.ivs.length);
     const base = 12 * (reg + 1) + set.root;               // register → MIDI octave
     const out = [];
@@ -4330,6 +4502,18 @@
     const durAt = (holdN > 0)
       ? () => Math.max(20, Math.round((cyc / Math.max(1, p.rhythm.steps | 0)) * 1000 * holdN))
       : (k) => Math.max(20, Math.round(gapAt(k) * cyc * 1000 * (p.shape.lenRatio / 100)));
+    // ⌸ ON THE GRID A CELL IS ONE CELL LONG. Everywhere else a note's length
+    // is a share of the GAP to the next onset, so a lone hit on a sparse
+    // pattern already sustains for bars — and if that were true here, eliding
+    // would buy nothing. A run of N cells is N cells; `lenRatio` still
+    // articulates it, so a 4-cell tie at 90% sounds for 3.6 cells and leaves a
+    // sliver of air. That is the whole point of the tie, and it is why
+    // `holdSteps` does NOT apply on a grid: it answers the question the grid
+    // now answers, and the card greys it.
+    const isGrid = !!(p.pitch && p.pitch.kind === 'grid' && gridRowsOf(p));
+    const gridSec = cyc / Math.max(1, p.rhythm.steps | 0);
+    const gridDur = (cells) => Math.max(20,
+      Math.round(Math.max(1, cells | 0) * gridSec * 1000 * (p.shape.lenRatio / 100)));
     const durMs = durAt(0);                               // the fallbacks below want a number
     // RESTS through v1's own `_ambEffRest`, which ADDS the Area Groove
       // density macro on top of the layer's value — reading `L.restProb`
@@ -4453,7 +4637,7 @@
       // because ⏱ Odds keys on it too, and two copies of this formula is how
       // a probability lane would come to address a different step from the
       // pitch it is gating.
-      const stepOf = (p.rhythm.kind === 'euclid' || p.rhythm.kind === 'drawn' || p.rhythm.kind === 'chance')
+      const stepOf = (isGrid || p.rhythm.kind === 'euclid' || p.rhythm.kind === 'drawn' || p.rhythm.kind === 'chance')
         ? Math.round(ons[i] * Math.max(1, p.rhythm.steps | 0)) : i;
       // ⏱ ODDS — a PER-STEP probability, and the reason it is additive over
       // Rests rather than folded into it: Rests is one number for the whole
@@ -4574,7 +4758,25 @@
       if (pAt !== p) { p._deg = pAt._deg; p._oct = pAt._oct; if (pAt._mixWasLine != null) p._mixWasLine = pAt._mixWasLine; }
       // LEN VARY scales this onset's notes together — a chord must not come
       // apart into different lengths, which is why it is per ONSET not per note.
-      let dm0 = durAt(i);
+      // ⌸ THE RUNS THAT START HERE, matched by MIDI — a row is one note, so the
+      // map is exact. A voice the pitch stage ADDED (a harmony part) or MOVED
+      // (an inversion) is no longer a note you drew, so it falls back to the
+      // onset's own length rather than borrowing a run it has no claim on.
+      let gSpan = null, gLongest = 1;
+      if (isGrid) {
+        gSpan = new Map();
+        const runs = gridAt(p, stepIdx);
+        for (let q = 0; q < runs.length; q++) {
+          gSpan.set(runs[q].midi | 0, Math.max(1, runs[q].len | 0));
+          if (runs[q].len > gLongest) gLongest = runs[q].len | 0;
+        }
+      }
+      // THE ONSET'S NOMINAL LENGTH IS ITS LONGEST RUN, so ⑁ Length shape and
+      // Len vary have one number to work on — they shape the onset, and the
+      // per-voice scaling below keeps each run's share of it. With no ties
+      // every run is 1 and every voice lands on exactly this number, which is
+      // what makes an un-elided grid behave like a plain drawn pattern.
+      let dm0 = isGrid ? gridDur(gLongest) : durAt(i);
       // HOLD is per-change under Groundwork — `durAt` reads the layer's own
       // lenRatio, so the resolved one is applied as a ratio of it rather than
       // by threading a second argument through every caller.
@@ -4619,7 +4821,12 @@
           // has. The figure survives the cap because it is the SHORT note that
           // carries it: at Note length 70 a 1.45× long clips to 100% while the
           // 0.55× short stays at 38%, which is still plainly long–short.
-          const gapMs = Math.max(HARD_MIN_MS, Math.round(gapAt(i) * cyc * 1000));
+          // …EXCEPT ON THE GRID, where a run may legitimately reach past a later
+          // onset: row 60 holding [0,8] under row 64's hit at step 4 is a
+          // sustain under a moving line, not a mistake, and the gap ceiling
+          // would silently cut it. The run is its own ceiling there.
+          const gapMs = isGrid ? gridDur(gLongest)
+            : Math.max(HARD_MIN_MS, Math.round(gapAt(i) * cyc * 1000));
           dm = Math.min(gapMs, Math.max(Math.min(dm0, HARD_MIN_MS), Math.round(dm0 * mult[0])));
           shW = mult[1];
         }
@@ -4627,6 +4834,19 @@
       // …and Len vary may not scatter a note below the floor (it only ever
       // shortens past it — a lengthened note is never a problem)
       else if (lvar > 0) dm = Math.max(Math.min(dm0, MIN_MS), Math.round(dm0 * (1 + (vRnd(stageSeed('len', chgOf2 ? Math.round((ons[i] || 0) * 1e6 / 1000) : si) ^ (si * 40503), 23) * 2 - 1) * (lvar / 100) * 0.6)));
+      // ⌸ …AND EACH VOICE KEEPS ITS OWN RUN'S SHARE OF IT. Everywhere else an
+      // onset's notes share one length on purpose — "a chord must not come
+      // apart" — but on the grid a run IS what you drew, and a bass sustaining
+      // under a staccato top is the reason ties exist. Scaled from the onset's
+      // finished length rather than recomputed, so ⑁ Length shape, Len vary and
+      // the Groundwork hold all still apply exactly once.
+      const dmFor = (midi) => {
+        if (!gSpan) return dm;
+        const len = gSpan.get(midi | 0);
+        if (!(len > 0) || gLongest <= 0) return dm;       // added or moved by the pitch stage
+        if (len === gLongest) return dm;
+        return Math.max(20, Math.round(dm * (len / gLongest)));
+      };
       // PHRASING — v1's GESTURE CELLS. With probability `phrasing` this onset
       // takes a shaped figure — relative onsets and durations with an ARRIVAL
       // note (agogic emphasis: long, and leaned on) — instead of a uniform
@@ -4799,7 +5019,7 @@
         }
         for (let k = 0; k < ms.length; k++) {
           const v = order[k];
-          out.push({ at: at + (spanSec * k) / Math.max(1, ms.length - 1), freq: midiToFreq(ms[v]), durMs: dm });
+          out.push({ at: at + (spanSec * k) / Math.max(1, ms.length - 1), freq: midiToFreq(ms[v]), durMs: dmFor(ms[v]) });
         }
       } else {
         // SLIP — a STOCHASTIC strum: each note of the onset is nudged a little
@@ -4812,7 +5032,7 @@
         const slipMax = slipAmt > 0 ? (slipAmt / 100) * Math.min(0.18, span * 0.5) : 0;
         for (let v = 0; v < ms.length; v++) {
           const off = slipMax > 0 ? vRnd(seedBase ^ ((si * 31 + v) * 2246822519), 137) * slipMax : 0;
-          const nt2 = { at: at + off, freq: midiToFreq(ms[v]), durMs: dm };
+          const nt2 = { at: at + off, freq: midiToFreq(ms[v]), durMs: dmFor(ms[v]) };
           // ⑁ THE FIGURE'S WEIGHT rides with the note so the EMITTER can lean
           // on it and skip Accent — a separate field, never `vel`, because
           // `vel` is a HAND-EDITED note's own volume and accent is applied on
@@ -5847,9 +6067,69 @@
     Object.keys(R).forEach((k) => { delete R[k]; });
     Object.assign(R, JSON.parse(JSON.stringify(d.S)));
     try { E.getCfg(); } catch (e) {}
+    // ⌸ A PITCH RULE CHOSEN IN ✦ GENERATE ARRIVES HERE, so this is where the
+    // grid gets its seed — the select's own commit only ever touched the draft.
+    try { gridSeedFn(E, R); } catch (e) {}
     return R;
   }
   function draftCancelFn(E, L) { return DRAFTS.delete(L && (L.id | 0)); }
+
+  // ── ⌸ ENTERING THE GRID SEEDS IT FROM WHAT THE LAYER ALREADY PLAYS ────
+  // Without this, choosing ⌸ Grid is a SILENT LAYER: the rows ARE the material,
+  // and an empty `rows` means no notes at all. It is the trap `drawn` already
+  // solved by snapshotting the euclid pattern on the first tap — "euclid
+  // patterning is how you START a drawn part, tapping cells is how you finish
+  // it" — and the one ▦ Pattern solves by seeding a kit's lanes from the beat.
+  // One take, quantised to the grid, becomes the rows.
+  //
+  // IN THE MODEL HALF, because the Pitch rule lives inside ✦ Generate, which is
+  // a STAGED DRAFT: the choice reaches the layer at `draftCommit`, not at the
+  // select's own commit, and `draftCommitFn` cannot call a UI-half name (the
+  // two-IIFE rule — a bare name from the wrong half throws into a catch and
+  // measures as a silent no-op).
+  //
+  // ONLY WHEN THERE IS NOTHING THERE. A second visit must never overwrite what
+  // you drew.
+  function gridSeedFn(E, L) {
+    try {
+      const t = L && L.part && L.part.pitch;
+      if (!t || t.kind !== 'grid') return false;
+      if (t.rows && typeof t.rows === 'object' && Object.keys(t.rows).length) return false;
+      const cfg = E.getCfg();
+      const cyc = cycSecOf(L, cfg);
+      const st = Math.max(1, (L.part.rhythm || {}).steps | 0);
+      const cell = cyc / st;
+      if (!(cell > 0)) return false;
+      // ONE NOTE PER ONSET, FROM THE HARMONY. The rule the layer had before the
+      // switch is gone by the time this runs — `kind` is already 'grid' — and
+      // asking as a grid with no rows returns nothing, which is the very hole
+      // this fills. So it seeds the way `recipeSeed` raises an inert knob: not
+      // by reconstructing the past, but by arriving somewhere USABLE.
+      // THE RHYTHM IS PRESERVED EXACTLY — the onsets are the part's own, and
+      // only the pitches are re-derived — so what you drew the pattern to be is
+      // still there and every note lands on a chord tone.
+      // Asked through a SHIM (the `partWithRules` idiom) so nothing is written
+      // to the layer while the question is being asked.
+      const shim = Object.assign({}, L, { part: Object.assign({}, L.part, {
+        pitch: Object.assign({}, t, { kind: 'chord', voices: 1, rows: null }) }) });
+      const ns = withEdit(() => withTake(0, () => notesFor(shim,
+        { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: cyc }))) || [];
+      const rows = {};
+      ns.forEach((n) => {
+        if (!n || !Number.isFinite(n.at) || !(n.freq > 0)) return;
+        const m = clamp(Math.round(69 + 12 * Math.log2(n.freq / 440)), 0, 127);
+        const at0 = Math.round(n.at / cell);
+        if (!(at0 >= 0 && at0 < st)) return;
+        const ln = clamp(Math.round(Math.max(cell, (n.durMs || 0) / 1000) / cell), 1, st - at0);
+        const k = String(m);
+        (rows[k] || (rows[k] = { c: [] })).c.push([at0, ln]);
+      });
+      if (!Object.keys(rows).length) return false;
+      t.rows = rows;                     // normalize sorts, clips and de-overlaps
+      try { E.getCfg(); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  }
   // THE STAGED LAYER THROUGH THE SAME NORMALIZER — its own layer rules, its
   // ground overlay against the arrangement, and a per-part record's length.
   function normStaged(cfg) {
@@ -7412,6 +7692,7 @@
     stagedOf: stagedOfFn,
     isStaged: isStagedFn,
     draftCommit: draftCommitFn,
+    gridSeed: gridSeedFn,          // ⌸ …and the grid's own start, for the direct door
     draftCancel: draftCancelFn,
     applyPreset: applyPresetFn,
     charOverlay: charOverlayFn,
@@ -7667,6 +7948,11 @@
     chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
     notesFor,                      // the interface, callable directly
     onsetsOf,
+    // ⌸ the pitch grid, for the UI half and the probes — readers only;
+    // the one WRITER is the normalizer.
+    gridRowsOf,                    // the rows, or null when the grid is not the material
+    gridAt,                        // …which notes START at a step, with each run's length in cells
+    gridCellsOf,                   // …and the 0/1 onset list the rest of the engine reads
     resetLayer: resetLayerFn,      // \u21ba everything back to a new layer's defaults
     cloneLayer: cloneLayerFn,      // \u29c9 …and a second one exactly like it, right below
     // …and what those defaults ARE, for anything that needs to ask (the
@@ -9132,6 +9418,120 @@
   // holds while there is ONE row. Chunking keeps the pairing at any length.
   // `data-ci` STAYS ABSOLUTE — the delegated handlers index the store by it —
   // so only the markup is sliced, exactly the chord-matrix doctrine.
+  // ── ⌸ WHICH ROW THE GRID IS SHOWING ─────────────────────────
+  // ONE PITCH AT A TIME, because the alternative does not fit. The lane strip is
+  // one bar per ROW at 48px, so a 4-bar part is already four rows tall for a
+  // SINGLE lane — twelve stacked pitch rows would be ~1300px and horizontal
+  // scroll is forbidden. The dropdown is the door, and it carries a run count
+  // per row so you can see where the content is instead of hunting for it.
+  // Transient (a Map keyed by layer id), never stored: a persisted value would
+  // reload the project looking at a row nobody chose — the `_soloLane` rule.
+  const GROW = new Map();
+  const growOf = (L) => {
+    const cur = GROW.get(L && (L.id | 0));
+    if (Number.isFinite(cur)) return cur | 0;
+    // FIRST OPEN LANDS ON SOMETHING YOU DREW, lowest first — an empty row would
+    // read as "the grid is empty" on a part that is full.
+    const rw = (L && L.part && L.part.pitch && L.part.pitch.rows) || null;
+    const ks = rw ? Object.keys(rw).map((k) => k | 0).sort((a, b) => a - b) : [];
+    return ks.length ? ks[0] : 60;
+  };
+  // …and the window the picker offers. Every row that HAS content (so nothing
+  // you drew can ever be unreachable) plus four octaves around middle C, which
+  // is the range a hand actually draws in.
+  function growList(L) {
+    const rw = (L.part.pitch || {}).rows || {};
+    const seen = new Set();
+    Object.keys(rw).forEach((k) => seen.add(k | 0));
+    for (let m = 36; m <= 84; m++) seen.add(m);
+    seen.add(growOf(L));
+    return [...seen].filter((m) => m >= 0 && m <= 127).sort((a, b) => a - b);
+  }
+  // ── ⌸ THE ROW PICKER AND ITS GRID ─────────────────────────
+  // Same chrome as the grid it replaces — `.ambient-select` for the picker,
+  // `.ambient-slice-cell` for the cells, the same 8-per-row chunking at 390px,
+  // for the same reason (a 16-wide block is 17px a cell, under the touch floor).
+  function gridRowsHtml(L) {
+    const st = Math.max(1, (L.part.rhythm || {}).steps | 0);
+    const rw = (L.part.pitch || {}).rows || {};
+    const cur = growOf(L);
+    // IN THE CHORD / IN THE KEY / OUTSIDE, at the TOP OF THE PART. The harmony
+    // moves through a part, so one mark cannot be true throughout — the hint
+    // below says which moment it is reporting rather than implying all of them.
+    let chPcs = null, scPcs = null;
+    try {
+      const E2 = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+      if (E2) {
+        const cfg2 = E2.getCfg();
+        chPcs = V2.chordAt(E2, cfg2, 0, L);
+        scPcs = V2.scaleAt(E2, cfg2, 0, L);
+      }
+    } catch (e) { chPcs = null; scPcs = null; }
+    const mark = (m) => {
+      const pc = ((m % 12) + 12) % 12;
+      if (chPcs && chPcs[pc]) return '●';          // the sounding chord holds it
+      if (scPcs && scPcs[pc]) return '○';          // in the key, not in the chord
+      return (chPcs || scPcs) ? '·' : '';          // outside both — blank with no key
+    };
+    const runsOf = (m) => ((rw[String(m)] || {}).c || []);
+    const opts = growList(L).map((m) => {
+      const n = runsOf(m).length;
+      return '<option value="' + m + '"' + (m === cur ? ' selected' : '') + '>' +
+        esc(noteName(m)) + ' ' + mark(m) + (n ? ' · ' + n : '') + '</option>';
+    }).join('');
+    // THE CELLS OF THE CHOSEN ROW. A cell that STARTS a run is `on`; the cells
+    // INSIDE one are `.tied` — visual only for now, and the multi-cell drawing
+    // (v1's `_barGridPlan` continuation segments) is the next stage's work.
+    const runs = runsOf(cur);
+    // 0 nothing · 1 the onset · 2 held · and `endAt` marks the LAST cell of a
+    // run so the two ends can be rounded and the middle squared off: a run has
+    // to READ as one long note, or "five hits" and "one note held for five"
+    // look the same and the whole point of eliding is invisible.
+    const state = new Array(st).fill(0);
+    const endAt = new Array(st).fill(0);
+    const soloAt = new Array(st).fill(0);
+    runs.forEach((rn) => {
+      const a = rn[0] | 0, ln = Math.max(1, rn[1] | 0);
+      if (!(a >= 0 && a < st)) return;
+      state[a] = 1;
+      const z = Math.min(st - 1, a + ln - 1);
+      for (let q = a + 1; q <= z; q++) state[q] = 2;
+      if (z > a) endAt[z] = 1; else soloAt[a] = 1;
+    });
+    const PER = (typeof window !== 'undefined' && window.innerWidth > 0 &&
+                 window.innerWidth <= 540) ? 8 : 16;
+    let g = '';
+    for (let b0 = 0; b0 < st; b0 += PER) {
+      const n = Math.min(PER, st - b0);
+      g += '<div class="v2-stepblock">' +
+        '<div class="ambient-slice-grid ambient-euclid-cells v2-cells" style="--eucols:' + PER + '">' +
+          Array.from({ length: n }, (_, k) => { const i = b0 + k;
+            const sv = state[i] | 0;
+            return '<button type="button" class="ambient-slice-cell ambient-euclid-cell v2-gcell' +
+              (sv === 1 ? ' on' : '') + (sv === 2 ? ' tied' : '') +
+              (sv && soloAt[i] ? ' run-solo' : '') +
+              (sv === 1 && !soloAt[i] ? ' run-a' : '') +
+              (sv === 2 && !endAt[i] ? ' run-m' : '') +
+              (sv === 2 && endAt[i] ? ' run-z' : '') +
+              '" data-ci="' + i + '" aria-pressed="' + (sv === 1 ? 'true' : 'false') +
+              '" title="' + esc(noteName(cur)) + ' · step ' + (i + 1) + ' of ' + st +
+              (sv === 1 ? ' — tap to clear it' : sv === 2 ? ' — held from an earlier step; tap to end the note here'
+                                                             : ' — tap to put a note here') +
+              '">' + (i + 1) + '</button>'; }).join('') +
+        '</div></div>';
+    }
+    const nRows = Object.keys(rw).length;
+    return '<label class="v2-growrow"><span class="v2-growlab">⌸ Row</span>' +
+        '<select class="ambient-select v2-growpick" title="Which note’s pattern you are editing. ● is in the sounding chord at the top of the part, ○ is in the key, · is outside both; the number is how many notes that row holds.">' +
+        opts + '</select></label>' +
+      '<div class="ambient-hint v2-growhint">' +
+        esc(noteName(cur)) + ' ' + mark(cur) +
+        ' · ' + runs.length + ' note' + (runs.length === 1 ? '' : 's') + ' in this row' +
+        ' · ' + nRows + ' row' + (nRows === 1 ? '' : 's') + ' in use' +
+        ' — ● in the chord, ○ in the key, at the top of the part.' +
+      '</div>' +
+      '<div class="v2-growgrid">' + g + '</div>';
+  }
   function stepBlocksHtml(L) {
     const r = L.part.rhythm || {}, st = Math.max(1, r.steps | 0);
     const cells = viewCells(L);
@@ -9269,7 +9669,9 @@
         : '') +
       (kit
         ? '<div class="v2-stepsgrid v2-stepslanes"' + pAttr + '>' + lanesHtml(L) + '</div>'
-        : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>') +
+        : ((L.part.pitch || {}).kind === 'grid'
+          ? '<div class="v2-stepsgrid v2-stepsrows"' + pAttr + '>' + gridRowsHtml(L) + '</div>'
+          : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>')) +
     '</div>';
   }
   // …AND WHAT THE SEQUENCER'S READOUT SAYS. The roll's line names the record
@@ -14041,7 +14443,12 @@
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
                       ['chance', 'Chance — any tone'],
                       ['mixed', 'Mixed — chords and single notes'],
-                      ['confug', 'ConFugued — N notes by stated intervals']];
+                      ['confug', 'ConFugued — N notes by stated intervals'],
+                      // ⌸ A ROW PER NOTE ON THE PIANO. Deliberately NOT added to
+                      // `BAR_RULE_F`: a Character writes PER BAR, and the grid's
+                      // rows describe the whole part — one bar naming `grid`
+                      // would point at material it does not own.
+                      ['grid', '⌸ Grid — a row per note on the piano']];
 
   // v1's FULL voice list — every built-in, every SAMPLE, every ensemble and every
   // Design patch. `_ambToneOptions()` returns an ARRAY of `{value,label}`, and
@@ -15468,13 +15875,19 @@
                   'interlocking rows, each on its own note', 'kind:live;voice:synth;rhythm:euclid') +
               gst(L, 'part.shape.holdSteps', 'Hold steps', num((L.part.shape || {}).holdSteps, 0), 0, 16,
                   holdHint(L),
-                  'kind:live')) +
+                  'kind:live;gridmat:off')) +
               // ── NOTES — which pitches, and how they are stacked
               ftrows('notes',
               // REGISTER, the pitch material Range / Home / Note are tuned
               // against — a second door onto the Instrument sheet head's Reg
+              // ⌸ NOT ON A GRID, where a row IS an absolute note: the octave is
+              // whichever row you drew on, and Register would be a dial with
+              // nothing on the other end. Its siblings (Note, Line moves, Home)
+              // already gate on `pitch:` values that exclude the grid, so this
+              // is the one that needed saying — the family, not just the
+              // addition.
               gst(L, 'instrument.register', 'Register', clamp((L.instrument.register | 0) || 4, 1, 8), 1, 8,
-                  'the octave the notes sit in', 'kind:live;voice:synth') +
+                  'the octave the notes sit in', 'kind:live;voice:synth;gridmat:off') +
               gst(L, 'part.pitch.degree', 'Note', (L.part.pitch || {}).degree, 1, noteMax(L),
                   noteHint(L), 'kind:live;voice:synth;pitch:fixed,stack,walk,series') +
               // HOW THE LINE MOVES — stepping from the last note is what makes
@@ -16364,7 +16777,11 @@
             sizeTog(L) +
             st(L, 'part.shape.holdSteps', 'Hold', num(sh.holdSteps, 0), 0, 16,
                holdHint(L),
-               'kind:live;size:hold') +
+               // ⌸ NOT ON A GRID: a run IS "this note is N steps long", so Hold
+               // is answering the question the grid already answered — and the
+               // emitter ignores it there (measured). A control that cannot act
+               // must not look as though it can.
+               'kind:live;size:hold;gridmat:off') +
           // LENGTH SITS BESIDE IT (2026-09-18). It lived in \u2699 Deep alone while
           // Hold had a copy here, so the two ALTERNATIVES to one question were
           // on different sheets and Tight \u2014 which clips whatever they produce
@@ -16829,6 +17246,13 @@
       // variance knob means the same thing in both.
       form: V2.formOf(L),
       pitch: (p.pitch && p.pitch.kind) || '',
+      // ⌸ IS THE GRID THE MATERIAL? Its own token rather than a ten-value
+      // `pitch:` enum of everything-but-grid, so a gate READS as what it means
+      // and a new pitch kind does not have to be added to every such clause.
+      // What it scopes is exactly the controls the grid ANSWERS — a knob that
+      // cannot act must say so, or it is a confident wrong answer.
+      gridmat: ((p.pitch && p.pitch.kind) === 'grid' &&
+                (p.pitch.rows && Object.keys(p.pitch.rows).length)) ? 'on' : 'off',
       clock: (p.clock === 'free') ? 'free' : 'bars',
       // The KIT KIND — the synth-kit editor applies to the generated kit only.
       kit: ((L.instrument && L.instrument.kit) === 'synth') ? 'synth' : 'sample',
@@ -20006,6 +20430,16 @@
           try { multiSync(ctx.card, ctx.L); } catch (e) {}
           return;
         }
+        // ⌸ WHICH ROW THE GRID SHOWS. A view state, so no commit and no
+        // re-anchor — but the grid under it is a different row's pattern, so
+        // the card is rebuilt rather than repainted.
+        const grw = ev.target.closest && ev.target.closest('.v2-growpick');
+        if (grw) {
+          const ctx = layerOf(grw); if (!ctx) return;
+          GROW.set(ctx.L.id | 0, grw.value | 0);
+          h._sig = ''; V2.render(E);
+          return;
+        }
         const gsel = ev.target.closest && ev.target.closest('.v2-gridpick');
         if (gsel) {
           const ctx = layerOf(gsel); if (!ctx) return;
@@ -20324,6 +20758,21 @@
         // and `beatScalePer` has just rewritten every one of their values, so
         // a regate alone would leave eight numbers showing the old beat.
         // ↔ …and picking what to answer, which ADDS the mode row under it.
+        // ⌸ CHOOSING THE GRID SEEDS IT, before the rebuild draws the rows —
+        // otherwise the first thing you see is an empty grid on a part that was
+        // full, and the layer is silent until you tap something.
+        if (path === 'part.pitch.kind' && !staged0) {
+          if (V2.gridSeed(E, ctx.L)) {
+            try {
+              if (typeof showToast === 'function') {
+                const nR = Object.keys((ctx.L.part.pitch || {}).rows || {}).length;
+                showToast('⌸ Grid — started from the harmony over the pattern you had: ' + nR +
+                  ' row' + (nR === 1 ? '' : 's') + '. Pick a row and tap cells to change it.',
+                  { ms: 5000 });
+              }
+            } catch (e) {}
+          }
+        }
         if (path === 'instrument.voice' || path === 'part.rhythm.steps' ||
             path === 'part.pitch.kind' || path === 'part.rhythm.beat.per' ||
             path === 'part.answer.src') { h._sig = ''; V2.render(E); }
@@ -20489,6 +20938,83 @@
         vnavSet(LW, { bar0: clamp((vnavOf(LW).bar0 || 0) + dx / perBarW, 0, maxBW) });
         try { drawPartViz(ctxW.card, LW, E); } catch (e) {}
       }, { passive: false });
+      // ── ⌸ DRAG ACROSS CELLS = ONE SUSTAINED NOTE (2026-09-24) ─────────
+      // user: "if select adjacent notes, can choose to either have those remain
+      // separate hits, or elide them into a single sustained note". THE DRAG IS
+      // THE SELECTION — no second selection model on a surface that is already
+      // a grid of buttons — and it is the gesture the pencil already uses in the
+      // roll ("press-drag adds ONE note sized by the drag"), so the hand does
+      // not learn a second one.
+      // THE TWO ANSWERS ARE TWO GESTURES, which is why neither needs a mode:
+      //   tap each cell  → separate hits
+      //   drag across    → one note held across them
+      // …and the way back out is the tap-a-held-cell rule from the row editor:
+      // it ENDS the note there, which splits a run without a second control.
+      h.addEventListener('pointerdown', (ev) => {
+        const c0 = ev.target.closest && ev.target.closest('.v2-gcell'); if (!c0) return;
+        const ctxG = layerOf(c0); if (!ctxG) return;
+        const grid = c0.closest('.v2-growgrid'); if (!grid) return;
+        const a0 = c0.getAttribute('data-ci') | 0;
+        let last = a0, moved = false;
+        // THE CELL UNDER THE FINGER, resolved by HIT TESTING rather than by
+        // pointer capture: the cells are separate elements and a captured
+        // pointer would keep reporting the one it started on.
+        const cellAt = (x, y) => {
+          const el = document.elementFromPoint(x, y);
+          const g = el && el.closest && el.closest('.v2-gcell');
+          return (g && grid.contains(g)) ? (g.getAttribute('data-ci') | 0) : null;
+        };
+        const paint = (lo, hi) => {
+          grid.querySelectorAll('.v2-gcell').forEach((b) => {
+            const i = b.getAttribute('data-ci') | 0;
+            b.classList.toggle('v2-gsel', i >= lo && i <= hi);
+          });
+        };
+        const move = (e2) => {
+          const i = cellAt(e2.clientX, e2.clientY);
+          if (i == null || i === last) return;
+          last = i; moved = true;
+          paint(Math.min(a0, last), Math.max(a0, last));
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', up);
+          document.removeEventListener('pointercancel', up);
+          paint(-1, -1);
+          if (!moved) return;                 // a plain tap — the click handler owns it
+          // …AND IT MUST NOT ALSO CLICK. The same `_dragged` stamp the canvas
+          // pencil uses, read by the cell click handler below.
+          grid._dragged = Date.now();
+          const lo = Math.min(a0, last), hi = Math.max(a0, last);
+          const tp = ctxG.L.part.pitch || (ctxG.L.part.pitch = {});
+          const midi = growOf(ctxG.L);
+          const rw = (tp.rows && typeof tp.rows === 'object') ? tp.rows : (tp.rows = {});
+          const row = rw[String(midi)] || (rw[String(midi)] = { c: [] });
+          const runs = Array.isArray(row.c) ? row.c : (row.c = []);
+          // WHAT THE DRAG COVERS BECOMES THE NOTE. Separate hits under it are
+          // exactly what "elide them into a single sustained note" asks to
+          // replace, and a run that merely OVERLAPS the drag is trimmed rather
+          // than deleted — its onset is still a note you drew.
+          for (let q = runs.length - 1; q >= 0; q--) {
+            const a = runs[q][0] | 0, z = a + Math.max(1, runs[q][1] | 0) - 1;
+            if (a >= lo && a <= hi) { runs.splice(q, 1); continue; }
+            if (z >= lo && a < lo) runs[q][1] = Math.max(1, lo - a);
+          }
+          runs.push([lo, hi - lo + 1]);
+          try {
+            if (typeof showToast === 'function' && hi > lo) {
+              showToast('\u2338 ' + noteName(midi) + ' held for ' + (hi - lo + 1) +
+                ' step' + (hi - lo === 0 ? '' : 's') + ' \u2014 tap a held cell to end it sooner.',
+                { ms: 3200 });
+            }
+          } catch (e) {}
+          commit(ctxG);
+          h._sig = ''; V2.render(E);
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+        document.addEventListener('pointercancel', up);
+      });
       h.addEventListener('pointerdown', (ev) => {
         let cvd = ev.target.closest && ev.target.closest('.v2-vizcv'); if (!cvd) return;
         // `layerOf`, not `layersOf` — the latter is ENGINE-side and this
@@ -21910,6 +22436,47 @@
                     : 'the other form keeps whatever is in it.'), { ms: 3800 });
           } catch (e) {}
           commit(ctx); h._sig = ''; V2.render(E);
+          return;
+        }
+        // ── ⌸ A TAP ON THE ROW'S GRID ───────────────────────
+        // Three cases, and between them every state is reachable by tapping:
+        //   empty        → put a note here (a run of one)
+        //   starts a run → take it away
+        //   inside a run → END the note here, i.e. un-elide from this cell on.
+        // The last one is what stops a tie being a one-way door before the
+        // elide gesture lands. Extending a run is the NEXT stage.
+        const gc = t.closest('.v2-gcell');
+        if (gc) {
+          const ctx = layerOf(gc); if (!ctx) return;
+          // A DRAG ALREADY ANSWERED THIS PRESS — the pencil's own `_dragged`
+          // idiom, because a pointerup over a button still fires a click.
+          const gridEl = gc.closest('.v2-growgrid');
+          if (gridEl && gridEl._dragged && Date.now() - gridEl._dragged < 500) {
+            gridEl._dragged = 0; return;
+          }
+          const i = gc.getAttribute('data-ci') | 0;
+          const tp = ctx.L.part.pitch || (ctx.L.part.pitch = {});
+          const midi = growOf(ctx.L);
+          const rw = (tp.rows && typeof tp.rows === 'object') ? tp.rows : (tp.rows = {});
+          const key = String(midi);
+          const row = rw[key] || (rw[key] = { c: [] });
+          const runs = Array.isArray(row.c) ? row.c : (row.c = []);
+          let hit = -1, inside = -1;
+          for (let q = 0; q < runs.length; q++) {
+            const a = runs[q][0] | 0, ln = Math.max(1, runs[q][1] | 0);
+            if (a === i) { hit = q; break; }
+            if (i > a && i < a + ln) { inside = q; break; }
+          }
+          if (hit >= 0) runs.splice(hit, 1);
+          else if (inside >= 0) runs[inside][1] = Math.max(1, i - (runs[inside][0] | 0));
+          else runs.push([i, 1]);
+          // NORMALIZE OWNS THE SHAPE — sorting, clipping and pruning an empty
+          // row all happen there, on the one `getCfg` every commit makes. A
+          // second copy of those rules here is how the two come to disagree.
+          // The card is REBUILT because a run change moves more than one cell
+          // (ending a note clears every cell after it).
+          commit(ctx);
+          h._sig = ''; V2.render(E);
           return;
         }
         const cell = t.closest('.v2-cell');

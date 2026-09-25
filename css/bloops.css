@@ -16659,6 +16659,50 @@ select.ambient-select.v2-gridpick {
   flex: 0 0 auto; width: 68px; min-height: 26px; padding: 2px 4px;
   border-radius: 8px; font-size: 0.66rem;
 }
+/* ⌸ THE PITCH GRID'S ROW PICKER — the same row chrome as ⊞ Grid beside it
+   (rule 6: new UI matches its neighbours), and the same compound-selector
+   dodge, because `.ambient-select` is `width: 100%` and declared later. It is
+   WIDER than the grid picker because it carries a note name, a harmony mark
+   and a run count rather than "1/16". */
+.v2-partviz .v2-growrow {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
+  font: 600 0.62rem 'Segoe UI', sans-serif; color: #7a7a9c; margin: 6px 0 2px;
+}
+.v2-partviz .v2-growlab { flex: 0 0 auto; }
+select.ambient-select.v2-growpick {
+  flex: 1 1 auto; min-width: 0; width: auto; min-height: 30px; padding: 3px 6px;
+  border-radius: 8px; font-size: 0.72rem;
+}
+/* the hint wraps by default like every other `.ambient-hint`; it only needs
+   its own spacing above the cells */
+.v2-partviz .v2-growhint { margin: 0 0 6px; }
+/* A RUN READS AS ONE BAR. The cells stay separate elements — every one has to
+   be tappable, for "end the note here" and for the drag's hit testing — so the
+   continuity is drawn rather than structural: round only the two ENDS, square
+   the joins, and drop the inner borders. That is v1's continuation-segment idea
+   (`_barGridPlan`) without v1's handler-less clones, which would be the wrong
+   trade on a surface where the middle of a note is a target. */
+.ambient-euclid-cell.v2-gcell.run-a { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-color: transparent; }
+.ambient-euclid-cell.v2-gcell.run-m { border-radius: 0; border-left: 0; border-right-color: transparent; }
+.ambient-euclid-cell.v2-gcell.run-z { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; }
+/* WHAT THE DRAG WILL TAKE, while the finger is still down. Its own colour, not
+   the onset's green: this is a proposal, and it has to be distinguishable from
+   the thing it is about to become. */
+.ambient-euclid-cell.v2-gcell.v2-gsel {
+  border-color: #9f7aea; background: rgba(159, 122, 234, 0.35); color: #e9d8fd;
+}
+/* A CELL HELD FROM AN EARLIER STEP. Dimmer and flatter than an onset, and
+   deliberately NOT the onset's green: the eye has to be able to find where a
+   note STARTS in a run of five, which is the whole difference between "five
+   hits" and "one long note". The proper multi-cell drawing (v1's
+   `_barGridPlan` continuation segments) replaces this next. */
+.ambient-euclid-cell.v2-gcell.tied {
+  border-color: #2f6f5e; background: rgba(79, 209, 165, 0.22); color: #4f9d88;
+  box-shadow: none; font-weight: 600;
+}
+@media (hover: hover) {
+  .ambient-euclid-cell.v2-gcell.tied:hover { background: rgba(79, 209, 165, 0.32); color: #7fd8bf; }
+}
 .v2-draw {
   flex: 0 0 auto; min-height: 26px; padding: 3px 9px; border-radius: 20px;
   border: 1px solid #2d2d3f; background: transparent; color: #a0aec0;

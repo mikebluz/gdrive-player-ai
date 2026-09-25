@@ -7,6 +7,12 @@
 
 ### Measurement & testing discipline
 
+- **`page.mouse` dispatches at VIEWPORT coordinates, so an element below the fold takes the press
+  at a point where nothing is** — and a drag that does nothing is indistinguishable from a broken
+  handler. Cost a debugging cycle on the ⌸ grid's elide drag: the listener was fine, the cells were
+  off-screen. `scrollIntoView({block:'center'})` first, then assert `elementFromPoint` is the cell
+  you named. A synthetic `PointerEvent` dispatched on the element is the quickest way to tell the
+  two apart — if that fires and the mouse does not, it is the coordinates, not the code.
 - **A synthetic tap that lands OFF the element reads as "nothing happened" and passes a
   negative check.** `page.mouse.click` at a point outside the viewport or past the canvas does
   nothing at all, which is indistinguishable from the handler correctly ignoring it — measured

@@ -213,6 +213,19 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **TWO CONTROLS SHARE `data-f="part.pitch.kind"`** — Groundwork's melody picker (Run / Wander /
+  Arpeggio / One note) and the real Pitch rule — and `querySelector` answers for whichever comes
+  first in the DOM. Setting a value the first one does not offer leaves `value === ''` and normalize
+  falls back to `'chord'`, which reads as "my change did nothing". **Select by the option you need**
+  (`[...qsa(...)].find(s => [...s.options].some(o => o.value === X))`), not by the path alone.
+- **THE PITCH RULE IS EDITED IN A STAGED DRAFT** (⚙ Deep ▸ ⚠ Advanced: recipe), so a change reaches
+  the layer at `draftCommit`, NOT at the select's own commit. Anything that must happen when a rule
+  is CHOSEN (⌸ Grid's seeding) belongs in `draftCommitFn` as well — and therefore in the model half,
+  since `draftCommitFn` cannot call a UI-half name.
+- **`form: 'steps'` set in config is a SILENT part.** `onsetsOf` reads `rhythm.cells` directly and
+  "an empty grid is a rest" — entering ▦ Pattern through the UI seeds the cells from the euclid
+  formula, and a fixture that sets `form` by hand skips that door. Seed `cells` in any rig that
+  builds a Pattern-form part.
 - **THE NOTE HOTKEYS SERVE TWO SURFACES AND `NE` ONLY NAMES ONE.** ⇧/⌥ + arrows route through
   `neApply` for the open note and `multiApply` for a ⬚ Multi gathering (2026-09-23) — one writer
   each, never a third implementation behind the key. A gathering is PER LAYER and two can be held at

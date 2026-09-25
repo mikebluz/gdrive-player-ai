@@ -775,6 +775,173 @@ C-track discipline).
 
 ## 11. Backlog — TBD
 
+### ⌸ Pitch grid — a row per semitone (started 2026-09-24, stages 1–5 landed; two items open)
+
+**Status: IN PROGRESS.** User: "a pattern per note on the piano, all at a set length
+(number of steps) with resolution control … then if select adjacent notes, can choose to
+either have those remain separate hits, or elide them into a single sustained note."
+
+This is §5.1's "**Authored** (degrees drawn per cell)" pitch seed — with two differences
+decided in conversation, both deliberate:
+- **Rows are ABSOLUTE MIDI, not degrees.** §5.1 and the shipped `pitch.steps` both use
+  degrees 1–24; the grid does not, because the request is a piano and a drawn C4 is a C4.
+  What happens when the chords move under it is the EXISTING `L.harmony` axis (plays as
+  written / diatonic / chordlock), **default as written** — no second harmony mechanism.
+  Rows are highlighted three ways (in the sounding chord / in the key / outside) from
+  `V2.chordAt` and `V2.scaleAt`, the same call that lights the note editor's piano. That
+  readout MOVES with the progression and needs its repaint.
+- **A row can hold a CHORD.** One degree per cell cannot state a triad; N rows can. This is
+  the reason to build this rather than §5.1's version.
+
+**The six decisions, so a later stage does not relitigate them:**
+1. Rows = chromatic semitones, with in-chord / in-key / outside highlighting.
+2. The grid is the WHOLE material for the part, not an overlay on a generated one.
+3. ⟳ Evolve rotates a drawn pattern (`rhyShift`) rather than re-rolling it; rows rotate
+   TOGETHER by default, with a per-row opt-out (`ind`).
+4. An elided run sets the SPAN; `lenRatio` still articulates it (a 4-cell tie at 90% plays
+   3.6 steps). One length story across the card, and back-to-back runs still separate.
+5. `shape.holdSteps` answers the question the grid now answers — it should GREY in grid
+   form. `lenShape` occupies `lenRatio`'s slot and keeps working; decide by ear.
+6. Resolution and length are the SHIPPED controls: `part.grid` (a note value per bar) and
+   `bars`, with `rhythm.steps` derived in ▦ Pattern form. No new length authority.
+
+**Store (stage 1, landed):** `part.pitch.kind = 'grid'`, `part.pitch.rows = { "<midi>":
+{ c: [[start, len], …], ind?: 1 } }`. Sparse — a chromatic grid is 128 possible rows and a
+dense array per row would put kilobytes of zeroes in every save. ONE representation for a
+hit and a tie (`[i,1]` vs `[i,4]`), so eliding MERGES runs and un-eliding SPLITS one and no
+tie flag can fall out of step with the cells. `rhythm.cells` is DERIVED from the rows at the
+normalize chokepoint — one writer — so `onsetsOf`, `viewCells`, the readouts and the euclid
+seed all keep working unchanged. Absent by default; coerced whichever pitch kind is active,
+so a trip through another kind does not cost you the grid. `test/probe-pitchgrid.js` 17/17,
+poisoned twice.
+
+**Emit (stage 2, landed).** `pitchesBase` gains a `'grid'` branch FIRST, before `stepFx` and
+every kind below — the grid IS the material, so a per-step degree override beside it would be
+a second opinion. It returns ABSOLUTE MIDI, so the register and pitch-span controls do not
+apply (grey them). `onsetsOf` reads the derived cells whenever the pitch is a grid, whatever
+the rhythm kind says, and `stepOf` uses the cell index for the same reason.
+
+**THE SEMANTIC THAT MAKES ELIDING WORTH HAVING: on the grid a cell is ONE CELL long.**
+Everywhere else a note's length is a share of the GAP to the next onset, so a lone hit on a
+sparse pattern already sustains for bars — and if that were true here, eliding would buy
+nothing. A run of N cells is N cells; `lenRatio` articulates it (4 cells at 90% sounds for
+3.6). `holdSteps` does NOT apply — it answers the question the grid now answers. The
+⑁ Length shape gap ceiling is also lifted on a grid, because a run may legitimately reach
+past a later onset (a sustain under a moving line) and the ceiling would silently cut it.
+
+Per-voice lengths — the one place the pipeline had to widen — are done by scaling the onset's
+FINISHED length by each run's share of the longest run, matched by MIDI (a row is one note,
+so the map is exact). So ⑁ Length shape, Len vary and the Groundwork hold each still apply
+exactly once, and a voice the pitch stage ADDED (a harmony part) or MOVED (an inversion)
+falls back to the onset's length rather than borrowing a run it has no claim on.
+`test/probe-pitchgrid-emit.js` 10/10, poisoned twice.
+
+**Not yet wired:** `L.harmony`'s diatonic/chordlock remap runs only on the RECORDED branch of
+`notesForRaw`, so a grid currently always plays as written. That is the decided DEFAULT, but
+the opt-in needs routing (stage 5).
+
+**UI (stage 3, landed).** `PITCH_OPTS` gains ⌸ Grid — deliberately NOT `BAR_RULE_F`, because a
+Character writes PER BAR and the rows describe the whole part. The Pattern view swaps its single
+cell row for a ⌸ Row picker plus that row's cells: ONE PITCH AT A TIME, because the lane strip is
+one bar per row at 48px, so twelve stacked rows would be ~1300px and horizontal scroll is
+forbidden. The picker carries a run count per row (or you edit blind) and a harmony mark — ● in
+the sounding chord, ○ in the key, · outside — from `V2.chordAt`/`V2.scaleAt`, the calls that light
+the note editor's piano. The mark is read AT THE TOP OF THE PART and the hint says so; per-cell
+marking (where a row clashes as the changes move) is a later refinement.
+
+Three taps cover every state: an empty cell takes a note, a cell that STARTS a run gives it back,
+and a cell INSIDE a run ENDS the note there — so a tie is never a one-way door before the elide
+gesture lands. Held cells draw dimmer and flatter than the onset, never the onset's green, because
+finding where a note STARTS in a run of five is the whole difference between five hits and one long
+note. `test/probe-pitchgrid-ui.js` 13/13, poisoned twice.
+
+**ENTERING THE GRID SEEDS IT, and this is load-bearing:** the rows ARE the material, so choosing
+⌸ Grid with no rows is a SILENT LAYER. `gridSeedFn` lays one note per onset from the harmony — the
+rhythm is preserved exactly and only the pitches are derived — which is the same move `recipeSeed`
+makes when a new rule would arrive somewhere unusable ("picking Chance gave 0 notes — silence").
+It CANNOT reconstruct the rule you switched away from: `kind` is already 'grid' by the time it runs.
+
+**IT LIVES IN THE MODEL HALF AND RUNS AT `draftCommit`.** The Pitch rule's one home is ⚙ Deep ▸
+⚠ Advanced: recipe, which is a STAGED DRAFT — the choice reaches the layer at ✓ Done, not at the
+select's own commit — and `draftCommitFn` cannot call a UI-half name (the two-IIFE rule). Both
+routes are covered; the direct one seeds in the `.v2-f` handler.
+
+**Elide (stage 4, landed). THE DRAG IS THE SELECTION** — no second selection model on a surface
+that is already a grid of buttons, and it is the gesture the pencil already uses in the roll
+("press-drag adds ONE note sized by the drag"). So the two answers the request names are two
+GESTURES rather than a mode:
+
+  tap each cell → separate hits · drag across → one note held across them
+
+…and the way back out is the row editor's tap-a-held-cell rule, which ends the note there. A run
+merely OVERLAPPED by the drag is TRIMMED rather than deleted — its onset is still a note you drew.
+The press is suppressed from also clicking by the pencil's own `_dragged` stamp.
+
+**Drawn as one bar, not as an onset plus dimmed cells.** The cells stay separate elements — every
+one has to be tappable, for "end the note here" and for the drag's hit testing — so the continuity
+is DRAWN: round the two ends (`run-a` / `run-z`), square the joins (`run-m`), drop the inner
+borders. That is v1's continuation-segment idea (`_barGridPlan`) WITHOUT v1's handler-less clones,
+which would be the wrong trade where the middle of a note is a target. `probe-pitchgrid-ui.js`
+19/19, poisoned twice.
+
+**The knobs around it (stage 5, mostly landed).**
+- **`vary` THINS A GRID PER ROW**, seeded on (onset seed, row) so a take replays and two rows
+  never share a draw. Per STEP it would drop a whole chord at once, and its "add a silent slot"
+  half is a no-op here because an added step names no note — so it only thins, which is the
+  asymmetry `vary` already has everywhere else. **Rolled ONCE:** `onsetsOf` SKIPS its cell-level
+  perturb on a grid, or the two draws would thin twice and disagree about which steps exist.
+- **A KNOB THE GRID ANSWERS MUST SAY SO.** New gate token `gridmat:on|off` — its own token
+  rather than a ten-value `pitch:` enum of everything-but-grid, so a clause reads as what it
+  means and a new pitch kind need not be added to every such gate. Applied to **Hold** (a run IS
+  "N steps long", and the emitter ignores Hold there) and **Register** (a row IS an absolute
+  note). Its siblings — Note, Line moves, Home — already gate on `pitch:` values that exclude
+  the grid. Note length stays live, because the grid does not answer it.
+`test/probe-pitchgrid-var.js` 9/9, poisoned twice.
+
+**STILL OPEN, and both are invasive enough to be their own change:**
+1. **⟳ Evolve rotation.** `rhyShift` rotates a drawn pattern by a seeded amount, but it rotates
+   `rhythm.cells` — which on a grid is DERIVED, so rotating it desyncs the onsets from the rows.
+   The fix is to ask `gridAt` at `step - shift` instead, which means threading the shift into the
+   pitch stage (the `pAt` shim is the seam). Until then the per-row opt-out `ind` is stored and
+   coerced but NOTHING READS IT — say so rather than shipping a dead flag as if it worked.
+2. **`L.harmony`'s diatonic/chordlock opt-in.** The remap is inlined in the RECORDED branch of
+   `notesForRaw` (~50 lines: written-key degree re-indexed into the sounding chord, with a
+   per-onset collision set so a voicing cannot collapse). A grid needs the same, which means
+   factoring it out — a refactor of a hot, delicate path that re-baselines `golden-render` by
+   construction. The decided DEFAULT (plays as written) works today; only the opt-in is missing.
+
+**Remaining stages:** none beyond the two above. (5) — the row dropdown
+(with per-row run counts, or you edit blind), the cell grid, reachability measured.
+(4) Elide — the gesture, plus multi-cell rendering, which is a PORT of v1's `_barGridPlan`
+continuation segments (`05-sequencer-core.js:32-47`): the v2 grids have no multi-cell step
+today, every v2 cell is exactly one slot wide. (5) Stochastic rules — `vary` per row, the
+Evolve rotation and its opt-out, the `holdSteps` greying.
+
+### Scope `lenRatio` so generated parts still PULSE (raised 2026-09-24)
+
+**Status: OPEN, raised while designing the per-pitch grid.** User: "that might be
+creating some rhythmic annoyances in generation where parts are not in time … we need to
+scope that ratio to subsets of the content so that the content still pulses with the bpm
+(optionally of course, user sometimes wants chaos)."
+
+`shape.lenRatio` is a percentage of the distance to the NEXT ONSET (`durAt`/`gapAt`), so a
+note's length is a function of a gap that is itself irregular — on a sparse or uneven
+pattern the same 90% yields a different absolute length every time, and nothing about the
+result is related to the beat. Above 100% it deliberately overhangs the next onset. The
+suspicion is that this is heard as parts drifting out of time rather than as legato.
+
+The direction asked for: scope the ratio to SUBSETS of the content so lengths land on
+beat-related values — i.e. a length that is a fraction of the BAR or the step grid rather
+than of whichever gap happens to be next. Note that `shape.holdSteps` already does exactly
+that (N × the step slot, absolute, beat-related) and is off by default; the question may be
+which of the two is the right default rather than a new mechanism. Chaos stays available —
+this is an option, not a replacement.
+
+Touches every generated length site, so it is a re-baseline of `golden-render` by
+construction. Scope before building: measure first whether the complaint reproduces as
+length drift or as onset drift (`rateVar`, swing, `startVary` are the onset-side
+suspects) — they are different bugs and the report names both.
+
 ### Fold Home / Register / Range into ONE pitch-span control (raised 2026-08-21)
 
 **Status: ⚠️ SHIPPED as the **Placement** popover (`_AMB_PITCH_KEYS = ['home','register','range','proximity']`, `_ambPitchRowOf`/`_ambPitchSummary`) — it even folded a fourth control the proposal did not include. The one sub-question with no answer in code is still "what does Home MEAN on a bed?". Original status: OPEN, parked deliberately.** Three consecutive rows on a layer card

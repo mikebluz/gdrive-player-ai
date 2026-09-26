@@ -775,6 +775,56 @@ C-track discipline).
 
 ## 11. Backlog — TBD
 
+### FAST-FOLLOW — ambient loops (ocean, forest, rain…), and what Samples/Loops actually do in v2 (raised 2026-09-26)
+
+User: "add some ambient loops, like ocean sounds, forest sounds, etc., that users can
+use, we'll need to take another look at how Samples/Loops work in v2 layers."
+
+**Look at the second half first, because the first half has nowhere to land yet.**
+Measured 2026-09-26, and the finding is bigger than the request:
+
+- **The shipped loop library is DEPLOYED DEAD WEIGHT.** `samples/manifest.json` holds
+  72 entries (`{id, file, name, kind, bpm, seconds}`) across 8 music-production packs
+  in `samples/sounds/packs/`, `deploy.sh:85` ships the whole `samples` folder — and
+  **nothing under `js/` reads that manifest or any path inside it.** No fetch, no
+  loader, no browser. It is written by `tools/import-samples.mjs` (`npm run samples`)
+  and read by nobody.
+- **"Samples" in the Tone list is a DIFFERENT THING.** That family
+  (`15-grid-build.js`, `_SAMPLE_KEYS_IDS`, "Samples — 110") is pitched GM-style
+  instrument samples — piano, organ, Rhodes. One word, two mechanisms; per the naming
+  rule that has to be resolved before a third arrives.
+- So there is no surface a loop can be chosen from at all. `🎙 Capture sample…` and
+  `🎚 Sample to Pad…` on the v2 card make voices from what the USER records; neither
+  reaches the shipped library.
+
+**What a nature loop is, structurally, and why it is not just another row.** The
+manifest already carries `kind: 'loop'` with `bpm` and `seconds`, and every existing
+loop is tempo-locked material (`DSP_ASR_130_drum_amaan`, bpm 130). **An ocean or
+forest bed has no bpm and no downbeat** — it is not stretched to fit a chord, it does
+not re-trigger per pass, and Loop/Stretch/Once (`18-schedule.js:169`) are the wrong
+three choices for it. It wants to start when the area starts and run underneath,
+which is closer to a Bed layer's sustain than to a sampled hit.
+
+**Open questions, in the order they block each other:**
+
+1. Does the shipped library get a browser at all, or does `kind: 'loop'` become a
+   Tone-list family so a loop is picked like any other voice? The second is far less
+   new UI, and the family bar already exists.
+2. `bpm: null` has to mean "free-running, never stretched" everywhere the loop path
+   reads bpm — that is the one field a nature bed cannot supply.
+3. Where does it sit on the layer model? A free-running bed is **not** SEED material
+   (§2's axes) — it produces no note events, so Variance, Timing and the whole
+   stochastic rig have nothing to act on. It may be closer to a per-area FX/ambience
+   send than to a layer, and deciding that wrong means a layer card full of controls
+   that do nothing.
+4. Licensing/size: the 8 packs are third-party production packs. Nature beds want to
+   be CC0 or original, and they are LONG — `seconds` for a usable ocean bed is tens of
+   seconds, against ~7 s for the existing loops, so the shipped payload and the
+   `?v=` cache story both change (see `docs/traps-deploy.md`).
+
+**Do not add audio files until 1 and 3 are decided** — files are the easy part and the
+hardest to take back out once a path is published.
+
 ### ⌸ Pitch grid — a row per semitone (started 2026-09-24, stages 1–5 landed; two items open)
 
 **Status: IN PROGRESS.** User: "a pattern per note on the piano, all at a set length

@@ -39901,16 +39901,25 @@
     // `el(suf)` resolves an element whose id ends '...-mod-<t>-<suf>'.
     function _ambSyncModShapeEl(el, m, t) {
       if (!m) return;
+      // NEVER WRITE A CONTROL THE USER IS HOLDING. This function pushes stored
+      // state into rendered controls, and it runs on gate/sync passes that fire
+      // while the panel is open — so an unguarded `sh.value = …` lands INSIDE the
+      // native <select> picker on a touch device and puts the old shape back. The
+      // symptom is "selecting a different shape does nothing": the pick is made,
+      // the sync stomps it, and nothing in the store or the console says so.
+      // `document.activeElement !== el` is the idiom every other sync in this file
+      // already uses (the salt/order mirrors); this one simply never had it.
+      const live = (e) => e && document.activeElement !== e;
       const sh = el('mod-' + t + '-shape');
-      if (sh) sh.value = (m.shape === 'seq') ? ('seq:' + (m.seqRef | 0)) : (m.shape || 'sine');
+      if (live(sh)) sh.value = (m.shape === 'seq') ? ('seq:' + (m.seqRef | 0)) : (m.shape || 'sine');
       const sr = el('mod-' + t + '-seqrow'); if (sr) sr.hidden = (m.shape !== 'seq');
       const pr = el('mod-' + t + '-partrow'); if (pr) pr.hidden = (m.shape !== 'custom');
-      const setS = (suf, val) => { const e = el('mod-' + t + '-' + suf); if (e && val) e.value = val; };
+      const setS = (suf, val) => { const e = el('mod-' + t + '-' + suf); if (live(e) && val) e.value = val; };
       setS('seqsrc', m.seqSource); setS('seqinterp', m.seqInterp); setS('seqrest', m.seqRest);
       const parts = _ambModPartials(m), prates = _ambModPartialRates(m);
       for (let pi = 0; pi < 4; pi++) {
-        const ps = el('mod-' + t + '-part' + pi); if (ps) ps.value = parts[pi];
-        const pr = el('mod-' + t + '-prate' + pi); if (pr) pr.value = prates[pi];
+        const ps = el('mod-' + t + '-part' + pi); if (live(ps)) ps.value = parts[pi];
+        const pr = el('mod-' + t + '-prate' + pi); if (live(pr)) pr.value = prates[pi];
         const rv = el('mod-' + t + '-prate' + pi + '-v'); if (rv) rv.textContent = '×' + prates[pi];
       }
     }

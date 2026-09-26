@@ -202,6 +202,22 @@
 
 ### Controls, wiring and reachability
 
+- **A SYNC THAT WRITES A CONTROL MUST SKIP THE FOCUSED ELEMENT.** `el.value = stored` on a gate/sync
+  pass lands INSIDE an open native `<select>` picker and puts the old value back — the user picks, the
+  sync stomps it, and nothing in the store or the console says so. Reported as "selecting an option
+  does nothing" (`_ambSyncModShapeEl`, 2026-09-25; it was the one sync in 17-ambient without the
+  `document.activeElement !== el` guard every other one already used). Headless CANNOT reproduce it:
+  a `<select>` never takes focus there, `activeElement` stays `BODY`, so a probe must force
+  `activeElement` to test the guard at all.
+- **Binding once and syncing every pass are DIFFERENT JOBS — only the binding may be guarded.** v2's
+  mod wiring put both behind `card.__v2modWired`, so `_ambWireModTarget` ran while its partner
+  `_ambSyncModShapeEl` never did: the Shape select's dependent rows (Harmonics for `custom`, the seq
+  row for `seq`) were revealed inline by the change handler and then re-drawn at their STATIC defaults
+  on the next render, with the store still saying `custom`.
+- **Expanding a v2 card is TWO doors, not one** — the card, then the `.ambient-grp` the control lives
+  in. Open only the card and every control in a shut group measures 0×0, which reads as missing rather
+  than closed. And a blind head-click TOGGLES: on an already-open card it collapses it.
+
 - **A new popover group in ⇗ Arrangement is FOUR edits, not two.** The file's own comment says two (the
   group + the `data-pov="grp:<key>"` door); it is also `_AMB_PROG_GRP_TITLES` (or the popover wears its
   own key as a title) and the hand-written key list in `_ambProgGrpSync`. Leaving it out of that list

@@ -21265,8 +21265,6 @@
     // rebuilt DOM each time. Guarded by a per-element flag so a rebuild that
     // reuses a node cannot double-bind it (the documented double-handler trap).
     h.querySelectorAll('.v2-layer').forEach((card) => {
-      if (card.__v2modWired) return;
-      card.__v2modWired = true;
       const id = card.getAttribute('data-v2id') | 0;
       const el = (suf) => document.getElementById('ambient-v2-' + id + '-' + suf);
       const getL = () => { try { return (E.getCfg().layers || []).find(x => x && (x.id | 0) === id) || null; } catch (e) { return null; } };
@@ -21284,6 +21282,25 @@
         try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
+      // SYNC EVERY PASS, BIND ONCE — they are different jobs and only the second
+      // may be guarded. v2 called `_ambWireModTarget` but never its partner
+      // `_ambSyncModShapeEl`, so the shape's DEPENDENT rows were written once by
+      // the change handler and then re-rendered at their static defaults: pick
+      // `custom` and the Harmonics sliders appear, then vanish on the next render
+      // with `shape` still 'custom' (same for `seq` and the seq row, and the
+      // harmonic amounts never reflected what was stored at all). Reads as
+      // "choosing a shape does nothing".
+      // It is safe to run unconditionally ONLY because _ambSyncModShapeEl now
+      // skips the focused element; without that guard this call would itself put
+      // the old shape back while the picker was open.
+      try {
+        const L0 = getL();
+        if (L0 && L0.mod && typeof _ambSyncModShapeEl === 'function') {
+          ['vca', 'vco', 'vcf'].forEach((t) => { if (L0.mod[t]) _ambSyncModShapeEl(el, L0.mod[t], t); });
+        }
+      } catch (e) {}
+      if (card.__v2modWired) return;
+      card.__v2modWired = true;
       ['vca', 'vco', 'vcf'].forEach((t) => {
         ['depth', 'rate'].forEach((k) => {
           const e2 = el('mod-' + t + '-' + k); if (!e2) return;

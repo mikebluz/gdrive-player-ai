@@ -4509,7 +4509,12 @@
     /* Chord labels clip from the END with an ellipsis rather than centre-clipping
        to an unreadable middle ("#ma" out of "C#maj7"). */
     .ambient-sched-chblk { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
-    .ambient-pov-capture { padding: 3px 10px; border: 1px solid #4a5f7a; border-radius: 999px; background: #16162a; color: #cfe4ff; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
+    /* IT IS A CHIP LIKE ITS NEIGHBOURS. It was a bare inline `display: block` with no
+       min-height, so it measured 21px against the 30px every other chip on the bar
+       gets — under any usable touch target, and this panel is used on a phone. It
+       only became visible when ✺ Variation put it beside them. */
+    .ambient-pov-capture { display: inline-flex; align-items: center; min-height: 30px;
+                           padding: 3px 10px; border: 1px solid #4a5f7a; border-radius: 999px; background: #16162a; color: #cfe4ff; cursor: pointer; font-size: 0.7rem; white-space: nowrap; touch-action: manipulation; }
     @media (hover: hover) { .ambient-pov-capture:hover { border-color: #63b3ed; background: rgba(99,179,237,0.16); color: #e6f2ff; } }
     .ambient-pov-namesbtn.on { border-color: #4fd1c5; background: rgba(79,209,197,0.16); color: #d6fbf6; }
     @media (hover: hover) { .ambient-pov-namesbtn:hover { border-color: #9f7aea; color: #e9dcff; } }
@@ -15267,6 +15272,15 @@
        so it must not take the 68px a group label takes. */
     .pe-partto-lbl { flex: 0 0 auto; margin: 0 2px; opacity: 0.75; }
 
+    /* ✺ VARIATION's own strip. It mirrors the ▤ Parts strip it was split out of, so
+       it needs no chrome of its own — only room, and a leading chip that reads as the
+       one you press first. */
+    .ambient-pov-varstrip { min-width: 0; }
+    .ambient-pov-varstrip .ambient-pov-bar { margin: 0; }
+    /* ✺ Novelty leads its own bar now rather than competing with ＋ Part, so it can
+       carry a little more weight without shouting. */
+    .ambient-pov-varstrip .ambient-pov-novbtn { font-weight: 700; }
+
     /* ✺ NOVELTY — the macro group. Same tokens as its neighbours on the ▤ Parts bar;
        the only new chrome is the preview's from → to rows, which nothing else needs. */
     .ambient-nov-row { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
@@ -15315,6 +15329,9 @@
     .ambient-nov-pvrow.moved .ambient-nov-pvto { color: #e9d8fd; font-weight: 700; }
     .ambient-nov-pvrow.moved .ambient-nov-pvlbl { color: #e2e8f0; }
     .ambient-nov-pvrow.na { opacity: 0.6; }
+    /* The count says how many cannot act, so the shortfall is explained where it is
+       noticed rather than left as a number that does not add up. */
+    .ambient-nov-pvdead { color: #6b6b8c; font-weight: 400; text-transform: none; letter-spacing: 0; }
     .ambient-nov-pvwhy { flex: 0 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-style: italic; }
     .ambient-nov-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-nov-apply {

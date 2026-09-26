@@ -7287,13 +7287,26 @@
     // WHAT APPLY WOULD DO, as a list of (label, from, to, write). Built without
     // touching cfg so the preview and the write can never disagree: the preview IS
     // the plan, and Apply just runs its `write`s.
+    // WRITABLE IS NOT AUDIBLE. Every harmony and time axis resolves through the chord
+    // clock, so on an area with NO CHANGES they can all be stored and none of them is
+    // heard — measured: of the eight rows this plan wrote on an empty area, exactly
+    // ONE (\ud83c\udf12 Arc) could be heard. A preview that counts the other seven as
+    // changes is the lying readout this control was shaped to avoid, so each row
+    // carries `live` and the ones that cannot act are neither counted nor written.
+    //
+    // \ud83c\udf12 Arc is the exception on purpose: it is clocked on BARS from the anchor,
+    // which is exactly what lets it run on an ambient area with no progression at all.
+    const _ambNovHasChanges = (p) => !!(p && p.on && Array.isArray(p.chords) && p.chords.length);
     function _ambNovPlan(cfg, st) {
       const p = cfg && cfg.prog; if (!p) return [];
       const s0 = st || _ambNovState();
       const H = _ambNovEff(s0.amount, s0.bal.h), T = _ambNovEff(s0.amount, s0.bal.t);
       const F = _ambNovEff(s0.amount, s0.bal.f), X = _ambNovEff(s0.amount, s0.bal.x);
+      const changes = _ambNovHasChanges(p);
+      const NEEDS = 'needs changes';
       const out = [];
-      const num = (label, axis, get, set, to) => out.push({ label, axis, from: get(p), to, write: (pp) => set(pp, to) });
+      const num = (label, axis, get, set, to) => out.push({ label, axis, from: get(p), to,
+        live: changes, why: changes ? null : NEEDS, write: (pp) => set(pp, to) });
       // \u2014\u2014 Harmony \u2014\u2014
       num('\ud83c\udf0a Vary', 'h', (q) => q.vary | 0, (q, v) => { if (v) q.vary = v; else delete q.vary; }, Math.round(H * 0.9));
       num('\ud83c\udf21 Tension', 'h', (q) => q.tension | 0, (q, v) => { if (v) q.tension = v; else delete q.tension; }, Math.round(H * 0.5));
@@ -7302,7 +7315,7 @@
         (q, v) => { q.salt = q.salt || {}; q.salt.colors = v; }, Math.round((H / 100) * 4));
       num('\ud83e\uddc2 Scatter', 'h', (q) => (q.salt && q.salt.scatter | 0) || 0,
         (q, v) => { q.salt = q.salt || {}; q.salt.scatter = v; }, Math.round(H * 0.7));
-      out.push({ label: '\u21bb Chords', axis: 'h',
+      out.push({ label: '\u21bb Chords', axis: 'h', live: changes, why: changes ? null : NEEDS,
         from: (p.order && p.order.mode) ? 'random' : 'written',
         to: H > 60 ? 'random' : 'written',
         write: (q) => { if (H > 60) q.order = { mode: 'shuffle', when: 'always' }; else delete q.order; } });
@@ -7314,7 +7327,7 @@
       let nParts = 1;
       try { nParts = (_ambGridRanges(cfg) || []).length; } catch (e) { nParts = 1; }
       if (nParts > 1) {
-        out.push({ label: '\u21bb Parts', axis: 'f',
+        out.push({ label: '\u21bb Parts', axis: 'f', live: true,
           from: (p.arrOrder && p.arrOrder.mode) ? 'random' : 'written',
           to: F > 45 ? 'random' : 'written',
           write: (q) => { if (F > 45) q.arrOrder = { mode: 'shuffle', when: F > 75 ? 'always' : '10' }; else delete q.arrOrder; } });
@@ -7323,15 +7336,16 @@
         const chTo = (F >= 60) ? (100 - Math.round(F * 0.4)) : 100;
         const chFrom = (Array.isArray(p.parts) && p.parts.length && Number.isFinite(p.parts[0].chance))
           ? (p.parts[0].chance | 0) : 100;
-        out.push({ label: '\ud83c\udfb2 Chance', axis: 'f', from: chFrom, to: chTo,
+        out.push({ label: '\ud83c\udfb2 Chance', axis: 'f', live: true, from: chFrom, to: chTo,
           write: (q) => { if (!Array.isArray(q.parts)) return;
             q.parts.forEach((pt) => { if (!pt) return; if (chTo >= 100) delete pt.chance; else pt.chance = chTo; }); } });
       } else {
-        out.push({ label: '\u21bb Parts', axis: 'f', from: '\u2014', to: 'one part', write: null,
-          why: 'Add a second set of changes and the form can move.' });
+        out.push({ label: '\u21bb Parts', axis: 'f', from: '\u2014', to: 'one part', write: null, live: false,
+          why: changes ? 'add a second set of changes' : 'needs two sets of changes' });
       }
       // \u2014\u2014 Texture \u2014\u2014
-      out.push({ label: '\ud83c\udf12 Arc', axis: 'x',
+      // ALWAYS LIVE \u2014 it counts bars, not chords.
+      out.push({ label: '\ud83c\udf12 Arc', axis: 'x', live: true,
         from: (p.arc && p.arc.amount | 0) || 0, to: Math.round(X * 0.8),
         write: (q) => { const v = Math.round(X * 0.8);
           if (v) q.arc = { amount: v, bars: (q.arc && q.arc.bars) || _AMB_ARC_BARS,
@@ -7341,9 +7355,14 @@
     }
     // The sentence. It describes the RESULT, not the settings \u2014 a readout that only
     // repeats the number it sits under is not a readout.
-    function _ambNovWords(amount) {
+    function _ambNovWords(amount, changes) {
       const n = amount | 0;
       if (!n) return 'Nothing moves. The piece plays exactly as written, every time through.';
+      // WITH NO CHANGES only the density curve can act, so the sentence describes THAT
+      // rather than a harmony that is not there \u2014 the readout has to match the rows.
+      if (changes === false) return n < 40
+        ? 'Layers thin out and drift back, gently. Add changes and the harmony can move too.'
+        : 'Layers drop away and come back as it plays. Add changes and the harmony can move too.';
       if (n < 30) return 'Barely. The odd chord recolours and the density drifts \u2014 you would have to be listening for it.';
       if (n < 60) return 'It breathes. Chords take substitutes, the arrangement thins and fills, and the odd part sits a round out.';
       if (n < 85) return 'It improvises. The order of the parts moves, layers drop away and come back, and no two times through are the same.';
@@ -7361,7 +7380,9 @@
         rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc,
         chance: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : null) : null }) };
       let n = 0;
-      plan.forEach((row) => { if (row.write) { try { row.write(p); n++; } catch (e) {} } });
+      // A DEAD ROW IS NOT WRITTEN. Storing a key nothing reads is how a project ends
+      // up carrying settings it never had a chance to hear.
+      plan.forEach((row) => { if (row.write && row.live !== false) { try { row.write(p); n++; } catch (e) {} } });
       return n;
     }
     function _ambNovRevert(E, cfg) {
@@ -41846,6 +41867,94 @@
           ' (the sounding root of their first chord).">\u2302 ' + nm + '</em>';
       } catch (e) { return ''; }
     }
+    // ===== ✺ VARIATION — its own bar, above ▤ Parts ======================
+    // The ▤ Parts bar carried three different things under one header: STRUCTURE
+    // (＋ Part, ▤ Song map), VARIATION (six chips) and a VIEW toggle (♪ Names).
+    // Six of the nine were not about parts at all, it wrapped to two rows at 1100px
+    // and worse at 390 — and, the part that made it a bug rather than a tidy-up, the
+    // two halves need DIFFERENT VISIBILITY. ✺ Novelty and 🌒 Arc act on an area with
+    // no changes at all (Arc counts BARS, not chords); 🧂 Salt, ↔ Rubato, ↻ Order
+    // and ❄ Capture cannot. Sharing one bar meant sharing one answer, so on a fresh
+    // area the whole thing took the empty-state branch and ✺ Novelty did not exist.
+    //
+    // Rendered from BOTH branches of _ambRenderProgOverview, so it is there whether
+    // or not the area has chords — which is the whole point of splitting it out.
+    function _ambPovVarChips(E, cfg, prog, esc) {
+      // WHAT CAN ACT HERE. The same question \u273a Novelty's preview asks per row, asked
+      // once per chip: a door onto a control that cannot do anything yet is the
+      // "offered but dead" shape this file keeps recording.
+      const _ch = !!(prog && Array.isArray(prog.chords) && prog.chords.length);
+      return '' +
+        // \u273a NOVELTY LEADS THE BAR. Every other door here is one axis; this is the
+        // one that sets them all, so it is what you reach for before you know which
+        // axis you wanted. It states nothing about its own state because it HOLDS no
+        // state \u2014 it is a generator, not a setting.
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-novbtn" data-pov="grp:novelty" ' +
+          'title="Novelty \u2014 one dial over the whole arrangement: how much the piece changes as it plays. Sets the controls beside it; nothing new is stored.">\u273a Novelty</span>' +
+        (!_ch ? '' : (function () {
+          const _sv = (prog && prog.salt) || {};
+          const _bits = [];
+          if ((_sv.colors | 0) > 0) _bits.push((_sv.colors | 0) + ' colours');
+          if ((prog.vary | 0) > 0) _bits.push('vary ' + (prog.vary | 0));
+          if ((prog.tension | 0) > 0) _bits.push('tension ' + (prog.tension | 0));
+          if ((prog.reroll | 0) > 0) _bits.push('take ' + (prog.reroll | 0));
+          if ((_sv.scatter | 0) > 0) _bits.push('scatter ' + (_sv.scatter | 0));
+          const _on = _bits.length > 0;
+          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-saltbtn' + (_on ? ' on' : '') + '" data-pov="grp:salt" ' +
+            'title="' + esc('Salt \u2014 deterministic per-cycle spice: colours, vary, tension, take, scatter. ' +
+              (_on ? ('On: ' + _bits.join(' \u00b7 ') + '.') : 'Everything at 0 \u2014 the changes play exactly as written.')) + '">' +
+            '\ud83e\uddc2 Salt' + (_on ? ('<b>' + esc(_bits.length === 1 ? _bits[0] : (_bits.length + ' on')) + '</b>') : '') + '</span>';
+        })()) +
+        // ↔ RUBATO NEEDS ITS OWN DOOR. It is a `pop` group, i.e. PARKED hidden in
+        // the pane and only visible while lifted into the popover — so without a
+        // button here the whole section was unreachable, which is exactly the
+        // "finished feature ships invisible" trap this file documents. A new
+        // popover group is TWO edits: the group itself and the button that opens it.
+        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:rubato" ' +
+          'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato</span>') +
+        // THE DOOR NAMES BOTH RUNGS. The group holds ↻ Chords and ↻ Parts now, and a
+        // door still saying "the changes" would send you looking for part order
+        // somewhere else.
+        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
+          'title="Order — scheduled re-ordering: the CHORDS inside a set of changes, and the PARTS inside a round">↻ Order</span>') +
+        // 🌒 ARC — its door, the second of the TWO edits named above. It reads its
+        // own state like 🧂 Salt does, because a curve that is doing something and
+        // one that is off must not look identical: Arc is the only control here
+        // that can make a layer stop playing, so "why did the pad go away" needs
+        // an answer on the bar rather than two clicks in.
+        ((function () {
+          const _a = prog && prog.arc, _amt = _a ? (_a.amount | 0) : 0;
+          const _sh = { build: 'building', wave: 'waves', drift: 'drifting' }[(_a && _a.shape) || 'build'] || 'building';
+          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_amt > 0 ? ' on' : '') + '" data-pov="grp:arc" ' +
+            'title="' + esc('Arc — the arrangement\u2019s density curve: layers drop out and come back, so it builds and thins instead of playing flat. '
+              + (_amt > 0 ? ('On: ' + _sh + ' over ' + ((_a.bars | 0) || 32) + ' bars, depth ' + _amt + '.') : 'Off — every layer plays wherever its own settings allow.')) + '">' +
+            '🌒 Arc' + (_amt > 0 ? ('<b>' + esc(_sh) + '</b>') : '') + '</span>';
+        })()) +
+        '' +
+        // CAPTURE — only offered when something actually varies pass to pass;
+        // on a plain written progression it would just clone the chords.
+        (_ch && (_ambProgSaltAnyLen(cfg) || (prog.salt && (prog.salt.colors | 0) > 0) || (prog.order && prog.order.mode) ||
+          (prog.reroll | 0) || (prog.vary | 0) || (prog.tension | 0))
+          ? '<span role="button" tabindex="0" class="ambient-pov-capture" data-pov="capture" title="Freeze the pass you are hearing into a fixed, named progression \u2014 salt, order, alternates and re-rolls all baked in. Saved as a version you can switch back to; the live progression keeps varying.">\u2744 Capture pass</span>'
+          : '')
+      ;
+    }
+    function _ambRenderVarBar(E) {
+      const host = _ambGet(E, 'ambient-prog-varbar'); if (!host) return;
+      // A MOVE IS A DELETE PLUS AN ADD. These chips carry `data-pov`, and that
+      // delegation was bound to the OVERVIEW strip \u2014 moving them here left every
+      // one of them rendering perfectly and doing nothing when pressed. Same handler,
+      // same `_wired` guard, on the strip they actually live in now.
+      if (!host._wired) { host._wired = true;
+        host.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
+      const cfg = E.getCfg(); const prog = (cfg && cfg.prog) || {};
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      let html = '';
+      try { html = _ambPovVarChips(E, cfg, prog, esc); } catch (e) { html = ''; }
+      host.style.display = '';
+      host.innerHTML = '<div class="ambient-pov-bar ambient-pov-varbar">' + html + '</div>';
+    }
+
     function _ambRenderProgOverview(E) {
       const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
       // ITS OWN FLAG, AND BEFORE THE EMPTY-STATE RETURN. `_wired` is claimed by
@@ -41853,6 +41962,10 @@
       // the empty one — so anything hung off `!el._wired` further down never ran
       // at all. Measured: the ordinal drag was wired zero times.
       if (!el._dragWired) { el._dragWired = true; _ambWirePovDrag(E, el); }
+      // THE VARIATION BAR FIRST, and outside the empty-state fork below \u2014 it is the
+      // half that has something to do on an area with no chords, so it must not share
+      // that branch's answer.
+      try { _ambRenderVarBar(E); } catch (e) {}
       const cfg = E.getCfg();
       // Render whenever there is anything to show — chords OR parts — and NOT
       // only when prog.on. With the on/off switch gone, gating this on the flag
@@ -42038,51 +42151,6 @@
         // and it SAYS whether anything is on rather than only naming itself —
         // a chip that looks identical at 0 and at full is a readout that does
         // not read.
-        // \u273a NOVELTY LEADS THE BAR. Every other door here is one axis; this is the
-        // one that sets them all, so it is what you reach for before you know which
-        // axis you wanted. It states nothing about its own state because it HOLDS no
-        // state \u2014 it is a generator, not a setting.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-novbtn" data-pov="grp:novelty" ' +
-          'title="Novelty \u2014 one dial over the whole arrangement: how much the piece changes as it plays. Sets the controls beside it; nothing new is stored.">\u273a Novelty</span>' +
-        ((function () {
-          const _sv = (prog && prog.salt) || {};
-          const _bits = [];
-          if ((_sv.colors | 0) > 0) _bits.push((_sv.colors | 0) + ' colours');
-          if ((prog.vary | 0) > 0) _bits.push('vary ' + (prog.vary | 0));
-          if ((prog.tension | 0) > 0) _bits.push('tension ' + (prog.tension | 0));
-          if ((prog.reroll | 0) > 0) _bits.push('take ' + (prog.reroll | 0));
-          if ((_sv.scatter | 0) > 0) _bits.push('scatter ' + (_sv.scatter | 0));
-          const _on = _bits.length > 0;
-          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-saltbtn' + (_on ? ' on' : '') + '" data-pov="grp:salt" ' +
-            'title="' + esc('Salt \u2014 deterministic per-cycle spice: colours, vary, tension, take, scatter. ' +
-              (_on ? ('On: ' + _bits.join(' \u00b7 ') + '.') : 'Everything at 0 \u2014 the changes play exactly as written.')) + '">' +
-            '\ud83e\uddc2 Salt' + (_on ? ('<b>' + esc(_bits.length === 1 ? _bits[0] : (_bits.length + ' on')) + '</b>') : '') + '</span>';
-        })()) +
-        // ↔ RUBATO NEEDS ITS OWN DOOR. It is a `pop` group, i.e. PARKED hidden in
-        // the pane and only visible while lifted into the popover — so without a
-        // button here the whole section was unreachable, which is exactly the
-        // "finished feature ships invisible" trap this file documents. A new
-        // popover group is TWO edits: the group itself and the button that opens it.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:rubato" ' +
-          'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato</span>' +
-        // THE DOOR NAMES BOTH RUNGS. The group holds ↻ Chords and ↻ Parts now, and a
-        // door still saying "the changes" would send you looking for part order
-        // somewhere else.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
-          'title="Order — scheduled re-ordering: the CHORDS inside a set of changes, and the PARTS inside a round">↻ Order</span>' +
-        // 🌒 ARC — its door, the second of the TWO edits named above. It reads its
-        // own state like 🧂 Salt does, because a curve that is doing something and
-        // one that is off must not look identical: Arc is the only control here
-        // that can make a layer stop playing, so "why did the pad go away" needs
-        // an answer on the bar rather than two clicks in.
-        ((function () {
-          const _a = prog && prog.arc, _amt = _a ? (_a.amount | 0) : 0;
-          const _sh = { build: 'building', wave: 'waves', drift: 'drifting' }[(_a && _a.shape) || 'build'] || 'building';
-          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_amt > 0 ? ' on' : '') + '" data-pov="grp:arc" ' +
-            'title="' + esc('Arc — the arrangement\u2019s density curve: layers drop out and come back, so it builds and thins instead of playing flat. '
-              + (_amt > 0 ? ('On: ' + _sh + ' over ' + ((_a.bars | 0) || 32) + ' bars, depth ' + _amt + '.') : 'Off — every layer plays wherever its own settings allow.')) + '">' +
-            '🌒 Arc' + (_amt > 0 ? ('<b>' + esc(_sh) + '</b>') : '') + '</span>';
-        })()) +
         // ▤ ARRANGEMENT — the whole piece at a glance, and where the ORDER OF
         // PLAY (the part chain) is edited. Its only other door is the ▤ in the
         // Scheduler's pass row, which lives inside the Advanced block and
@@ -42121,12 +42189,7 @@
           (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
           (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span>' +
-        // CAPTURE — only offered when something actually varies pass to pass;
-        // on a plain written progression it would just clone the chords.
-        ((_ambProgSaltAnyLen(cfg) || (prog.salt && (prog.salt.colors | 0) > 0) || (prog.order && prog.order.mode) ||
-          (prog.reroll | 0) || (prog.vary | 0) || (prog.tension | 0))
-          ? '<span role="button" tabindex="0" class="ambient-pov-capture" data-pov="capture" title="Freeze the pass you are hearing into a fixed, named progression \u2014 salt, order, alternates and re-rolls all baked in. Saved as a version you can switch back to; the live progression keeps varying.">\u2744 Capture pass</span>'
-          : '') + '</div>';
+        '' + '</div>';
       if (Array.isArray(prog.versions) && prog.versions.length) {
         h += '<div class="ambient-pov-vers">' +
           '<span class="ambient-pov-verslbl">Versions</span>' +
@@ -43692,7 +43755,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['novelty', 'salt', 'rubato', 'order', 'arc', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
+      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -53096,6 +53159,11 @@
                   : (show ? ('The same ' + nParts + ' parts, in a different order \u2014 the round keeps its length, so nothing else moves.')
                           : 'Parts play in the order you wrote them.');
               } }
+            // \u273a Novelty: repaint whenever anything it previews may have moved.
+            try {
+              const _ng = document.getElementById(tr('ambient-proggrp-novelty'));
+              if (_ng && _ng.closest('.ambient-grppop-host') && typeof E._novPaint === 'function') E._novPaint();
+            } catch (e) {}
             // \ud83c\udf12 Arc row: NOT gated on `progOn`. It counts bars, not chords, so it is
             // the one control on this bar that means something with no changes at
             // all \u2014 hiding it with the rest would have made it unreachable in exactly
@@ -53550,6 +53618,13 @@
             // itself — the chips, their order, and the way in to editing any of
             // them — so it belongs before the things that COLOUR it (Salt) or
             // REORDER it (Order), not after.
+            // \u273a VARIATION SITS ABOVE \u25a4 PARTS \u2014 the area \u2192 part ladder this pane
+            // already reads by, and \u273a Novelty is what you reach for before you know
+            // which axis you wanted. OPEN by default: it is the lead, and a collapsed
+            // accordion is where the old bar's chips went to be undiscoverable.
+            _ambProgGrpOpen('variation', '\u273a Variation', true) +
+            '<div class="ambient-pov-strip ambient-pov-varstrip" id="ambient-prog-varbar"></div>' +
+            _ambProgGrpClose() +
             _ambProgGrpOpen('overview', '\u25a4 Parts', false) +
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
               // ＋ Add changes is GONE. Its seed list, Create and roman-numeral
@@ -55921,23 +55996,31 @@
           const amtEl = G('ambient-nov-amt'), valEl = G('ambient-nov-val');
           if (amtEl && document.activeElement !== amtEl) amtEl.value = String(st.amount);
           if (valEl) valEl.textContent = String(st.amount);
-          const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount);
+          const _hasCh = _ambNovHasChanges(c.prog);
+          const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount, _hasCh);
           _AMB_NOV_AXES.forEach(ax => { const e = G('ambient-nov-b' + ax.k);
             if (e && document.activeElement !== e) e.value = String(st.bal[ax.k]); });
           const host = G('ambient-nov-preview');
           if (host) {
             const esc2 = (t) => String(t == null ? '' : t).replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]));
             const plan = _ambNovPlan(c, st);
-            const moves = plan.filter(r => r.write && String(r.from) !== String(r.to));
+            // COUNT ONLY WHAT CAN BE HEARD. A row that is writable but dead is not a
+            // change, and counting it is the difference between a preview and a claim.
+            const able = plan.filter(r => r.write && r.live !== false);
+            const moves = able.filter(r => String(r.from) !== String(r.to));
+            const dead = plan.filter(r => r.live === false).length;
             host.innerHTML =
               '<div class="ambient-nov-pvhead">' +
-                (moves.length ? ('Apply would change ' + moves.length + ' of ' + plan.filter(r => r.write).length)
-                              : 'Nothing would change \u2014 this is what is already set') + '</div>' +
+                (moves.length ? ('Apply would change ' + moves.length + ' of ' + able.length)
+                              : 'Nothing would change \u2014 this is what is already set') +
+                (dead ? ('<span class="ambient-nov-pvdead"> \u00b7 ' + dead + ' cannot act yet</span>') : '') +
+              '</div>' +
               plan.map(r => {
-                const moved = r.write && String(r.from) !== String(r.to);
-                return '<div class="ambient-nov-pvrow' + (moved ? ' moved' : '') + (r.write ? '' : ' na') + '" data-novax="' + r.axis + '">' +
+                const can = r.write && r.live !== false;
+                const moved = can && String(r.from) !== String(r.to);
+                return '<div class="ambient-nov-pvrow' + (moved ? ' moved' : '') + (can ? '' : ' na') + '" data-novax="' + r.axis + '">' +
                   '<span class="ambient-nov-pvlbl">' + esc2(r.label) + '</span>' +
-                  (r.write
+                  (can
                     ? ('<span class="ambient-nov-pvfrom">' + esc2(r.from) + '</span>' +
                        '<span class="ambient-nov-pvarrow" aria-hidden="true">\u2192</span>' +
                        '<span class="ambient-nov-pvto">' + esc2(r.to) + '</span>')
@@ -55986,6 +56069,13 @@
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
             _novPaint();
           }); }
+        // THE PREVIEW HAS TO REFRESH WHEN THE POPOVER OPENS, not only when something in
+        // it is dragged. Painted once at wiring time it shows the config as it was when
+        // the PANEL was built \u2014 add changes, open \u273a Novelty, and it still describes
+        // an area with none. Published on the engine so `_ambSyncControls` (which runs
+        // on every edit, and after the panel is rebuilt) can drive it; guarded on the
+        // group actually being lifted into the popover, so a parked group costs nothing.
+        E._novPaint = _novPaint;
         try { _novPaint(); } catch (e) {}
         // \ud83c\udf12 Arc \u2014 the \u21bb Order idiom exactly: the LABEL is on/off, OFF deletes the
         // whole key so "off" and "absent" stay one state, and ON seeds a musical

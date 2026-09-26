@@ -124,8 +124,48 @@ const ok = (name, cond, detail) => {
   ok('NOTHING new is stored — no novelty key reaches the save file',
     applied.storedKeys.length === 0, JSON.stringify(applied.storedKeys));
 
+  // ---- 3b. WRITABLE IS NOT AUDIBLE -------------------------------------------
+  // user, 2026-09-26: "does this new section do anything if there are no parts?"
+  // Measured then: on an area with NO CHANGES the plan wrote EIGHT rows and exactly
+  // ONE of them (🌒 Arc) could be heard — every harmony and time axis resolves
+  // through the chord clock. The preview counted all eight as changes, which is the
+  // lying readout this control was shaped to avoid.
+  console.log('\n  3b. an area with no changes — only 🌒 Arc can act');
+  const empty = await page.evaluate(() => {
+    const E = _masterEng, c = E.getCfg();
+    c.prog.on = false; c.prog.chords = []; delete c.prog.parts;
+    ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach(k => delete c.prog[k]);
+    const cfg = E.getCfg();
+    const st = { amount: 70, bal: { h: 50, t: 50, f: 50, x: 50 } };
+    _ambNovUiSet(st);
+    const plan = _ambNovPlan(cfg, st);
+    const n = _ambNovApply(E, E.getCfg());
+    const c2 = E.getCfg();
+    return {
+      live: plan.filter(r => r.live !== false).map(r => r.label),
+      dead: plan.filter(r => r.live === false).map(r => r.label),
+      whys: plan.filter(r => r.live === false).map(r => r.why),
+      applied: n,
+      arcSet: (c2.prog.arc || {}).amount || 0,
+      harmonyKeys: ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato'].filter(k => k in c2.prog),
+      says: _ambNovWords(70, false)
+    };
+  });
+  console.log('     live: ' + JSON.stringify(empty.live) + '  dead: ' + empty.dead.length);
+  ok('with no changes ONLY 🌒 Arc is live — every other axis needs the chord clock',
+    JSON.stringify(empty.live) === '["🌒 Arc"]', JSON.stringify(empty.live));
+  ok('…the dead rows say WHY rather than showing a number that cannot act',
+    empty.whys.every(w => /needs changes|two sets/.test(w || '')), JSON.stringify(empty.whys));
+  ok('…Apply writes only the one that can be heard',
+    empty.applied === 1 && empty.arcSet > 0, JSON.stringify([empty.applied, empty.arcSet]));
+  ok('…and stores NO harmony or time key it could not act on',
+    empty.harmonyKeys.length === 0, JSON.stringify(empty.harmonyKeys));
+  ok('…while the sentence describes the density, not a harmony that is not there',
+    /Layers/.test(empty.says) && /Add changes/.test(empty.says), JSON.stringify(empty.says));
+
   // ---- 4. UNDO ---------------------------------------------------------------
   console.log('\n  4. ten keys at once must be takeable back');
+  await setUp();
   const undo = await page.evaluate(() => {
     const E = _masterEng, c = E.getCfg();
     ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach(k => delete c.prog[k]);
@@ -222,6 +262,8 @@ const ok = (name, cond, detail) => {
   ok('…the preview lists every row it would write', ui.pv >= 9, String(ui.pv));
   ok('…the sentence describes the RESULT, not the number', /breathes|improvises|Barely|different take|Nothing moves/.test(ui.says || ''),
     JSON.stringify(ui.says));
+  ok('…and it reflects THIS area, not the one the panel was built against',
+    !/Add changes/.test(ui.says || ''), JSON.stringify(ui.says));
   ok('…and Shape it starts closed — one dial is the whole control by default',
     ui.balHidden === true, String(ui.balHidden));
 

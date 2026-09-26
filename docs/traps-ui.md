@@ -202,6 +202,19 @@
 
 ### Controls, wiring and reachability
 
+- **A MOVE IS A DELETE PLUS AN ADD — and a `data-pov` chip's handler is DELEGATED, so it does not
+  travel with it.** Moving the variation chips into their own strip left all six rendering perfectly
+  and doing nothing when pressed: the delegation is bound to `#ambient-prog-overview`, not to the
+  chips. Any new strip carrying them needs its own `_wired` guard and the same
+  `_ambProgOverviewAct` listener.
+- **A CONTROL'S VISIBILITY RULE IS PART OF WHAT IT IS.** Chips that share a bar share one answer to
+  "should this show", so ✺ Novelty and 🌒 Arc — which act on an area with NO chords — vanished along
+  with 🧂 Salt/↔ Rubato/↻ Order on the empty-state branch. That is why ✺ Variation is its own
+  section: the split is what lets the two halves answer differently.
+- **An outlier touch target hides until you put it beside its siblings.** `.ambient-pov-capture` was a
+  bare `display: block` with no `min-height`, measuring 21px against the 30px every other chip on the
+  bar gets. It read as fine alone and as broken in a row of six.
+
 - **A MACRO OVER OTHER CONTROLS IS A ONE-SHOT, NOT A DIAL** — unless you are willing to store it. Writing
   the same keys the individual controls write has an easy forward direction and a LOSSY reverse one: one
   number cannot be read back out of ten, so the moment someone hand-edits one die a live dial is lying.

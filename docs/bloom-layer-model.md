@@ -805,25 +805,49 @@ not re-trigger per pass, and Loop/Stretch/Once (`18-schedule.js:169`) are the wr
 three choices for it. It wants to start when the area starts and run underneath,
 which is closer to a Bed layer's sustain than to a sampled hit.
 
-**Open questions, in the order they block each other:**
+**DECIDED 2026-09-26 (user).** It is **still a LAYER — with a parallel Generate
+model.** Not an ambience send, and not a Tone-list voice:
 
-1. Does the shipped library get a browser at all, or does `kind: 'loop'` become a
-   Tone-list family so a loop is picked like any other voice? The second is far less
-   new UI, and the family bar already exists.
-2. `bpm: null` has to mean "free-running, never stretched" everywhere the loop path
-   reads bpm — that is the one field a nature bed cannot supply.
-3. Where does it sit on the layer model? A free-running bed is **not** SEED material
-   (§2's axes) — it produces no note events, so Variance, Timing and the whole
-   stochastic rig have nothing to act on. It may be closer to a per-area FX/ambience
-   send than to a layer, and deciding that wrong means a layer card full of controls
-   that do nothing.
-4. Licensing/size: the 8 packs are third-party production packs. Nature beds want to
+> "it should still be a layer, but it's a parallel Generate model; the content is
+> the fixed loop, but the user can chop it up and do sample manipulation, and any
+> tuned sample related params fall out of the menus"
+
+That resolves the two questions that blocked everything else, and it is the better
+answer than the send this doc first leaned toward. Staying a layer means it inherits
+the whole arrangement rig for free — 🌒 Arc thins it, the chord and section masks
+gate it, When schedules it, ✺ Novelty reaches it — none of which an FX send would get.
+
+**What "parallel Generate model" means concretely.** A v2 layer's ⚙ Deep holds the
+rules that MAKE the material; ✺ Live holds what varies per pass. A loop layer keeps
+both surfaces and swaps what ⚙ Deep contains: instead of the note-generating dice it
+holds **chop and sample manipulation** — slice points, order, reverse, gate, the
+things you do TO a fixed recording. The content is the loop; the generation is what
+you cut it into.
+
+The precedent is already in the file: a drum-kit layer is
+`instrument.kit === 'sample'` and its pitch rows gate off. This is the same move one
+step further — a THIRD kit whose seed is a recording rather than a pattern. "Any
+tuned sample related params fall out of the menus" is exactly that gating: root note,
+transpose-to-chord and the harmony axis have no meaning on an ocean bed and must not
+be drawn, per the standing rule that a control which cannot act is worse than absent.
+
+**Still open:**
+
+1. `bpm: null` has to mean "free-running, never stretched" everywhere the loop path
+   reads bpm — the one field a nature bed cannot supply, and the reason Loop/Stretch/
+   Once (`18-schedule.js:169`) are the wrong three choices for it.
+2. Licensing/size: the 8 packs are third-party production packs. Nature beds want to
    be CC0 or original, and they are LONG — `seconds` for a usable ocean bed is tens of
    seconds, against ~7 s for the existing loops, so the shipped payload and the
-   `?v=` cache story both change (see `docs/traps-deploy.md`).
+   `?v=` cache story both change (see `docs/traps-deploy.md`). **Files are still the
+   last step, not the first.**
+3. The "Samples" collision stands: the Tone-list family (pitched GM instrument
+   samples) and the shipped loop library are two mechanisms under one word. A third
+   kit makes it three. Name it when the kit lands, not before.
 
-**Do not add audio files until 1 and 3 are decided** — files are the easy part and the
-hardest to take back out once a path is published.
+**The blocking questions are answered; the remaining two are about files, not shape.**
+Audio still comes last — it is the easy part and the hardest to withdraw once a path
+is published and projects save against it.
 
 ### ⌸ Pitch grid — a row per semitone (started 2026-09-24, stages 1–5 landed; two items open)
 

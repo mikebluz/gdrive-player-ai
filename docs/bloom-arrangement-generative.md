@@ -117,9 +117,11 @@ Take ID's own promise that the same id replays the same performance.
 
 ---
 
-## 4. Not built — the form axis, in order of value
+## 4. The form axis — shipped, except one
 
-(4d shipped; it was never on the form axis — it is the density axis at one more rung.)
+**4c is the only item left on this document**, and §4c says why it is blocked rather
+than merely next. (4d shipped too; it was never on the form axis — it is the density
+axis at one more rung.)
 
 ### ~~4a. `prog.arrOrder`~~ — SHIPPED 2026-09-25 as **↻ Parts**
 
@@ -155,24 +157,60 @@ standing gate for the chord clock, not only its own probe — plus
 configs were **unmoved**, only the 6 added. Poison-verified on four axes (the
 closure-key horizon, the grid engagement, the plan signature, and run-grouping).
 
-### 4b. `parts[i].chance` — the part-level probability the masks already have
+### ~~4b. `parts[i].chance`~~ — SHIPPED 2026-09-26 as **🎲 Chance**
 
-Sections have 100/60/30/0 cells; parts have nothing, so "the bridge plays one round
-in three" is not sayable. The semantics are already settled — part-matrix decision
-#1 is *"OFF = skipped, the pass is genuinely shorter"*, so a skipped part is an
-existing supported state. This only decides it by a seeded hash on
-`(round, pi, seed)` rather than by a written empty cell.
+`parts[i].chance` (0–100, absent/100 = always). The semantics were already settled
+by part-matrix decision #1 — *"OFF = skipped, the round is genuinely shorter"* — so
+a skipped part is an existing supported state, and this only decides it by a seeded
+hash instead of by a written empty cell. Same deterministic `_ambChordHash01` the
+chord and section masks use, so it consumes no shared RNG draw.
 
-A skip changes the round length, so this needs option 1 (a declared horizon), not
-option 2. Grep confirms no arrangement-level `.chance` exists today.
+**This is the one that changes a round's LENGTH,** and it is what the horizon was
+really for: the SUPER-CYCLE is the unit that must hold still, and `plan.cycle` is
+its total however the rounds inside it vary. Measured, B at 50% over three parts:
+visits `012 · 012 · 012 · 02`, cycle 22 = 4×6 − 2.
 
-### 4c. `plays` as a range — `{min, max}`
+Three things it needed beyond the store:
 
-The most "live band" item on the list (a vamp that runs a different number of times
-each go) and the most expensive: it makes the super-cycle length vary per round, and
-`_ambProgChainBars`, the Scheduler lane, phrase fits and Write snapping all assume
-one answer. Own slice, own gate, last.
+- **ONE shared horizon.** `_ambArrRoundHorizon` is the LCM of every per-round die's
+  period. Two numbers would let the state key close the super-cycle while the other
+  die was still varying — so ↻ Parts folds on the shared horizon too, not its own.
+- **Chance is applied BEFORE the order.** Reordering first and then dropping would
+  make the surviving order depend on who was dropped, so the two dice would not be
+  independent.
+- **A round is never empty.** Zero parts is zero bars, and a zero-length round makes
+  `plan.cycle` meaningless. When every part rolls badly the round plays *as
+  written* — a silent gap of no length is not a musical answer to "everyone sat this
+  one out".
 
+A skipped part takes its repeats with it (measured: `12 · 000012 · 000012 · 12`).
+
+Gate: 4 new **arch-parity** configs (`arr-chance`, `-never`, `-order`, `-plays`),
+re-baselined deliberately with the 68 existing **unmoved**, plus
+`node test/probe-partchance.js` (27 checks), poison-verified on three axes — the
+empty-round fallback, the shared horizon, and the plan signature.
+
+### 4c. `plays` as a range — `{min, max}` — **DELIBERATELY NOT BUILT**
+
+The one item left, and it is blocked on a bug rather than on effort.
+
+The machinery is now in place: 🎲 Chance already makes a round's length vary and
+everything downstream coped, so "the same dice, applied to the repeat count" would
+be a small slice rather than the large one this section first predicted.
+
+**It is blocked because `plays` is COUNTED TWICE.** `_ambArrGridSeq`'s default walk
+does `plays × _ambPartPassCols(cfg, pi)`, and that helper falls back to
+`_ambPartNaturalPasses` — which *is* `plays`. So `plays: 3` yields **nine** visits
+whenever the grid clock is on and the part carries no grid of its own. It is
+pre-existing and BASELINED (arch-parity `grid-plays-3`, part C), so it is not a free
+fix; ↻ Parts only made it reachable without a grid.
+
+Building a RANGE on top of a squared count would ship a control whose numbers cannot
+be read: "2 to 4" would play 4 to 16 times. **Fix the double count first** — its own
+change, its own deliberate re-baseline of `grid-plays-3` — and then this is short.
+
+Until then 🎲 Chance covers most of the same musical ground (a part that does not
+always come round) without depending on the broken number.
 ### ~~4d. Per-part Arc depth~~ — SHIPPED 2026-09-25
 
 `parts[i].arc = { amount }`, ↔ Rubato's grammar at the part rung: absent = inherit,
@@ -214,8 +252,8 @@ over nine dice, with per-die access behind ▸ Advanced. The arrangement wants t
 same — one **✺ Novelty** group with three:
 
 - **Harmony drift** → `vary` + salt colours + tension
-- **Form** → `arrOrder` + part chance + plays range
-- **Orchestration** → arc depth + a spread over the mask percentages
+- **Form** → ↻ Parts + 🎲 Chance (both shipped; plays range is §4c)
+- **Orchestration** → 🌒 Arc depth, area and part (shipped) + a spread over the mask percentages
 
 Two filing rules from the existing conventions. Everything on this axis is per-pass,
 so by the play-it-twice test it is all **✺ Live**, never ⚙ Deep. And `_AMB_STOCH` has

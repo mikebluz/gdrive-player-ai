@@ -236,6 +236,24 @@ const CONFIGS = [
     parts: [['A', 2], ['B', 2], ['C', 2]],
     arrGrid: { cols: 2, seq: { 0: [0, 1, 2], 1: [2, 0] } },
     arrOrder: { mode: 'reverse', when: 'always' } },
+  // 🎲 CHANCE — a part that plays some rounds and not others. Unlike ↻ Parts this
+  // changes a ROUND'S LENGTH, so it moves the clock in a way nothing else here
+  // does and belongs in this gate above all.
+  { id: 'arr-chance', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]], chance: { 1: 50 } },
+  // …0% is a state, not an off switch: the part is skipped every round while the
+  // rest of the arrangement carries on at its own length.
+  { id: 'arr-chance-never', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]], chance: { 2: 0 } },
+  // THE COMBINATION that matters most: both per-round dice at once. They must share
+  // ONE horizon, or the state key closes the super-cycle while the other is still
+  // varying — and chance is applied BEFORE the order, so the two stay independent.
+  { id: 'arr-chance-order', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]], chance: { 1: 50 },
+    arrOrder: { mode: 'shuffle', when: 'always' } },
+  // …and with `plays`, because a skipped part must take its REPEATS with it.
+  { id: 'arr-chance-plays', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 2], ['B', 2], ['C', 2]], chance: { 0: 50 } },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section
@@ -314,6 +332,9 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       }
       if (c.arrGrid) cfg.prog.arrGrid = c.arrGrid;   // PART MATRIX: the meta grid
       if (c.arrOrder) cfg.prog.arrOrder = c.arrOrder;   // ↻ PARTS: the round's order
+      // 🎲 CHANCE: per-part, so it is applied after the parts are built
+      if (c.chance) Object.keys(c.chance).forEach(k => {
+        if (cfg.prog.parts && cfg.prog.parts[k | 0]) cfg.prog.parts[k | 0].chance = c.chance[k] | 0; });
       if (c.chain) cfg.prog.chain = c.chain;        // ORDER OF PLAY (outranks `plays`)
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),

@@ -53,6 +53,18 @@
 
 ### Bloom: the arrangement clock
 
+- **EVERY per-round die must share ONE horizon.** `_ambArrRoundHorizon` is the LCM of all of them and
+  `_ambGridSlots`' state key carries `it % H`. Two periods would let the key close the super-cycle
+  while the other die was still varying, so each new die widens the shared number — and every existing
+  one must FOLD on the shared number, not on its own, or it drifts out of step with the plan
+  containing it.
+- **A round may never empty out.** Zero parts is zero bars, and `gloops` is derived from `plan.cycle`,
+  so a zero-length round walks the clock off its own grid. 🎲 Chance falls back to playing the round AS
+  WRITTEN when every part rolls badly.
+- **Dice that drop and dice that reorder must be applied in that order** — drop first, then permute
+  what is left. Reordering first makes the surviving order depend on who was dropped, which quietly
+  couples two controls that read as independent.
+
 - **A ROUND'S PART LIST IS A LIST OF VISITS, NOT OF PARTS.** A part with two passes appears twice,
   consecutively, because "a part runs its passes back to back" is a rule this file fixed after three
   reports. Anything reordering that list must group consecutive equal entries into RUNS and permute the

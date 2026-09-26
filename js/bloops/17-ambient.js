@@ -3471,6 +3471,11 @@
         { const _prx = _ambPassRubatoCoerce(p.passRubato); if (_prx) e.passRubato = _prx; }
         { const _rb = _ambRubatoCoerce(p.rubato); if (_rb) e.rubato = _rb; }
         { const _ac = _ambArcPartCoerce(p.arc); if (_ac) e.arc = _ac; }
+        // \ud83c\udfb2 CHANCE \u2014 100 / absent = always. Pruned at 100 so absence has one
+        // representation, and a meaningful 0 is KEPT: "never, for now" is a state
+        // you set deliberately while working and expect to find again.
+        if (Number.isFinite(p.chance)) { const _cv = Math.max(0, Math.min(100, p.chance | 0));
+          if (_cv < 100) e.chance = _cv; }
         // HANGS — same fresh-object rule as everything above it.
         { const _hh = _ambNormalizeHang(p.head); if (_hh) e.head = _hh;
           const _ht = _ambNormalizeHang(p.tail); if (_ht) e.tail = _ht; }
@@ -5369,12 +5374,59 @@
     // each round, so it gets the declared horizon, widened to the grid's period when
     // there is one. Reduced if the resulting super-cycle would not fit \u2014 truncation
     // would give a wrong `plan.cycle`, which walks the clock off its own grid.
+    // `_ambGcd` / `_ambLcm` already exist at the top of this file — reuse, do not
+    // redeclare (a second `const` of either is a hard SyntaxError, not a shadow).
     function _ambArrOrderRounds(cfg, slotsPerRound) {
       const o = _ambArrOrderCfg(cfg && cfg.prog); if (!o) return 1;
       const wl = (o.when && o.when !== 'always' && /^[01]+$/.test(o.when)) ? o.when.length : 1;
-      const gcd = (x, y) => y ? gcd(y, x % y) : x;
-      const lcm = (x, y) => (x * y) / Math.max(1, gcd(x, y));
-      let h = (o.mode === 'shuffle') ? lcm(_AMB_ARRORDER_ROUNDS, wl) : wl;
+      let h = (o.mode === 'shuffle') ? _ambLcm(_AMB_ARRORDER_ROUNDS, wl) : wl;
+      h = Math.max(1, Math.min(64, h | 0));
+      const per = Math.max(1, slotsPerRound | 0);
+      while (h > 1 && h * per > (_AMB_GRID_MAX_SLOTS >> 1)) h = h >> 1;
+      return h;
+    }
+    // ---- \ud83c\udfb2 PART CHANCE \u2014 a part that plays some rounds and not others ------
+    // Sections have had 100/60/30/0 cells since v2; PARTS had nothing, so "the
+    // bridge comes round one time in three" was not sayable. The semantics were
+    // already settled by the part matrix: **OFF = SKIPPED, the round is genuinely
+    // shorter** (decision 1) \u2014 a skipped part is an existing, supported state, and
+    // this only decides it by a seeded hash instead of by a written empty cell.
+    //
+    // UNLIKE \u21bb PARTS, THIS CHANGES A ROUND'S LENGTH. That is fine here and only
+    // here: the horizon makes the SUPER-CYCLE the unit that must hold still, and
+    // `plan.cycle` is its total however the rounds inside it vary. Individual
+    // rounds already vary under a Passes grid (an empty column plays nothing), so
+    // nothing downstream learns a new shape.
+    const _ambPartChanceOf = (pt) => {
+      const v = (pt && Number.isFinite(pt.chance)) ? (pt.chance | 0) : 100;
+      return Math.max(0, Math.min(100, v));
+    };
+    const _ambAnyPartChance = (cfg) => {
+      const p = cfg && cfg.prog;
+      return !!(p && Array.isArray(p.parts) && p.parts.some(x => x && Number.isFinite(x.chance) && (x.chance | 0) < 100));
+    };
+    // Does part `pi` play in `round`? A pure function of (seed, round, pi) through
+    // the same deterministic hash the chord and section masks use, so it consumes
+    // no shared RNG draw and the same take replays identically.
+    function _ambPartPlaysRound(cfg, pi, round) {
+      const p = cfg && cfg.prog;
+      const parts = Array.isArray(p && p.parts) ? p.parts : null;
+      const pct = _ambPartChanceOf(parts && parts[pi | 0]);
+      if (pct >= 100) return true;
+      if (pct <= 0) return false;
+      const h = _ambArrRoundHorizon(cfg, 1);
+      const r = ((((round | 0) % h) + h) % h);
+      const lid = ((pi | 0) + 1) * 41 + 19;
+      return _ambChordHash01(r + 1 + ((cfg.seed | 0) & 1023), lid) * 100 < pct;
+    }
+    // THE ONE HORIZON, shared by every per-round die. Two features now declare a
+    // period and they must agree on ONE, or the state key would close the
+    // super-cycle while the other was still varying \u2014 so this is their LCM, not
+    // two numbers each doing half the job.
+    const _AMB_ARRCHANCE_ROUNDS = 4;
+    function _ambArrRoundHorizon(cfg, slotsPerRound) {
+      let h = _ambArrOrderRounds(cfg, slotsPerRound);
+      try { if (_ambAnyPartChance(cfg)) h = _ambLcm(h, _AMB_ARRCHANCE_ROUNDS); } catch (e) {}
       h = Math.max(1, Math.min(64, h | 0));
       const per = Math.max(1, slotsPerRound | 0);
       while (h > 1 && h * per > (_AMB_GRID_MAX_SLOTS >> 1)) h = h >> 1;
@@ -5387,9 +5439,10 @@
       try { if (!_ambCondFires(o.when || 'always', round)) return null; } catch (e) { return null; }
       if (o.mode === 'reverse') { const p2 = []; for (let i = 0; i < n; i++) p2.push(n - 1 - i); return p2; }
       const seed = (cfg.seed | 0) || 1;
-      // Folded to the horizon, so the order genuinely repeats with the super-cycle
-      // rather than drifting out of step with the plan that contains it.
-      const h = _ambArrOrderRounds(cfg, 1);
+      // Folded to the SHARED horizon, so the order repeats with the super-cycle the
+      // plan actually expands \u2014 folding on its own would drift out of step the
+      // moment another per-round die widened that period.
+      const h = _ambArrRoundHorizon(cfg, 1);
       const r = ((((round | 0) % h) + h) % h);
       const rnd = _ambSeededRand(((((r + 1) * 1274126177) >>> 0) ^ ((seed * 2654435761) >>> 0) ^ 0x5B10) >>> 0);
       const p2 = []; for (let i = 0; i < n; i++) p2.push(i);
@@ -5494,6 +5547,7 @@
       // progression with no grid would store the setting, draw it, and play the
       // written order. `_ambArrOrderOn` already requires two parts to reorder.
       try { if (_ambArrOrderOn(cfg)) return true; } catch (e) {}
+      try { if (_ambAnyPartChance(cfg)) return true; } catch (e) {}
       if (!Array.isArray(p.parts)) return live(p.grid);
       return p.parts.some(x => x && live(x.grid));
     }
@@ -5591,14 +5645,34 @@
         }
         return a;
       };
+      // \ud83c\udfb2 CHANCE drops whole parts from the round, BEFORE the order permutes what
+      // is left \u2014 reordering first and then dropping would make the surviving order
+      // depend on who was dropped, so the two dice would not be independent.
+      const _chance = (list) => {
+        if (!list || !list.length) return list;
+        let any = false;
+        try { any = _ambAnyPartChance(cfg); } catch (e) { any = false; }
+        if (!any) return list;
+        const ranges2 = ranges || (typeof _ambGridRanges === 'function' ? _ambGridRanges(cfg) : null);
+        const keep = list.filter(k => {
+          const r = ranges2 && ranges2[k | 0];
+          return r ? _ambPartPlaysRound(cfg, r.pi, iter | 0) : true;
+        });
+        // A ROUND IS NEVER EMPTY. Zero parts is zero bars, and a zero-length round
+        // makes the super-cycle total meaningless \u2014 `gloops` is derived from it, so
+        // the clock would walk off its own grid. When every part rolls badly the
+        // round plays AS WRITTEN rather than vanishing: a silent gap of no length
+        // is not a musical answer to "everything sat this one out".
+        return keep.length ? keep : list;
+      };
       // EVERY exit is wrapped, not `dflt()` itself: the meta grid's row is as much
       // "the order this round" as the written walk is, and a control that reordered
       // one source and not the others would be two behaviours wearing one label.
-      if (!g || !g.seq) return _ord(dflt());
+      if (!g || !g.seq) return _ord(_chance(dflt()));
       const cols = _ambGridCols(g);
       const row = g.seq[String(((iter % cols) + cols) % cols)];
-      if (!Array.isArray(row)) return _ord(dflt());
-      return _ord(row.map(v => v | 0).filter(v => v >= 0 && v < nParts));
+      if (!Array.isArray(row)) return _ord(_chance(dflt()));
+      return _ord(_chance(row.map(v => v | 0).filter(v => v >= 0 && v < nParts)));
     }
     // ---- PLAY ORDER ---------------------------------------------------------
     // THE PARTS THAT OCCUPY TIME, in written order — the one enumerator the play
@@ -5817,8 +5891,12 @@
       // re-expand. (The sig is otherwise deliberately structural; this is the one
       // axis that moves the structure itself.)
       const _ao = _ambArrOrderCfg(p);
+      // \ud83c\udfb2 Chance rides here too \u2014 it decides WHICH SLOTS the plan holds, exactly
+      // as the order does, so a sig blind to it serves a pre-edit expansion.
+      const _ch = parts ? parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : '-').join('.') : '-';
       return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '')
-        + ';' + (_ao ? (_ao.mode + '@' + (_ao.when || 'always') + '#' + (cfg.seed | 0)) : '-');
+        + ';' + (_ao ? (_ao.mode + '@' + (_ao.when || 'always') + '#' + (cfg.seed | 0)) : '-')
+        + ';c' + _ch + '#' + (cfg.seed | 0);
     }
     // The expansion PLUS the cumulative bar edges, so the clock can bisect the
     // slot instead of walking it.
@@ -5965,9 +6043,9 @@
       // closed" has to mean once the order varies.
       const _ordRounds = (function () {
         try {
-          if (!_ambArrOrderOn(cfg)) return 1;
+          if (!_ambArrOrderOn(cfg) && !_ambAnyPartChance(cfg)) return 1;
           const per = ranges.reduce((n2, r) => n2 + Math.max(1, r.len | 0), 0) * Math.max(1, arrCols);
-          return _ambArrOrderRounds(cfg, per);
+          return _ambArrRoundHorizon(cfg, per);
         } catch (e) { return 1; }
       })();
       const visits = ranges.map(() => 0), seen = new Set(), out = [];
@@ -8959,6 +9037,17 @@
           if (!ps || !ps[pi] || !ps[pi].arc) return;
           ps[pi].arc.amount = Math.max(0, Math.min(100, parseInt(inp.value, 10) || 0));
         });
+        // \ud83c\udfb2 Chance \u2014 a plain number on the part, so 100 DELETES rather than stores
+        // the default (absence has one representation), and it re-renders because
+        // the hint beside it states the consequence in words.
+        host.addEventListener('change', (e) => {
+          const inp = e.target && e.target.closest && e.target.closest('[data-pechance]'); if (!inp || !_ambProgEd) return;
+          const ps = _ambPeParts(_ambProgEd), pi = parseInt(inp.getAttribute('data-pechance'), 10);
+          if (!ps || !ps[pi]) return;
+          const v = Math.max(0, Math.min(100, parseInt(inp.value, 10)));
+          if (!Number.isFinite(v) || v >= 100) delete ps[pi].chance; else ps[pi].chance = v;
+          try { _ambPeRender(); } catch (e2) {}
+        });
         // Per-part KEY selects. Clearing the root drops the modulation; it does NOT
         // transpose the written chords back — the chords are the music, and silently
         // re-keying authored harmony because a label changed would be a surprise.
@@ -9414,6 +9503,7 @@
           const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
           const rv = (pt.rubato && typeof pt.rubato === 'object') ? pt.rubato : null;
           const av = (pt.arc && typeof pt.arc === 'object') ? pt.arc : null;
+          const _pchance = Number.isFinite(pt.chance) ? Math.max(0, Math.min(100, pt.chance | 0)) : 100;
           const pnm = esc(pt.name || ('Changes ' + (ed.part + 1)));
           const nch = _peRange.to - _peRange.from;
           const pk = (pt.key && Number.isFinite(pt.key.root)) ? pt.key : null;
@@ -9440,6 +9530,19 @@
                   '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplays:' + ed.part + ':1" title="One more repeat" aria-label="One more repeat">+</button>' +
                 '</span>' +
                 '<span class="pe-partgrp-hint">' + (plays > 1 ? 'runs ' + plays + '× before the next part' : 'runs once, then the next part') + '</span>' +
+              '</div>' +
+              // \ud83c\udfb2 CHANCE \u2014 beside Repeats, because they are one pair: Repeats says
+              // how many times this part runs WHEN IT COMES ROUND, Chance says how
+              // often it comes round at all. Apart they read as unrelated; together
+              // they read as the part's schedule, which is what they are.
+              '<div class="pe-partgrp">' +
+                '<span class="pe-partgrp-lbl">\ud83c\udfb2 Chance</span>' +
+                '<span class="pe-partsalt">' +
+                  '<label title="How often these changes come round at all. 100 = every time. Lower and the part is SKIPPED on some rounds \u2014 the round is genuinely shorter, not silent. Deterministic: the same take plays the same rounds.">' +
+                  '<input type="number" class="pe-saltin" data-pechance="' + ed.part + '" min="0" max="100" step="10" value="' + _pchance + '"></label>' +
+                '</span>' +
+                '<span class="pe-partgrp-hint">' + (_pchance >= 100 ? 'comes round every time'
+                  : (_pchance <= 0 ? 'never comes round' : ('comes round about ' + _pchance + '% of the time'))) + '</span>' +
               '</div>' +
               _quickLenHtml() +
               // PER-PART KEY: a real mid-progression modulation. It already existed

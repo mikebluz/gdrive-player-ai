@@ -256,7 +256,51 @@ Gate: `node test/probe-arc-part.js`, 22 checks, poison-verified on four axes
 
 ---
 
-## 5. The "easier" half
+## 5. ~~The "easier" half~~ — SHIPPED 2026-09-26 as **✺ Novelty**
+
+The original ask was two things: *add stochastic/generative aspects* **and** *make it
+even easier*. §§2–4 did the first. Ten dice across six doors is more capable and not
+yet easier, which is what this closes.
+
+**FOUR macros, not the three this section first guessed at.** Three was inherited
+from ⚙ Deep's macros rather than derived. Grouped by the question each die answers
+they fall into four — Harmony (which chord) · Time (when it falls) · Form (what comes
+next) · Texture (how much plays) — and the fourth is Time, which schema v10 split out
+of 🧂 Salt **on purpose**. Folding it back into Harmony here would put one vocabulary
+over two mechanisms in the macro layer, which is the naming rule's exact failure.
+(Time drives one die today; the Rubato store was deliberately built with room beside
+`amount` for anticipation, skipped changes and a harmonic swing, so the axis is thin,
+not absent.)
+
+**A ONE-SHOT, NOT A DIAL — the load-bearing decision.** A macro writing the same keys
+the individual controls write has a lossy reverse direction: one number cannot be read
+back out of ten, so a live dial starts lying the moment a die is hand-edited. Storing
+the macro too would fix that and put new state in every save file for a control
+touched once. So it is ⚄ Generate's shape — controls, a **preview**, and Apply — and
+**it stores nothing**.
+
+Three tiers, each optional: the **dial** is the whole control by default; **▸ Shape
+it** reveals the four as BALANCE (they lean where the change goes, and can never add
+any — at amount 0 no balance conjures novelty); **▸ Advanced** is the existing
+per-axis doors, unchanged.
+
+- The **preview IS the plan**: `_ambNovPlan` rows carry both the displayed from→to and
+  the `write` Apply runs, so they cannot drift.
+- **Undo** snapshots the previous values, per-part 🎲 Chance included. Ten keys at once
+  is not something to write without a way back.
+- 🎲 Chance keeps a **floor** (60% at full) so no part ever mostly vanishes, and the
+  ↻ Parts row goes **inert with one part**, naming the way forward rather than
+  offering a write that cannot act.
+
+Gate: `node test/probe-novelty.js`, 34 checks, poison-verified on three axes — the
+write drifting from its preview, balance adding instead of leaning, and undo
+forgetting the per-part Chance. Golden 82/82, arch-parity 72/72, mod-parity 9/9 all
+unmoved: it writes only keys that already existed.
+
+Mockup and the rejected shapes (one dial only · named presets · four independent
+dials): https://claude.ai/artifact/P6sotcovHbcuQ5omYxPJCH
+
+## 5b. Still open from the original plan
 
 ⚙ Deep already solved this shape: three macros (Flourishes · Looseness · Thinning)
 over nine dice, with per-die access behind ▸ Advanced. The arrangement wants the
@@ -266,8 +310,8 @@ same — one **✺ Novelty** group with three:
 - **Form** → ↻ Parts + 🎲 Chance (both shipped; plays range is §4c)
 - **Orchestration** → 🌒 Arc depth, area and part (shipped) + a spread over the mask percentages
 
-Two filing rules from the existing conventions. Everything on this axis is per-pass,
-so by the play-it-twice test it is all **✺ Live**, never ⚙ Deep. And `_AMB_STOCH` has
+One filing rule still stands. Everything on this axis is per-pass, so by the
+play-it-twice test it is all **✺ Live**, never ⚙ Deep. And `_AMB_STOCH` has
 **no arrangement entries at all** — it is keyed by layer field — so an arrangement
 control cannot be marked there without teaching `tools/stochastic-matrix.mjs` about
 a second scope. Until that happens, the arrangement dice are invisible to

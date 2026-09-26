@@ -202,6 +202,16 @@
 
 ### Controls, wiring and reachability
 
+- **A MACRO OVER OTHER CONTROLS IS A ONE-SHOT, NOT A DIAL** — unless you are willing to store it. Writing
+  the same keys the individual controls write has an easy forward direction and a LOSSY reverse one: one
+  number cannot be read back out of ten, so the moment someone hand-edits one die a live dial is lying.
+  ✺ Novelty is ⚄ Generate's shape (controls · PREVIEW · Apply) and stores nothing; the dice stay the only
+  state. It also keeps an UNDO snapshot, because a control that writes ten keys at once and cannot be
+  taken back is one people are right to distrust.
+- **The preview must BE the plan, not a second computation of it.** `_ambNovPlan` returns rows carrying
+  both the displayed `from`/`to` AND the `write` that Apply runs, so the two cannot drift. Poison-verified:
+  making the write differ from its own row's `to` by 3 fails a named check.
+
 - **A SYNC THAT WRITES A CONTROL MUST SKIP THE FOCUSED ELEMENT.** `el.value = stored` on a gate/sync
   pass lands INSIDE an open native `<select>` picker and puts the old value back — the user picks, the
   sync stomps it, and nothing in the store or the console says so. Reported as "selecting an option

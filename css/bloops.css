@@ -15263,6 +15263,64 @@
     /* The pass modal holds TWO axes (Salt and Rubato), each with its own
        Inherit / Its own. A rule separates them so the second pair cannot read as
        more options for the first — same tokens as the note above it, no new chrome. */
+    /* ✺ NOVELTY — the macro group. Same tokens as its neighbours on the ▤ Parts bar;
+       the only new chrome is the preview's from → to rows, which nothing else needs. */
+    .ambient-nov-row { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+    .ambient-nov-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+    .ambient-nov-main > label { flex: 0 0 auto; font-size: 0.8rem; font-weight: 600; color: #e2e8f0; }
+    /* The slider is the control; it may never be the thing that collapses. */
+    .ambient-nov-main > .ambient-nov-amt { flex: 1 1 130px; min-width: 110px; min-height: 32px; accent-color: #9f7aea; }
+    .ambient-nov-val { flex: 0 0 auto; font-size: 1.05rem; font-weight: 700; color: #e9d8fd; font-variant-numeric: tabular-nums; min-width: 2.2em; text-align: right; }
+    .ambient-nov-says {
+      display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; margin: 0;
+      padding: 9px 11px; border-left: 2px solid #9f7aea; border-radius: 0 8px 8px 0;
+      background: #12121f; color: #cfd2e6; line-height: 1.5;
+    }
+    .ambient-nov-shape { align-self: flex-start; min-height: 34px; }
+    .ambient-nov-bal { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+    .ambient-nov-bal > .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    .ambient-nov-balrow {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
+      padding: 7px 10px; border: 1px solid #23233a; border-radius: 9px; background: #12121f;
+    }
+    .ambient-nov-balrow > label { flex: 0 0 62px; font-size: 0.74rem; font-weight: 600; color: #e2e8f0; }
+    .ambient-nov-balrow > input[type=range] { flex: 1 1 100px; min-width: 90px; min-height: 30px; accent-color: #9f7aea; }
+    /* The caption takes its OWN row so it never competes with the slider for width. */
+    .ambient-nov-asks { flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    .ambient-nov-balrow[data-novax="h"] { border-left: 3px solid #9f7aea; }
+    .ambient-nov-balrow[data-novax="t"] { border-left: 3px solid #5aa9e6; }
+    .ambient-nov-balrow[data-novax="f"] { border-left: 3px solid #e6a35a; }
+    .ambient-nov-balrow[data-novax="x"] { border-left: 3px solid #5ac8a0; }
+    .ambient-nov-preview {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
+      padding: 9px 10px; border: 1px solid #23233a; border-radius: 10px; background: #0f0f1c;
+    }
+    .ambient-nov-pvhead {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.05em; text-transform: uppercase;
+      color: #8b8baa; padding-bottom: 5px; margin-bottom: 3px; border-bottom: 1px solid #23233a;
+      white-space: normal; overflow-wrap: anywhere;
+    }
+    .ambient-nov-pvrow {
+      display: flex; align-items: baseline; gap: 6px; min-width: 0;
+      padding: 3px 0; font-size: 0.7rem; color: #8b8baa;
+    }
+    .ambient-nov-pvlbl { flex: 1 1 auto; min-width: 0; color: #cfd2e6; overflow-wrap: anywhere; }
+    .ambient-nov-pvfrom, .ambient-nov-pvto { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .ambient-nov-pvarrow { flex: 0 0 auto; color: #6b6b8c; }
+    /* A row that MOVES is the only one you need to read — so it is the only one lit. */
+    .ambient-nov-pvrow.moved .ambient-nov-pvto { color: #e9d8fd; font-weight: 700; }
+    .ambient-nov-pvrow.moved .ambient-nov-pvlbl { color: #e2e8f0; }
+    .ambient-nov-pvrow.na { opacity: 0.6; }
+    .ambient-nov-pvwhy { flex: 0 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-style: italic; }
+    .ambient-nov-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ambient-nov-apply {
+      min-height: 40px; padding: 8px 18px; font-weight: 700;
+      background: rgba(159,122,234,0.22); border-color: #9f7aea; color: #e9d8fd;
+    }
+    .ambient-nov-undo { min-height: 40px; padding: 8px 14px; }
+    /* The door leads the bar, so it carries Salt's weight rather than Order's. */
+    .ambient-pov-novbtn { border-color: #9f7aea; color: #e9d8fd; }
+
     .ambient-psalt-modal .psalt-rub {
       margin-top: 12px; padding-top: 10px; min-width: 0;
       border-top: 1px solid rgba(159,122,234,0.28);

@@ -7185,6 +7185,132 @@
       const lid = (_lb + 1) * 37 + 17;
       return _ambChordHash01(_ambArcSliceAt(E, atSec, cfg0) + 1, lid) < mul;
     }
+    // ===== \u273a NOVELTY \u2014 one dial over the arrangement's ten dice ==============
+    //
+    // WHY A ONE-SHOT AND NOT A LIVE DIAL. A macro that writes the same keys the
+    // individual controls write has an easy forward direction and a LOSSY reverse
+    // one: you cannot read one number back out of ten, and the moment someone edits
+    // \ud83c\udf12 Arc by hand a live dial is lying about what is set. Storing the macro
+    // too would fix that and put new state in every save file for a control that is
+    // only ever touched once. So this is \u2684 Generate's shape \u2014 a popover with a
+    // PREVIEW and an Apply \u2014 and it stores nothing: the dice are the state, exactly
+    // as they were before it existed.
+    //
+    // FOUR AXES, not three. Grouped by the question each die answers they fall into
+    // four, and the fourth is Time \u2014 which schema v10 split out of \ud83e\uddc2 Salt on
+    // purpose, because one axis changes WHICH CHORD and the other WHEN IT FALLS.
+    // Folding Time back into Harmony here would put one vocabulary over two
+    // mechanisms in the macro layer, which is the naming rule's exact failure.
+    const _AMB_NOV_AXES = [
+      { k: 'h', name: 'Harmony', asks: 'which chords, and how they are coloured' },
+      { k: 't', name: 'Time',    asks: 'when the changes fall' },
+      { k: 'f', name: 'Form',    asks: 'what comes next, and whether it comes at all' },
+      { k: 'x', name: 'Texture', asks: 'how much is playing' },
+    ];
+    // TRANSIENT, deliberately \u2014 module state, never cfg. Re-opening keeps where you
+    // were within a session; nothing reaches the save file.
+    let _ambNovUi = null;
+    const _ambNovState = () => (_ambNovUi || (_ambNovUi = { amount: 55, bal: { h: 50, t: 50, f: 50, x: 50 } }));
+    // Test seam: the gate drives the real controls, but the PLAN is pure and worth
+    // asserting on its own, which needs a way to set the transient state directly.
+    const _ambNovUiSet = (st) => { _ambNovUi = { amount: st.amount | 0, bal: Object.assign({}, st.bal) }; };
+    // The BALANCE never adds novelty \u2014 it only leans it. 50 is even, so an untouched
+    // balance gives every axis the amount itself.
+    const _ambNovEff = (amount, b) => Math.max(0, Math.min(100, Math.round((amount | 0) * ((b | 0) / 50))));
+    // WHAT APPLY WOULD DO, as a list of (label, from, to, write). Built without
+    // touching cfg so the preview and the write can never disagree: the preview IS
+    // the plan, and Apply just runs its `write`s.
+    function _ambNovPlan(cfg, st) {
+      const p = cfg && cfg.prog; if (!p) return [];
+      const s0 = st || _ambNovState();
+      const H = _ambNovEff(s0.amount, s0.bal.h), T = _ambNovEff(s0.amount, s0.bal.t);
+      const F = _ambNovEff(s0.amount, s0.bal.f), X = _ambNovEff(s0.amount, s0.bal.x);
+      const out = [];
+      const num = (label, axis, get, set, to) => out.push({ label, axis, from: get(p), to, write: (pp) => set(pp, to) });
+      // \u2014\u2014 Harmony \u2014\u2014
+      num('\ud83c\udf0a Vary', 'h', (q) => q.vary | 0, (q, v) => { if (v) q.vary = v; else delete q.vary; }, Math.round(H * 0.9));
+      num('\ud83c\udf21 Tension', 'h', (q) => q.tension | 0, (q, v) => { if (v) q.tension = v; else delete q.tension; }, Math.round(H * 0.5));
+      num('\ud83c\udfb2 Take', 'h', (q) => q.reroll | 0, (q, v) => { if (v) q.reroll = v; else delete q.reroll; }, Math.round(H * 0.4));
+      num('\ud83e\uddc2 Colours', 'h', (q) => (q.salt && q.salt.colors | 0) || 0,
+        (q, v) => { q.salt = q.salt || {}; q.salt.colors = v; }, Math.round((H / 100) * 4));
+      num('\ud83e\uddc2 Scatter', 'h', (q) => (q.salt && q.salt.scatter | 0) || 0,
+        (q, v) => { q.salt = q.salt || {}; q.salt.scatter = v; }, Math.round(H * 0.7));
+      out.push({ label: '\u21bb Chords', axis: 'h',
+        from: (p.order && p.order.mode) ? 'random' : 'written',
+        to: H > 60 ? 'random' : 'written',
+        write: (q) => { if (H > 60) q.order = { mode: 'shuffle', when: 'always' }; else delete q.order; } });
+      // \u2014\u2014 Time \u2014\u2014
+      num('\u2194 Rubato', 't', (q) => (q.rubato && q.rubato.amount | 0) || 0,
+        (q, v) => { if (v) q.rubato = { amount: v }; else delete q.rubato; }, Math.round(T * 0.6));
+      // \u2014\u2014 Form \u2014\u2014 NOTHING TO REORDER WITH ONE PART, and the row says so rather
+      // than offering a write that cannot act.
+      let nParts = 1;
+      try { nParts = (_ambGridRanges(cfg) || []).length; } catch (e) { nParts = 1; }
+      if (nParts > 1) {
+        out.push({ label: '\u21bb Parts', axis: 'f',
+          from: (p.arrOrder && p.arrOrder.mode) ? 'random' : 'written',
+          to: F > 45 ? 'random' : 'written',
+          write: (q) => { if (F > 45) q.arrOrder = { mode: 'shuffle', when: F > 75 ? 'always' : '10' }; else delete q.arrOrder; } });
+        // A part that sometimes sits out only from higher up the dial, and with a
+        // FLOOR \u2014 at full it is still 60%, so no part ever mostly vanishes.
+        const chTo = (F >= 60) ? (100 - Math.round(F * 0.4)) : 100;
+        const chFrom = (Array.isArray(p.parts) && p.parts.length && Number.isFinite(p.parts[0].chance))
+          ? (p.parts[0].chance | 0) : 100;
+        out.push({ label: '\ud83c\udfb2 Chance', axis: 'f', from: chFrom, to: chTo,
+          write: (q) => { if (!Array.isArray(q.parts)) return;
+            q.parts.forEach((pt) => { if (!pt) return; if (chTo >= 100) delete pt.chance; else pt.chance = chTo; }); } });
+      } else {
+        out.push({ label: '\u21bb Parts', axis: 'f', from: '\u2014', to: 'one part', write: null,
+          why: 'Add a second set of changes and the form can move.' });
+      }
+      // \u2014\u2014 Texture \u2014\u2014
+      out.push({ label: '\ud83c\udf12 Arc', axis: 'x',
+        from: (p.arc && p.arc.amount | 0) || 0, to: Math.round(X * 0.8),
+        write: (q) => { const v = Math.round(X * 0.8);
+          if (v) q.arc = { amount: v, bars: (q.arc && q.arc.bars) || _AMB_ARC_BARS,
+                           shape: X > 70 ? 'drift' : (X > 35 ? 'wave' : 'build') };
+          else delete q.arc; } });
+      return out;
+    }
+    // The sentence. It describes the RESULT, not the settings \u2014 a readout that only
+    // repeats the number it sits under is not a readout.
+    function _ambNovWords(amount) {
+      const n = amount | 0;
+      if (!n) return 'Nothing moves. The piece plays exactly as written, every time through.';
+      if (n < 30) return 'Barely. The odd chord recolours and the density drifts \u2014 you would have to be listening for it.';
+      if (n < 60) return 'It breathes. Chords take substitutes, the arrangement thins and fills, and the odd part sits a round out.';
+      if (n < 85) return 'It improvises. The order of the parts moves, layers drop away and come back, and no two times through are the same.';
+      return 'A different take every time. Expect the form itself to surprise you.';
+    }
+    // APPLY, with the previous values stashed so one press is undoable. Undo is not a
+    // luxury here: this writes TEN keys at once, and a macro you cannot take back is
+    // one people are right to be afraid of.
+    let _ambNovUndo = null;
+    function _ambNovApply(E, cfg) {
+      const plan = _ambNovPlan(cfg, _ambNovState());
+      const p = cfg && cfg.prog; if (!p) return 0;
+      _ambNovUndo = { seed: cfg.seed | 0, snap: JSON.stringify({
+        vary: p.vary, tension: p.tension, reroll: p.reroll, salt: p.salt, order: p.order,
+        rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc,
+        chance: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : null) : null }) };
+      let n = 0;
+      plan.forEach((row) => { if (row.write) { try { row.write(p); n++; } catch (e) {} } });
+      return n;
+    }
+    function _ambNovRevert(E, cfg) {
+      if (!_ambNovUndo || !cfg || !cfg.prog) return false;
+      let was = null; try { was = JSON.parse(_ambNovUndo.snap); } catch (e) { return false; }
+      const p = cfg.prog;
+      ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach((k) => {
+        if (was[k] == null) delete p[k]; else p[k] = was[k];
+      });
+      if (Array.isArray(was.chance) && Array.isArray(p.parts)) {
+        p.parts.forEach((pt, i) => { if (!pt) return;
+          if (was.chance[i] == null) delete pt.chance; else pt.chance = was.chance[i]; });
+      }
+      _ambNovUndo = null;
+      return true;
+    }
     function _ambSectionGateOK(E, L, atSec, cfg, hard) {
       // 🌒 ARC FIRST, and independently of `sectionMask`: the arc thins the whole
       // arrangement, so a layer with NO mask must still be subject to it — most
@@ -41805,6 +41931,12 @@
         // and it SAYS whether anything is on rather than only naming itself —
         // a chip that looks identical at 0 and at full is a readout that does
         // not read.
+        // \u273a NOVELTY LEADS THE BAR. Every other door here is one axis; this is the
+        // one that sets them all, so it is what you reach for before you know which
+        // axis you wanted. It states nothing about its own state because it HOLDS no
+        // state \u2014 it is a generator, not a setting.
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-novbtn" data-pov="grp:novelty" ' +
+          'title="Novelty \u2014 one dial over the whole arrangement: how much the piece changes as it plays. Sets the controls beside it; nothing new is stored.">\u273a Novelty</span>' +
         ((function () {
           const _sv = (prog && prog.salt) || {};
           const _bits = [];
@@ -43335,7 +43467,7 @@
     // exactly how two copies of a control drift apart.
     // Titles for the popover groups, in ONE place — a ternary meant a third group
     // silently took the wrong title (or its own key) instead.
-    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order', arc: '\uD83C\uDF12 Arc' };
+    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order', arc: '\uD83C\uDF12 Arc', novelty: '\u273a Novelty' };
     // ── A SALT DIAL ─────────────────────────────────────────────────────
     // (2026-09-19, "change these inputs to mobile-friendly dials and present
     // in a clean symmetrical way".) Five bare number boxes on one wrapping
@@ -43453,7 +43585,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'rubato', 'order', 'arc', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
+      ['novelty', 'salt', 'rubato', 'order', 'arc', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -53381,6 +53513,36 @@
             // The group exists so further TIMING variations have a home that does
             // not distort Salt's meaning — anticipation, skipped changes, a swing
             // on the harmonic rhythm all belong here, beside `amount`.
+            // \u273a NOVELTY \u2014 \u2684 Generate's shape, not \ud83e\uddc2 Salt's: controls, a PREVIEW of
+            // what pressing Apply would change, and Apply. It is the only group on
+            // this bar that writes other groups, so it has to show its working.
+            _ambProgGrpOpen('novelty', '\u273a Novelty', false, true) +
+            '<div class="ambient-row ambient-nov-row" id="ambient-nov-row">' +
+              '<div class="ambient-nov-main">' +
+                '<label for="ambient-nov-amt">How much it changes</label>' +
+                '<input type="range" id="ambient-nov-amt" class="ambient-sl ambient-nov-amt" min="0" max="100" step="5" value="55" aria-label="How much it changes">' +
+                '<output for="ambient-nov-amt" class="ambient-nov-val" id="ambient-nov-val">55</output>' +
+              '</div>' +
+              '<p class="ambient-hint ambient-nov-says" id="ambient-nov-says"></p>' +
+              // BALANCE, not amount \u2014 and the caption says so, because a row of four
+              // sliders under a fifth reads as "more of this" unless it is told not to.
+              '<button type="button" class="ambient-seg ambient-nov-shape" id="ambient-nov-shape" aria-expanded="false">\u25b8 Shape it</button>' +
+              '<div class="ambient-nov-bal" id="ambient-nov-bal" hidden>' +
+                '<p class="ambient-hint">Lean the same amount of change one way. Even is the default; these never add novelty, they only decide where it goes.</p>' +
+                _AMB_NOV_AXES.map(ax =>
+                  '<div class="ambient-nov-balrow" data-novax="' + ax.k + '">' +
+                    '<label for="ambient-nov-b' + ax.k + '">' + ax.name + '</label>' +
+                    '<input type="range" id="ambient-nov-b' + ax.k + '" class="ambient-sl" min="0" max="100" step="5" value="50" aria-label="' + ax.name + ' balance">' +
+                    '<span class="ambient-hint ambient-nov-asks">' + ax.asks + '</span>' +
+                  '</div>').join('') +
+              '</div>' +
+              '<div class="ambient-nov-preview" id="ambient-nov-preview"></div>' +
+              '<div class="ambient-nov-foot">' +
+                '<button type="button" class="ambient-seg ambient-nov-apply" id="ambient-nov-apply">\u273a Apply</button>' +
+                '<button type="button" class="ambient-seg ambient-nov-undo" id="ambient-nov-undo" hidden>\u21b6 Undo</button>' +
+              '</div>' +
+            '</div>' +
+            _ambProgGrpClose() +
             _ambProgGrpOpen('rubato', '\u2194 Rubato', false, true) +
             '<div class="ambient-row ambient-prog-rubato" id="ambient-prog-rubatorow" style="display:none" title="Rubato \u2014 how the chord lengths move. Everything at 0 = the changes fall exactly as written.">' +
               '<span class="ambient-sched-lbl salt-lbl">\u2194 rubato</span>' +
@@ -55641,6 +55803,83 @@
             try { _ambRenderProgOverview(E); } catch (e) {}
           });
         });
+        // ===== \u273a NOVELTY =====================================================
+        // The preview is rebuilt from `_ambNovPlan` on EVERY input, so what the rows
+        // say and what Apply writes are one object. A preview computed separately
+        // from the write is a readout that can lie, which is the whole reason this
+        // control is a one-shot rather than a dial.
+        const _novPaint = () => {
+          _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+          const st = _ambNovState();
+          const amtEl = G('ambient-nov-amt'), valEl = G('ambient-nov-val');
+          if (amtEl && document.activeElement !== amtEl) amtEl.value = String(st.amount);
+          if (valEl) valEl.textContent = String(st.amount);
+          const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount);
+          _AMB_NOV_AXES.forEach(ax => { const e = G('ambient-nov-b' + ax.k);
+            if (e && document.activeElement !== e) e.value = String(st.bal[ax.k]); });
+          const host = G('ambient-nov-preview');
+          if (host) {
+            const esc2 = (t) => String(t == null ? '' : t).replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]));
+            const plan = _ambNovPlan(c, st);
+            const moves = plan.filter(r => r.write && String(r.from) !== String(r.to));
+            host.innerHTML =
+              '<div class="ambient-nov-pvhead">' +
+                (moves.length ? ('Apply would change ' + moves.length + ' of ' + plan.filter(r => r.write).length)
+                              : 'Nothing would change \u2014 this is what is already set') + '</div>' +
+              plan.map(r => {
+                const moved = r.write && String(r.from) !== String(r.to);
+                return '<div class="ambient-nov-pvrow' + (moved ? ' moved' : '') + (r.write ? '' : ' na') + '" data-novax="' + r.axis + '">' +
+                  '<span class="ambient-nov-pvlbl">' + esc2(r.label) + '</span>' +
+                  (r.write
+                    ? ('<span class="ambient-nov-pvfrom">' + esc2(r.from) + '</span>' +
+                       '<span class="ambient-nov-pvarrow" aria-hidden="true">\u2192</span>' +
+                       '<span class="ambient-nov-pvto">' + esc2(r.to) + '</span>')
+                    : ('<span class="ambient-nov-pvwhy">' + esc2(r.why || 'nothing to change') + '</span>')) +
+                '</div>';
+              }).join('');
+          }
+          const un = G('ambient-nov-undo'); if (un) un.hidden = !_ambNovUndo;
+        };
+        { const amtEl = G('ambient-nov-amt');
+          if (amtEl) amtEl.addEventListener('input', () => {
+            _ambNovState().amount = Math.max(0, Math.min(100, parseInt(amtEl.value, 10) || 0));
+            _novPaint();
+          }); }
+        _AMB_NOV_AXES.forEach(ax => { const e = G('ambient-nov-b' + ax.k);
+          if (e) e.addEventListener('input', () => {
+            _ambNovState().bal[ax.k] = Math.max(0, Math.min(100, parseInt(e.value, 10) || 0));
+            _novPaint();
+          }); });
+        { const sh = G('ambient-nov-shape');
+          if (sh) sh.addEventListener('click', () => {
+            const box = G('ambient-nov-bal'); if (!box) return;
+            const open = box.hidden;
+            box.hidden = !open;
+            sh.setAttribute('aria-expanded', open ? 'true' : 'false');
+            sh.textContent = (open ? '\u25be' : '\u25b8') + ' Shape it';
+          }); }
+        { const ap = G('ambient-nov-apply');
+          if (ap) ap.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const n = _ambNovApply(E, c);
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            _novPaint();
+            try { if (typeof showToast === 'function') showToast('\u273a ' + n + ' settings updated \u2014 \u21b6 Undo is in the panel', { ms: 4000 }); } catch (e) {}
+          }); }
+        { const un = G('ambient-nov-undo');
+          if (un) un.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (!_ambNovRevert(E, c)) return;
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            _novPaint();
+          }); }
+        try { _novPaint(); } catch (e) {}
         // \ud83c\udf12 Arc \u2014 the \u21bb Order idiom exactly: the LABEL is on/off, OFF deletes the
         // whole key so "off" and "absent" stay one state, and ON seeds a musical
         // middle (40 over 32 bars, building). Seeding 0 would have made the switch

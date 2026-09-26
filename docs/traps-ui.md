@@ -44,6 +44,15 @@
 
 ### CSS, layout and DOM traps
 
+- **`auto-fit` IS NOT "symmetrical" — it picks whatever fits.** With N cells it leaves a ragged last
+  row at any width whose column count does not divide N: six chips at five across is a last row of
+  ONE, which is the exact shape being complained about. For a fixed count, declare column counts that
+  DIVIDE it (2 and 3 for six) at explicit breakpoints. The 🧂 salt-dials comment claiming auto-fit
+  "keeps the grid even at every width" is true only for its own five.
+- **Resizing the viewport mid-probe tears the Bloom panel down** — every cell then measures 0 and reads
+  as a missing feature. `test:ui` is single-viewport (390px) for this reason; assert a wide layout
+  through the DECLARED `grid-template-columns` instead, and measure the wide case by hand.
+
 - **A DELEGATED `<select>` NEEDS `input` AND `change`, BOTH.** `fxPick` has been bound to both since
   it was written; the two selects added later (⇢ Spread order, ⚄ Figure) were bound to `input` only
   and reported as "still buggy… doesn't work at all", which is exactly what a select whose handler

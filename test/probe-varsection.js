@@ -114,36 +114,57 @@ const ok = (name, cond, detail) => {
   ok('…and the chord chips, which are the parts’ own definitions',
     full.parts.some(k => /^chord:/.test(k)), JSON.stringify(full.parts));
 
-  // ---- 3. THE CRAMPING --------------------------------------------------------
-  console.log('\n  3. the cramping — at the width the gate runs at');
-  const fit = await page.evaluate(() => {
-    const rowsOf = (el) => {
-      if (!el) return 0;
-      const tops = new Set();
-      [...el.querySelectorAll('[data-pov]')].forEach(c => {
-        const r = c.getBoundingClientRect(); if (r.width > 0) tops.add(Math.round(r.top));
-      });
-      return tops.size;
-    };
-    const v = document.querySelector('.ambient-pov-varstrip');
+  // ---- 3. THE GRID ------------------------------------------------------------
+  // user: "it should be a more symmetrical grid of buttons, larger buttons, and each
+  // a different color (unless tightly coupled)". Six axes of one subject, so six
+  // identical cells — the same answer 🧂 the salt dials got to the same complaint.
+  console.log('\n  3. a symmetrical grid, not a wrapping line');
+  const grid = () => page.evaluate(() => {
+    const cells = [...document.querySelectorAll('.ambient-pov-varbar > [data-pov]')];
+    const rows = {};
+    cells.forEach(c => { const r = c.getBoundingClientRect();
+      (rows[Math.round(r.top)] = rows[Math.round(r.top)] || []).push(1); });
+    const ws = cells.map(c => Math.round(c.getBoundingClientRect().width));
+    const hs = cells.map(c => Math.round(c.getBoundingClientRect().height));
     const host = document.querySelector('.ambient-progsec') || document.body;
-    let minH = 999;
-    if (v) [...v.querySelectorAll('[data-pov]')].forEach(c => {
-      const r = c.getBoundingClientRect(); if (r.width > 0) minH = Math.min(minH, Math.round(r.height)); });
-    return { varRows: rowsOf(v), minH: minH === 999 ? 0 : minH,
-             overflowX: host.scrollWidth > host.clientWidth + 1,
-             varWidth: v ? Math.round(v.getBoundingClientRect().width) : 0 };
+    return { n: cells.length, perRow: Object.values(rows).map(r => r.length),
+             widthsEqual: new Set(ws).size === 1, w: ws[0] || 0,
+             minH: hs.length ? Math.min.apply(null, hs) : 0,
+             sameH: new Set(hs).size === 1,
+             colours: new Set(cells.map(c => getComputedStyle(c).borderTopColor)).size,
+             overflowX: host.scrollWidth > host.clientWidth + 1 };
   });
-  // NOT AN ARBITRARY ROW COUNT. Six chips on a 390px phone wrap, and that is fine in a
-  // section of their own — the complaint was MIXING, not height. What is gated is the
-  // rule: no horizontal overflow, and every chip a real touch target.
-  // 30px is this panel's established chip height (.ambient-pov-grpbtn, .ambient-pov-addpart,
-  // the groove pills). ❄ Capture was a bare `display: block` at 21px and only showed up
-  // as the odd one out once ✺ Variation put it beside its siblings.
-  ok('every variation chip is the panel\u2019s chip height, none a 21px outlier',
-    fit.varRows > 0 && fit.minH >= 30, JSON.stringify(fit));
+  const g390 = await grid();
+  console.log('     390px: ' + JSON.stringify(g390));
+  ok('all six cells are the SAME WIDTH — a grid, not a wrapping line',
+    g390.n === 6 && g390.widthsEqual === true, JSON.stringify(g390));
+  ok('…and the same height, so no row is taller than another',
+    g390.sameH === true, JSON.stringify(g390));
+  ok('…in rows that DIVIDE six, never an orphan row of one',
+    g390.perRow.length > 0 && g390.perRow.every(n => n === g390.perRow[0]),
+    JSON.stringify(g390.perRow));
+  ok('…each cell a real touch target, which the old 30px chips were not',
+    g390.minH >= 44, String(g390.minH));
+  ok('…six distinct hues, one per axis', g390.colours === 6, String(g390.colours));
   ok('…with no horizontal overflow, which UI rule 1 forbids outright',
-    fit.overflowX === false, JSON.stringify(fit));
+    g390.overflowX === false, JSON.stringify(g390));
+
+  // THE WIDE CASE IS NOT MEASURED HERE. This gate is SINGLE-VIEWPORT (390px) on
+  // purpose, and resizing mid-run tears the panel down — measured: every cell reads
+  // 0. What IS asserted is the rule that makes the wide case safe: it is a real CSS
+  // grid with an EXPLICIT column count, not `auto-fit`. auto-fit picks whatever fits,
+  // so at any width that takes five it leaves a last row of ONE — the ragged shape
+  // this replaced. (3-across at 1100px measured by hand: 2 rows, equal, 56px.)
+  const decl = await page.evaluate(() => {
+    const bar = document.querySelector('.ambient-pov-varbar');
+    if (!bar) return null;
+    const cs = getComputedStyle(bar);
+    return { display: cs.display, tracks: cs.gridTemplateColumns.split(/\s+/).filter(Boolean).length };
+  });
+  ok('it is a real CSS grid with an explicit column count, not a wrapping flex line',
+    decl && decl.display === 'grid' && decl.tracks === 2, JSON.stringify(decl));
+  ok('…and six divides that column count, so no row can be orphaned',
+    decl && 6 % decl.tracks === 0, JSON.stringify(decl));
 
   // ---- 4. THE DOOR STILL OPENS ------------------------------------------------
   console.log('\n  4. the door still opens onto the real popover');

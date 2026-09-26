@@ -15272,14 +15272,69 @@
        so it must not take the 68px a group label takes. */
     .pe-partto-lbl { flex: 0 0 auto; margin: 0 2px; opacity: 0.75; }
 
-    /* ✺ VARIATION's own strip. It mirrors the ▤ Parts strip it was split out of, so
-       it needs no chrome of its own — only room, and a leading chip that reads as the
-       one you press first. */
+    /* ✺ VARIATION — A GRID, NOT A WRAPPING LINE.
+       Six axes of one subject, so they are six identical cells on a symmetric grid —
+       the same answer 🧂 THE SALT DIALS below got to the same complaint ("present in
+       a clean symmetrical way"), and for the same reason.
+
+       COLUMN COUNTS THAT DIVIDE SIX, which is why this does NOT use `auto-fit`:
+       auto-fit picks whatever fits, so at a width that takes 5 it leaves a last row
+       of ONE — exactly the ragged shape being fixed here. 2 across on a phone, 3
+       above that: three rows or two, never an orphan.
+
+       EACH AXIS ITS OWN HUE, because they ARE different questions — and the hues are
+       the ones ✺ Novelty's macros group by, so the colour teaches the grouping
+       rather than decorating it: Harmony · Time · Form · Texture. Colour is never
+       the only signal (every cell carries its icon and its name), and ❄ Capture is
+       deliberately the quiet neutral because it is an ACTION, not an axis. */
     .ambient-pov-varstrip { min-width: 0; }
-    .ambient-pov-varstrip .ambient-pov-bar { margin: 0; }
-    /* ✺ Novelty leads its own bar now rather than competing with ＋ Part, so it can
-       carry a little more weight without shouting. */
-    .ambient-pov-varstrip .ambient-pov-novbtn { font-weight: 700; }
+    .ambient-pov-varstrip .ambient-pov-varbar {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px; width: 100%; margin: 0;
+    }
+    @media (min-width: 460px) {
+      .ambient-pov-varstrip .ambient-pov-varbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    /* ONE CELL SHAPE for all six, overriding the per-chip chrome they carry from the
+       bar they used to live on (🧂 Salt's own size, ❄ Capture's pill radius). Label
+       over badge, centred; 56px is a real touch target, which 30px never was. */
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov] {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 3px; min-height: 56px; padding: 8px 10px; min-width: 0;
+      border: 1px solid #23233a; border-radius: 12px; background: #12121f;
+      font-size: 0.8rem; font-weight: 600; text-align: center;
+      white-space: normal; overflow-wrap: anywhere; touch-action: manipulation;
+    }
+    /* The state badge takes its OWN line, so a cell that has one is the same width as
+       a cell that does not — which is what keeps the grid even. */
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov] > b {
+      font: 700 0.62rem 'Segoe UI', sans-serif; padding: 1px 8px; border-radius: 999px;
+      background: rgba(18, 18, 31, 0.35); color: inherit; white-space: nowrap;
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:novelty"] {
+      border-color: #9f7aea; color: #e9d8fd; background: rgba(159, 122, 234, 0.16); font-weight: 700;
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"] {
+      border-color: #e879f9; color: #f6c9ff; background: rgba(232, 121, 249, 0.12);
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"].on {
+      background: var(--salt, #e879f9); color: #12121f;
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"] {
+      border-color: #5aa9e6; color: #bfe0fb; background: rgba(90, 169, 230, 0.12);
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"] {
+      border-color: #e6a35a; color: #f7dcbb; background: rgba(230, 163, 90, 0.12);
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:arc"] {
+      border-color: #5ac8a0; color: #c2efdd; background: rgba(90, 200, 160, 0.12);
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="capture"] {
+      border-color: #46506e; color: #aab4d2; background: rgba(139, 149, 181, 0.10);
+    }
+    @media (hover: hover) {
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov]:hover { filter: brightness(1.25); }
+    }
 
     /* ✺ NOVELTY — the macro group. Same tokens as its neighbours on the ▤ Parts bar;
        the only new chrome is the preview's from → to rows, which nothing else needs. */

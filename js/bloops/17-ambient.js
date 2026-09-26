@@ -2992,6 +2992,9 @@
     // in-or-out state for a whole slice (4 bars at the default 32/8) instead of
     // re-deciding per chord, which is the difference between an arrangement where
     // parts enter and leave and one where every layer flickers.
+    // \u23f1 Schedule (v1): parked out of the UI, kept in the DOM. Flip to true to
+    // bring the accordion back \u2014 nothing else has to change.
+    const _AMB_SCHED_V1_UI = false;
     const _AMB_ARC_BARS = 32, _AMB_ARC_SLICES = 8;
     const _AMB_ARC_SHAPES = ['build', 'wave', 'drift'];
     function _ambNormalizeProgMeta(prog) {
@@ -43755,7 +43758,12 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
+      // EVERY KEY HERE MUST NAME A REAL GROUP, and every real group must be here.
+      // It had drifted both ways: `passes` and `sections` name groups that no longer
+      // exist (▦ Passes was retired into ▦ Schedule), while `schedgrid` — which does
+      // exist — was missing, so ▦ Schedule (v2) was never swept and could not hide
+      // itself when empty. `sched` stays for the parked v1: absent is a no-op.
+      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'overview', 'schedgrid', 'sched'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -53819,11 +53827,27 @@
               _ambProgGrpOpen('schedgrid', '\u25a6 Schedule (v2)', false) +
               '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
               _ambProgGrpClose()) +
-            _ambProgGrpOpen('sched', '\u23f1 Schedule (v1)', false) +
-              '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
-                '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
-              '</div>' +
-            _ambProgGrpClose() +
+            // \u23f1 SCHEDULE (v1) IS PARKED, NOT DELETED (user, 2026-09-26: "don't want
+            // to delete yet but don't want it in the UI for now"). \u25a6 Schedule (v2)
+            // has taken its work over.
+            //
+            // THE NODES STAY IN THE DOM, hidden \u2014 only the ACCORDION around them goes.
+            // `_ambRenderScheduler` writes `#ambient-sched-body`, the pass-row and part
+            // selection state lives on `#ambient-sched` itself, and a dozen call sites
+            // reach for those ids; removing them would turn every one into a silent
+            // no-op, which is a far worse state to be in than a hidden section. Rendered
+            // into a hidden host, every one of them still works and the flag is a
+            // one-word revert.
+            (_AMB_SCHED_V1_UI
+              ? (_ambProgGrpOpen('sched', '\u23f1 Schedule (v1)', false) +
+                '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
+                  '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+                '</div>' +
+                _ambProgGrpClose())
+              : ('<div class="ambient-sched-parked" hidden aria-hidden="true">' +
+                  '<div class="ambient-sched ambient-sched-inline" id="ambient-sched">' +
+                    '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+                  '</div></div>')) +
             // ▦ PASSES WAS HERE — retired into ▦ Schedule above. Its renderer and
             // wiring stay (they no-op without #ambient-passmx) so a stale DOM or a
             // test that builds the node still works.

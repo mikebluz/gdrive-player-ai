@@ -186,6 +186,48 @@ const ok = (name, cond, detail) => {
   ok('…with the dial measuring inside it', pop.amt === true, String(pop.amt));
   ok('…still titled ✺ Novelty', /Novelty/.test(pop.title || ''), JSON.stringify(pop.title));
 
+  // ---- 5. ⏱ SCHEDULE (v1) IS PARKED, NOT DELETED -----------------------------
+  // user, 2026-09-26: "don't want to delete yet but don't want it in the UI for now".
+  // The ACCORDION goes; the NODES stay. `_ambRenderScheduler` writes
+  // `#ambient-sched-body`, the pass-row and part selection live on `#ambient-sched`
+  // itself, and a dozen call sites reach for those ids — removing them would turn
+  // every one into a silent no-op, which is worse than a hidden section.
+  console.log('\n  5. ⏱ Schedule (v1) parked out of the UI');
+  await page.evaluate(() => { try { _ambRenderScheduler(_masterEng); } catch (e) {} });
+  await zz(600);
+  const parked = await page.evaluate(() => {
+    const E = _masterEng, g = (id) => _ambGet(E, id);
+    const secs = [...document.querySelectorAll('.ambient-progsec .ambient-proggrp')]
+      .map(x => ({ grp: x.getAttribute('data-grp'), shown: !!x.offsetParent }));
+    const body = g('ambient-sched-body');
+    return { visible: secs.filter(x => x.shown).map(x => x.grp),
+             v1Section: secs.some(x => /v1/.test(x.grp || '')),
+             v1BodyInDom: !!body, v1BodyVisible: !!(body && body.offsetParent),
+             v1HostInDom: !!g('ambient-sched'),
+             v2Visible: secs.some(x => /v2/.test(x.grp || '') && x.shown),
+             v2Rendered: (g('ambient-schedgrid') || { innerHTML: '' }).innerHTML.length };
+  });
+  console.log('     visible: ' + JSON.stringify(parked.visible));
+  ok('⏱ Schedule (v1) has no section in the pane', parked.v1Section === false, JSON.stringify(parked));
+  ok('…but its nodes are STILL in the DOM, so nothing that writes them is a no-op',
+    parked.v1BodyInDom === true && parked.v1HostInDom === true, JSON.stringify(parked));
+  ok('…and they are not visible', parked.v1BodyVisible === false, String(parked.v1BodyVisible));
+  ok('▦ Schedule (v2) is still a section, and still renders',
+    parked.v2Visible === true && parked.v2Rendered > 100, JSON.stringify(parked));
+
+  // EVERY SWEEP KEY MUST NAME A REAL GROUP, and every real group must be swept. The
+  // list had drifted both ways: `passes`/`sections` named groups retired long ago,
+  // while `schedgrid` — which exists — was missing, so ▦ Schedule (v2) was never
+  // swept and could not hide itself when empty.
+  const keys = await page.evaluate(() => {
+    const real = [...document.querySelectorAll('.ambient-progsec .ambient-proggrp')]
+      .map(g => (g.id || '').replace(/^.*proggrp-/, '')).filter(Boolean);
+    return real;
+  });
+  ok('every section in the pane is one the visibility sweep knows about',
+    keys.length > 0 && keys.every(k => ['novelty', 'salt', 'rubato', 'order', 'arc',
+      'variation', 'overview', 'schedgrid', 'sched'].indexOf(k) >= 0), JSON.stringify(keys));
+
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

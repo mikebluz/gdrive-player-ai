@@ -41887,6 +41887,16 @@
       // once per chip: a door onto a control that cannot do anything yet is the
       // "offered but dead" shape this file keeps recording.
       const _ch = !!(prog && Array.isArray(prog.chords) && prog.chords.length);
+      // EVERY AXIS REPORTS ITS STATE, not just the two that happened to. \u2194 Rubato and
+      // \u21bb Order carried no `on` class at all, so half the grid could be doing
+      // something and look identical to off \u2014 which is the "a chip that looks the
+      // same at 0 and at full is a readout that does not read" rule, unapplied.
+      const _rubOn = ((prog && prog.rubato && prog.rubato.amount | 0) || 0) > 0;
+      const _ordOn = !!(prog && ((prog.order && prog.order.mode) || (prog.arrOrder && prog.arrOrder.mode)));
+      const _ordWhat = (prog && prog.order && prog.order.mode === 'reverse') ? 'reversed'
+        : (prog && prog.arrOrder && prog.arrOrder.mode === 'reverse') ? 'parts reversed'
+        : (prog && prog.order && prog.order.mode) ? 'random'
+        : (prog && prog.arrOrder && prog.arrOrder.mode) ? 'parts' : '';
       return '' +
         // \u273a NOVELTY LEADS THE BAR. Every other door here is one axis; this is the
         // one that sets them all, so it is what you reach for before you know which
@@ -41913,13 +41923,13 @@
         // button here the whole section was unreachable, which is exactly the
         // "finished feature ships invisible" trap this file documents. A new
         // popover group is TWO edits: the group itself and the button that opens it.
-        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:rubato" ' +
-          'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato</span>') +
+        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_rubOn ? ' on' : '') + '" data-pov="grp:rubato" ' +
+          'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato' + (_rubOn ? ('<b>' + ((prog.rubato.amount | 0)) + '</b>') : '') + '</span>') +
         // THE DOOR NAMES BOTH RUNGS. The group holds ↻ Chords and ↻ Parts now, and a
         // door still saying "the changes" would send you looking for part order
         // somewhere else.
-        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
-          'title="Order — scheduled re-ordering: the CHORDS inside a set of changes, and the PARTS inside a round">↻ Order</span>') +
+        (!_ch ? '' : '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_ordOn ? ' on' : '') + '" data-pov="grp:order" ' +
+          'title="Order — scheduled re-ordering: the CHORDS inside a set of changes, and the PARTS inside a round">↻ Order' + (_ordOn ? ('<b>' + esc(_ordWhat) + '</b>') : '') + '</span>') +
         // 🌒 ARC — its door, the second of the TWO edits named above. It reads its
         // own state like 🧂 Salt does, because a curve that is doing something and
         // one that is off must not look identical: Arc is the only control here

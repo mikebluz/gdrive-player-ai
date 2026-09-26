@@ -15308,41 +15308,46 @@
     }
     /* ONE CELL SHAPE for all six, overriding the per-chip chrome they carry from the
        bar they used to live on (🧂 Salt's own size, ❄ Capture's pill radius). Label
-       over badge, centred; 56px is a real touch target, which 30px never was. */
+       over badge, centred; 56px is a real touch target, which 30px never was.
+
+       EACH CELL CARRIES ITS HUE AS AN RGB TRIPLET (`--vxr`) so the base and the "on"
+       states are written ONCE and every axis gets the same treatment. Before this,
+       only 🧂 Salt had an `on` rule, and it FILLED the cell — the single solid tile in
+       a grid of outlines, which is what made it look bolted on. */
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov] {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3px; min-height: 56px; padding: 8px 10px; min-width: 0;
-      border: 1px solid #23233a; border-radius: 12px; background: #12121f;
+      gap: 2px; min-height: 56px; padding: 8px 10px; min-width: 0;
+      border: 1px solid rgba(var(--vxr, 35,35,58), 0.55); border-radius: 12px;
+      background: rgba(var(--vxr, 35,35,58), 0.10); color: var(--vxt, #cfd4ff);
       font-size: 0.8rem; font-weight: 600; text-align: center;
       white-space: normal; overflow-wrap: anywhere; touch-action: manipulation;
     }
-    /* The state badge takes its OWN line, so a cell that has one is the same width as
-       a cell that does not — which is what keeps the grid even. */
+    /* ON IS A DEEPER TINT AND A RING, NEVER A FILL. A filled cell beside five outlined
+       ones reads as a different KIND of control rather than the same control doing
+       something — and the inset ring thickens the edge without changing the box, so
+       nothing reflows when an axis is switched on. */
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov].on {
+      background: rgba(var(--vxr), 0.24);
+      border-color: rgb(var(--vxr));
+      box-shadow: inset 0 0 0 1px rgb(var(--vxr));
+    }
+    /* THE BADGE IS A SECOND LINE, NOT A PILL. Its own background on top of the cell's
+       made a dark blob on a light tile (reported: "the '5 on' readout makes this
+       button look weird"). It is the same text colour, one size down and set back —
+       a caption under the name, which is what it is. */
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov] > b {
-      font: 700 0.62rem 'Segoe UI', sans-serif; padding: 1px 8px; border-radius: 999px;
-      background: rgba(18, 18, 31, 0.35); color: inherit; white-space: nowrap;
+      font: 600 0.62rem 'Segoe UI', sans-serif; padding: 0; background: none;
+      color: inherit; opacity: 0.78; white-space: nowrap; letter-spacing: 0.01em;
     }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:novelty"] {
-      border-color: #9f7aea; color: #e9d8fd; background: rgba(159, 122, 234, 0.16); font-weight: 700;
+      --vxr: 159,122,234; --vxt: #e9d8fd; font-weight: 700;
     }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"] {
-      border-color: #e879f9; color: #f6c9ff; background: rgba(232, 121, 249, 0.12);
-    }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"].on {
-      background: var(--salt, #e879f9); color: #12121f;
-    }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"] {
-      border-color: #5aa9e6; color: #bfe0fb; background: rgba(90, 169, 230, 0.12);
-    }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"] {
-      border-color: #e6a35a; color: #f7dcbb; background: rgba(230, 163, 90, 0.12);
-    }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:arc"] {
-      border-color: #5ac8a0; color: #c2efdd; background: rgba(90, 200, 160, 0.12);
-    }
-    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="capture"] {
-      border-color: #46506e; color: #aab4d2; background: rgba(139, 149, 181, 0.10);
-    }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"]    { --vxr: 232,121,249; --vxt: #f6c9ff; }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"]  { --vxr: 90,169,230;  --vxt: #bfe0fb; }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"]   { --vxr: 230,163,90;  --vxt: #f7dcbb; }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:arc"]     { --vxr: 90,200,160;  --vxt: #c2efdd; }
+    /* ❄ Capture is the quiet neutral — an ACTION, not an axis. */
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="capture"]     { --vxr: 139,149,181; --vxt: #aab4d2; }
     @media (hover: hover) {
       .ambient-pov-varstrip .ambient-pov-varbar > [data-pov]:hover { filter: brightness(1.25); }
     }

@@ -166,6 +166,48 @@ const ok = (name, cond, detail) => {
   ok('…and six divides that column count, so no row can be orphaned',
     decl && 6 % decl.tracks === 0, JSON.stringify(decl));
 
+  // ---- 3b. THE "ON" STATE ----------------------------------------------------
+  // user, 2026-09-26: "the '5 on' readout makes this button look weird". Two causes,
+  // both structural: the badge had its OWN pill background, which on 🧂 Salt's filled
+  // tile was a dark blob on a light one; and 🧂 Salt was the ONLY cell with an `on`
+  // rule, and that rule FILLED it — one solid tile in a grid of outlines reads as a
+  // different KIND of control rather than the same one doing something.
+  console.log('\n  3b. every axis reports state the same way');
+  const states = await page.evaluate(() => {
+    const c = _masterEng.getCfg();
+    c.prog.on = true;
+    c.prog.chords = [{ root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 3, 7] }];
+    c.prog.salt = { colors: 3, scatter: 35 }; c.prog.vary = 45; c.prog.tension = 45;
+    c.prog.rubato = { amount: 40 }; c.prog.order = { mode: 'shuffle', when: 'always' };
+    c.prog.arc = { amount: 60, bars: 32, shape: 'wave' };
+    _masterEng.getCfg();
+    try { _ambRenderProgOverview(_masterEng); } catch (e) {}
+    const cells = [...document.querySelectorAll('.ambient-pov-varbar > [data-pov]')];
+    const alpha = (col) => { const m = /rgba?\(([^)]+)\)/.exec(col || ''); if (!m) return 1;
+      const parts = m[1].split(',').map(x => parseFloat(x)); return parts.length > 3 ? parts[3] : 1; };
+    return cells.map(e => { const b = e.querySelector('b');
+      return { k: e.getAttribute('data-pov').replace('grp:', ''), on: e.classList.contains('on'),
+               w: Math.round(e.getBoundingClientRect().width),
+               h: Math.round(e.getBoundingClientRect().height),
+               bgAlpha: alpha(getComputedStyle(e).backgroundColor),
+               badge: b ? b.textContent : null,
+               badgeBgAlpha: b ? alpha(getComputedStyle(b).backgroundColor) : 0 }; });
+  });
+  console.log('     ' + JSON.stringify(states.map(x => x.k + (x.on ? '=' + (x.badge || 'on') : ''))));
+  const onCells = states.filter(x => x.on);
+  ok('all four axes can report that they are doing something',
+    ['salt', 'rubato', 'order', 'arc'].every(k => onCells.some(x => x.k === k)),
+    JSON.stringify(onCells.map(x => x.k)));
+  ok('…each with a badge that says WHAT, not just that',
+    onCells.every(x => x.badge && x.badge.length > 0), JSON.stringify(onCells.map(x => x.badge)));
+  ok('NO cell is FILLED — "on" is a deeper tint, so the grid stays one kind of control',
+    states.every(x => x.bgAlpha < 0.5), JSON.stringify(states.map(x => x.k + ':' + x.bgAlpha)));
+  ok('…the badge has no background of its own, so it cannot blob on the tile',
+    states.every(x => x.badgeBgAlpha === 0), JSON.stringify(states.map(x => x.badgeBgAlpha)));
+  ok('…and switching an axis on does not resize its cell',
+    new Set(states.map(x => x.w)).size === 1 && new Set(states.map(x => x.h)).size === 1,
+    JSON.stringify(states.map(x => x.w + 'x' + x.h)));
+
   // ---- 4. THE DOOR STILL OPENS ------------------------------------------------
   console.log('\n  4. the door still opens onto the real popover');
   const opened = await page.evaluate(() => {

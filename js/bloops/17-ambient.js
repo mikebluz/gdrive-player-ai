@@ -3216,6 +3216,15 @@
         if (typeof o !== 'object' || (o.mode !== 'shuffle' && o.mode !== 'reverse')) delete prog.order;
         else o.when = (typeof o.when === 'string' && (o.when === 'always' || /^[01]+$/.test(o.when))) ? o.when : 'always';
       }
+      // \u21bb PART ORDER (additive): the same question one rung up \u2014 \u21bb Order reorders
+      // the CHORDS inside a set of changes, this reorders the PARTS inside a round.
+      // Identical shape and identical grammar, so nothing new has to be learned;
+      // absent / mode '' \u2192 the key is deleted and the written order plays.
+      if (prog.arrOrder != null) {
+        const o2 = prog.arrOrder;
+        if (typeof o2 !== 'object' || (o2.mode !== 'shuffle' && o2.mode !== 'reverse')) delete prog.arrOrder;
+        else o2.when = (typeof o2.when === 'string' && (o2.when === 'always' || /^[01]+$/.test(o2.when))) ? o2.when : 'always';
+      }
       // \ud83c\udf12 ARC (additive): the arrangement's density curve. `amount` 0 /
       // absent \u2192 the whole key is deleted, so untouched projects stay
       // byte-identical. `bars` is the length of ONE arc and `shape` how the
@@ -5325,6 +5334,68 @@
       for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = p[i]; p[i] = p[j]; p[j] = t; }
       return p;
     }
+    // ---- \u21bb PART ORDER \u2014 \u21bb Order, one rung up -----------------------------
+    // `_ambProgOrderPerm` permutes the CHORDS inside a set of changes; this permutes
+    // the PARTS inside one round. Same store shape, same When grid, same dedicated
+    // seeded RNG, so it is replayable and consumes no shared draw.
+    //
+    // WHY A PERMUTATION AND NOT A SKIP. `_ambGridSlots` expands the super-cycle by
+    // simulating until its state key repeats, and `plan.cycle` \u2014 which `gloops` is
+    // derived from \u2014 is that expansion's total. A permutation of a round's part
+    // list holds the same parts, so the round's LENGTH is invariant and the whole
+    // arrangement stays the length it was; only the order moves. A dice-rolled SKIP
+    // would change the length and cannot be done this way (see
+    // docs/bloom-arrangement-generative.md \u00a73).
+    //
+    // THE HORIZON is what keeps the expansion finite. A shuffle seeded on the round
+    // never repeats, so the state key would never repeat either and the walk would
+    // run to _AMB_GRID_MAX_ITERS with a meaningless total. So the order is declared
+    // to repeat every `_ambArrOrderRounds` rounds, and that period rides IN the key.
+    const _AMB_ARRORDER_ROUNDS = 4;
+    const _ambArrOrderCfg = (prog) => {
+      const o = prog && prog.arrOrder;
+      return (o && (o.mode === 'shuffle' || o.mode === 'reverse')) ? o : null;
+    };
+    // Engaged only with something to reorder: one part cannot be permuted, and
+    // saying so here keeps `_ambGridOn` from switching the whole grid clock on for
+    // a progression that would sound identical either way.
+    function _ambArrOrderOn(cfg) {
+      const p = cfg && cfg.prog;
+      if (!_ambArrOrderCfg(p)) return false;
+      try { return (_ambGridRanges(cfg) || []).length > 1; } catch (e) { return false; }
+    }
+    // How many rounds pass before the ORDER repeats. `reverse` is the same every
+    // round it fires, so its period is the When grid's alone; `shuffle` draws fresh
+    // each round, so it gets the declared horizon, widened to the grid's period when
+    // there is one. Reduced if the resulting super-cycle would not fit \u2014 truncation
+    // would give a wrong `plan.cycle`, which walks the clock off its own grid.
+    function _ambArrOrderRounds(cfg, slotsPerRound) {
+      const o = _ambArrOrderCfg(cfg && cfg.prog); if (!o) return 1;
+      const wl = (o.when && o.when !== 'always' && /^[01]+$/.test(o.when)) ? o.when.length : 1;
+      const gcd = (x, y) => y ? gcd(y, x % y) : x;
+      const lcm = (x, y) => (x * y) / Math.max(1, gcd(x, y));
+      let h = (o.mode === 'shuffle') ? lcm(_AMB_ARRORDER_ROUNDS, wl) : wl;
+      h = Math.max(1, Math.min(64, h | 0));
+      const per = Math.max(1, slotsPerRound | 0);
+      while (h > 1 && h * per > (_AMB_GRID_MAX_SLOTS >> 1)) h = h >> 1;
+      return h;
+    }
+    // The permutation for one ROUND, or null for the written order.
+    function _ambArrOrderPerm(cfg, n, round) {
+      const o = _ambArrOrderCfg(cfg && cfg.prog);
+      if (!o || !(n > 1)) return null;
+      try { if (!_ambCondFires(o.when || 'always', round)) return null; } catch (e) { return null; }
+      if (o.mode === 'reverse') { const p2 = []; for (let i = 0; i < n; i++) p2.push(n - 1 - i); return p2; }
+      const seed = (cfg.seed | 0) || 1;
+      // Folded to the horizon, so the order genuinely repeats with the super-cycle
+      // rather than drifting out of step with the plan that contains it.
+      const h = _ambArrOrderRounds(cfg, 1);
+      const r = ((((round | 0) % h) + h) % h);
+      const rnd = _ambSeededRand(((((r + 1) * 1274126177) >>> 0) ^ ((seed * 2654435761) >>> 0) ^ 0x5B10) >>> 0);
+      const p2 = []; for (let i = 0; i < n; i++) p2.push(i);
+      for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = p2[i]; p2[i] = p2[j]; p2[j] = t; }
+      return p2;
+    }
     // Fractional position hint for COLORS: _ambProgStepAt stashes {step, pos}
     // as it resolves each onset; _ambProgCurrentChord uses it only when the
     // step matches (a stale/absent hint → pos 0 = the plain written chord).
@@ -5418,6 +5489,11 @@
       const live = (g) => !!(g && ((g.seq && Object.keys(g.seq).length) || g.fit
         || (g.bars && Object.keys(g.bars).length) || _ambGridCols(g) > 1));
       if (live(p.arrGrid)) return true;
+      // \u21bb PART ORDER ENGAGES THE GRID CLOCK. The permutation is applied in
+      // `_ambArrGridSeq`, which only the grid expansion calls \u2014 so without this a
+      // progression with no grid would store the setting, draw it, and play the
+      // written order. `_ambArrOrderOn` already requires two parts to reorder.
+      try { if (_ambArrOrderOn(cfg)) return true; } catch (e) {}
       if (!Array.isArray(p.parts)) return live(p.grid);
       return p.parts.some(x => x && live(x.grid));
     }
@@ -5454,6 +5530,32 @@
     // if there is one, else the written order — i.e. exactly today's behaviour.
     function _ambArrGridSeq(cfg, iter, nParts, ranges) {
       const p = cfg && cfg.prog, g = p && p.arrGrid;
+      // \u21bb PART ORDER is applied to WHATEVER this function decides to play \u2014 the
+      // meta grid's row, a chain, or the written walk \u2014 because it reorders the
+      // round, it does not choose it. Applied at the tail, so every source composes
+      // with it and none has to know it exists.
+      // IT MOVES PARTS, NOT VISITS. The list this permutes is a list of VISITS \u2014 a
+      // part with two passes appears twice, consecutively, because "a part runs its
+      // passes back to back" is a rule this file fixed after three reports. Permuting
+      // the visits directly would undo it: a shuffle would deal A's second pass to
+      // the far side of C. So consecutive equal entries are grouped into RUNS, the
+      // RUNS are permuted, and each run stays whole \u2014 which is also what the label
+      // \u21bb Parts promises.
+      const _ord = (list) => {
+        if (!list || list.length < 2) return list;
+        const runs = [];
+        for (let i = 0; i < list.length; i++) {
+          const last = runs[runs.length - 1];
+          if (last && last[0] === list[i]) last.push(list[i]);
+          else runs.push([list[i]]);
+        }
+        if (runs.length < 2) return list;
+        const perm = _ambArrOrderPerm(cfg, runs.length, iter | 0);
+        if (!perm) return list;
+        const out2 = [];
+        perm.forEach(i => { const r = runs[i]; if (r) for (let z = 0; z < r.length; z++) out2.push(r[z]); });
+        return out2;
+      };
       const dflt = () => {
         if (Array.isArray(p.chain) && p.chain.length) return p.chain.map(v => v | 0).filter(v => v >= 0 && v < nParts);
         // A PART RUNS ITS PASSES BACK TO BACK, then the next part starts.
@@ -5489,11 +5591,14 @@
         }
         return a;
       };
-      if (!g || !g.seq) return dflt();
+      // EVERY exit is wrapped, not `dflt()` itself: the meta grid's row is as much
+      // "the order this round" as the written walk is, and a control that reordered
+      // one source and not the others would be two behaviours wearing one label.
+      if (!g || !g.seq) return _ord(dflt());
       const cols = _ambGridCols(g);
       const row = g.seq[String(((iter % cols) + cols) % cols)];
-      if (!Array.isArray(row)) return dflt();
-      return row.map(v => v | 0).filter(v => v >= 0 && v < nParts);
+      if (!Array.isArray(row)) return _ord(dflt());
+      return _ord(row.map(v => v | 0).filter(v => v >= 0 && v < nParts));
     }
     // ---- PLAY ORDER ---------------------------------------------------------
     // THE PARTS THAT OCCUPY TIME, in written order — the one enumerator the play
@@ -5706,7 +5811,14 @@
       out += ';';
       if (parts) parts.forEach(pt => { out += (pt.open ? 'o' : '') + (pt.len | 0) + ':' + _ambGridSigOf(pt.grid) + ','; });
       else out += _ambGridSigOf(p.grid);
-      return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '');
+      // \u21bb PART ORDER IN THE SIG, or the memo serves a pre-edit expansion: the plan
+      // is keyed on this string alone, and the order changes WHICH SLOTS it holds.
+      // `cfg.seed` too \u2014 a shuffle is a function of it, so \ud83c\udfb2 New take must
+      // re-expand. (The sig is otherwise deliberately structural; this is the one
+      // axis that moves the structure itself.)
+      const _ao = _ambArrOrderCfg(p);
+      return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '')
+        + ';' + (_ao ? (_ao.mode + '@' + (_ao.when || 'always') + '#' + (cfg.seed | 0)) : '-');
     }
     // The expansion PLUS the cumulative bar edges, so the clock can bisect the
     // slot instead of walking it.
@@ -5845,9 +5957,22 @@
         return (g && g.seq) ? _ambGridCols(g) : 1;
       });
       const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
+      // \u21bb PART ORDER'S PERIOD RIDES IN THE STATE KEY. Without it the walk below
+      // stops the first time the passes line up again \u2014 while the ORDER is still
+      // changing \u2014 so the super-cycle would close early and every later round would
+      // replay the first one's order. With it, the expansion runs until the passes
+      // AND the order have both come round, which is what "the super-cycle has
+      // closed" has to mean once the order varies.
+      const _ordRounds = (function () {
+        try {
+          if (!_ambArrOrderOn(cfg)) return 1;
+          const per = ranges.reduce((n2, r) => n2 + Math.max(1, r.len | 0), 0) * Math.max(1, arrCols);
+          return _ambArrOrderRounds(cfg, per);
+        } catch (e) { return 1; }
+      })();
       const visits = ranges.map(() => 0), seen = new Set(), out = [];
       for (let it = 0; it < _AMB_GRID_MAX_ITERS && out.length < _AMB_GRID_MAX_SLOTS; it++) {
-        const key = (it % arrCols) + '|' + visits.map((v, k) => v % partCols[k]).join(',');
+        const key = (it % arrCols) + '/' + (it % _ordRounds) + '|' + visits.map((v, k) => v % partCols[k]).join(',');
         if (out.length && seen.has(key)) break;      // the super-cycle has closed
         seen.add(key);
         _ambArrGridSeq(cfg, it, ranges.length, ranges).forEach(k => {
@@ -41579,8 +41704,11 @@
         // popover group is TWO edits: the group itself and the button that opens it.
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:rubato" ' +
           'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato</span>' +
+        // THE DOOR NAMES BOTH RUNGS. The group holds ↻ Chords and ↻ Parts now, and a
+        // door still saying "the changes" would send you looking for part order
+        // somewhere else.
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
-          'title="Order — scheduled re-ordering of the changes">↻ Order</span>' +
+          'title="Order — scheduled re-ordering: the CHORDS inside a set of changes, and the PARTS inside a round">↻ Order</span>' +
         // 🌒 ARC — its door, the second of the TWO edits named above. It reads its
         // own state like 🧂 Salt does, because a curve that is doing something and
         // one that is off must not look identical: Arc is the only control here
@@ -52576,6 +52704,37 @@
                 if (wSel) { wSel.style.display = active ? '' : 'none';
                   if (document.activeElement !== wSel) wSel.value = o.when || 'always'; }
               } }
+            // \u21bb Parts row \u2014 the same mirror one rung up.
+            { const arow = document.getElementById(tr('ambient-prog-arrorderrow'));
+              if (arow) {
+                arow.style.display = progOn ? '' : 'none';
+                const o2 = (cfg.prog && cfg.prog.arrOrder) || {};
+                const act2 = !!o2.mode;
+                // HOW MANY PARTS ARE THERE TO REORDER? One is not a question, so the
+                // row says so instead of offering a control that cannot act \u2014 the
+                // same rule the Passes grid follows for a single pass.
+                let nParts = 1;
+                try { nParts = (_ambGridRanges(cfg) || []).length; } catch (e) { nParts = 1; }
+                const tog2 = document.getElementById(tr('ambient-arrorder-toggle'));
+                if (tog2) { tog2.classList.toggle('active', act2 && nParts > 1);
+                  tog2.disabled = nParts < 2;
+                  tog2.title = (nParts < 2)
+                    ? '\u21bb Parts \u2014 nothing to reorder yet: there is only one set of changes.'
+                    : (act2 ? '\u21bb Parts is ON \u2014 click to turn off (back to the written order)'
+                            : '\u21bb Parts \u2014 re-order the parts themselves on scheduled rounds. OFF = written order. Click to turn on.'); }
+                const mS = document.getElementById(tr('ambient-arrorder-mode'));
+                const wS = document.getElementById(tr('ambient-arrorder-when'));
+                const show = act2 && nParts > 1;
+                if (mS) { mS.style.display = show ? '' : 'none';
+                  if (document.activeElement !== mS) mS.value = o2.mode || 'shuffle'; }
+                if (wS) { wS.style.display = show ? '' : 'none';
+                  if (document.activeElement !== wS) wS.value = o2.when || 'always'; }
+                const note = document.getElementById(tr('ambient-arrorder-note'));
+                if (note) note.textContent = (nParts < 2)
+                  ? 'Add a second set of changes and the parts can be re-ordered.'
+                  : (show ? ('The same ' + nParts + ' parts, in a different order \u2014 the round keeps its length, so nothing else moves.')
+                          : 'Parts play in the order you wrote them.');
+              } }
             // \ud83c\udf12 Arc row: NOT gated on `progOn`. It counts bars, not chords, so it is
             // the one control on this bar that means something with no changes at
             // all \u2014 hiding it with the rest would have made it unreachable in exactly
@@ -53116,9 +53275,25 @@
               // order, every cycle) — i.e. the engine does nothing — so "Written"
               // no longer needs to occupy a slot in the mode list; turning Order
               // OFF is what "written" means. Activating picks Random by default.
-              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-order-toggle" id="ambient-order-toggle" title="↻ Order — re-order the progression\u2019s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.">↻ Order</button>' +
+              // TWO RUNGS, TWO LABELS. Once the parts can be reordered too, "Order"
+              // alone names neither: each row says WHAT it reorders, and the group
+              // keeps the shared verb. Store keys are untouched (`prog.order`).
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-order-toggle" id="ambient-order-toggle" title="\u21bb Chords \u2014 re-order the chords INSIDE a set of changes, on scheduled cycles. OFF = written order, every cycle. Click to turn on.">\u21bb Chords</button>' +
               '<select id="ambient-order-mode" class="ambient-select"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
               '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
+            '</div>' +
+            // \u21bb PARTS \u2014 the same question one rung up: \u21bb Chords moves the chords
+            // inside a set of changes, this moves the PARTS inside a round. Same row
+            // shape and same grammar, deliberately, so the ladder reads as one idea
+            // at two scopes rather than two mechanisms.
+            '<div class="ambient-row ambient-prog-salt ambient-prog-order" id="ambient-prog-arrorderrow" style="display:none" title="Part order \u2014 re-order the PARTS on scheduled rounds (deterministic per take; the same take replays it exactly).">' +
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-arrorder-toggle" id="ambient-arrorder-toggle" title="\u21bb Parts \u2014 re-order the parts themselves on scheduled rounds, so the piece does not always run Verse \u2192 Chorus \u2192 Bridge. OFF = written order. Click to turn on.">\u21bb Parts</button>' +
+              '<select id="ambient-arrorder-mode" class="ambient-select ambient-arrorder-mode"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
+              '<select id="ambient-arrorder-when" class="ambient-select ambient-arrorder-when" title="Which rounds play in the altered order (the rest play as written)"><option value="always">every round</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
+              // IT REORDERS, IT NEVER DROPS. A permutation holds the same parts, so
+              // the round keeps its length and the arrangement stays as long as it
+              // was \u2014 which is what lets this run inside the cached plan at all.
+              '<span class="ambient-hint arrorder-note" id="ambient-arrorder-note"></span>' +
             '</div>' +
             _ambProgGrpClose() +
             // \ud83c\udf12 ARC \u2014 THE ORCHESTRATION AXIS, and the only group on this bar that
@@ -55320,6 +55495,28 @@
             c.prog.order = { mode: (mSel && mSel.value) || 'shuffle', when: (wSel && wSel.value) || 'always' };
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          });
+        });
+        // \u21bb Parts \u2014 the same pair of handlers, one rung up. Changing it re-expands
+        // the super-cycle, so the panel and the overview both repaint.
+        { const aTog = G('ambient-arrorder-toggle');
+          if (aTog) aTog.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (c.prog.arrOrder && c.prog.arrOrder.mode) delete c.prog.arrOrder;
+            else c.prog.arrOrder = { mode: 'shuffle', when: 'always' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
+          }); }
+        [['ambient-arrorder-mode', 'mode'], ['ambient-arrorder-when', 'when']].forEach(pr => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener('change', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const mSel = G('ambient-arrorder-mode'), wSel = G('ambient-arrorder-when');
+            c.prog.arrOrder = { mode: (mSel && mSel.value) || 'shuffle', when: (wSel && wSel.value) || 'always' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
           });
         });
         // \ud83c\udf12 Arc \u2014 the \u21bb Order idiom exactly: the LABEL is on/off, OFF deletes the

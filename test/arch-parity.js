@@ -205,6 +205,37 @@ const CONFIGS = [
     parts: [['Verse', 2, 3, null, null, null, { head: { bars: 0.5, layers: [], once: 1 }, tail: { bars: 0.5, layers: [], once: 1 } }], ['Chorus', 2]] },
   { id: 'hang-once-grid', chords: [0, 5, 7, 9],
     parts: [['Verse', 2, 3, null, null, { cols: 2, seq: {} }, { head: { bars: 0.5, layers: [], once: 1 } }], ['Chorus', 2]] },
+  // ↻ PARTS — `prog.arrOrder` permutes the PARTS inside a round. It moves the
+  // played chain, so it belongs in this gate and not only in its own probe.
+  // THREE parts, because with two a shuffle and a reverse cannot be told apart.
+  // APPENDED AT THE END: these configs are order-dependent, so inserting earlier
+  // drifts whatever follows.
+  { id: 'arr-order-rev', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]],
+    arrOrder: { mode: 'reverse', when: 'always' } },
+  { id: 'arr-order-shuf', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]],
+    arrOrder: { mode: 'shuffle', when: 'always' } },
+  // …gated to every other round, so the written order and the permuted one both
+  // appear inside one super-cycle.
+  { id: 'arr-order-when', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]],
+    arrOrder: { mode: 'shuffle', when: '10' } },
+  // THE COMBINATIONS, per the standing rule. A permuted round on top of a Passes
+  // grid (two expansions composing), and on top of per-part repeats (`plays`,
+  // which decides how many visits a part contributes BEFORE the order moves them).
+  { id: 'arr-order-grid', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 1, null, null, { cols: 2, seq: { 1: [1, 0] } }], ['B', 2], ['C', 2]],
+    arrOrder: { mode: 'shuffle', when: 'always' } },
+  { id: 'arr-order-plays', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 2], ['B', 2], ['C', 2, 3]],
+    arrOrder: { mode: 'reverse', when: 'always' } },
+  // …and with a META grid, which states the round's order itself — the permutation
+  // must reorder WHAT THE META GRID CHOSE, not fall back to the written walk.
+  { id: 'arr-order-meta', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2], ['B', 2], ['C', 2]],
+    arrGrid: { cols: 2, seq: { 0: [0, 1, 2], 1: [2, 0] } },
+    arrOrder: { mode: 'reverse', when: 'always' } },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section
@@ -282,6 +313,7 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
         if ((c.salt.len | 0) > 0) cfg.prog.rubato = { amount: c.salt.len | 0 };
       }
       if (c.arrGrid) cfg.prog.arrGrid = c.arrGrid;   // PART MATRIX: the meta grid
+      if (c.arrOrder) cfg.prog.arrOrder = c.arrOrder;   // ↻ PARTS: the round's order
       if (c.chain) cfg.prog.chain = c.chain;        // ORDER OF PLAY (outranks `plays`)
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),

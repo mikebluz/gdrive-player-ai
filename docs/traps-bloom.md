@@ -53,6 +53,21 @@
 
 ### Bloom: the arrangement clock
 
+- **A ROUND'S PART LIST IS A LIST OF VISITS, NOT OF PARTS.** A part with two passes appears twice,
+  consecutively, because "a part runs its passes back to back" is a rule this file fixed after three
+  reports. Anything reordering that list must group consecutive equal entries into RUNS and permute the
+  runs — permuting the visits deals a part's second pass to the far side of another part, silently
+  undoing that fix. ↻ Parts (`_ambArrGridSeq`'s `_ord`) does; poison-verified.
+- **`plays` IS COUNTED TWICE whenever the grid clock is on and a part has no grid of its own.**
+  `_ambArrGridSeq`'s default walk does `plays × _ambPartPassCols(cfg, pi)`, and that helper falls back
+  to `_ambPartNaturalPasses` — which IS `plays`. So `plays: 3` gives NINE visits. Pre-existing and
+  BASELINED (arch-parity `grid-plays-3`, part C), so it is not a free fix: correcting it re-baselines
+  that config. It became reachable without any grid when ↻ Parts started engaging the grid clock.
+- **Anything that varies per ROUND must put its period in `_ambGridSlots`' state key.** The expansion
+  stops when `(it % arrCols) | visits…` repeats; a seeded shuffle never repeats, so without a declared
+  horizon folded into that key the super-cycle closes while the order is still changing and every later
+  round replays the first one's. `_ambArrOrderRounds` declares it and the key carries `it % H`.
+
 - **`_ambSectionGateOK` IS the arrangement gate, and it has 13 call sites.** A new arrangement-level
   gate folds INTO it (🌒 Arc does) rather than becoming a 14th sweep — but its `if (!L.sectionMask)
   return true` early exit is BEFORE everything, so a gate that must apply to unmasked layers has to go

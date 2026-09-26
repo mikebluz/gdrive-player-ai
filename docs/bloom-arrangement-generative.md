@@ -121,15 +121,39 @@ Take ID's own promise that the same id replays the same performance.
 
 (4d shipped; it was never on the form axis — it is the density axis at one more rung.)
 
-### 4a. `prog.arrOrder` — ↻ Order one level up
+### ~~4a. `prog.arrOrder`~~ — SHIPPED 2026-09-25 as **↻ Parts**
 
-↻ Order shuffles the **chords** in a cycle. The exactly-analogous thing at the
-**part** level does not exist, and `_ambProgOrderPerm` is the whole template —
-Fisher-Yates on a dedicated seeded RNG, plus a `when` grid, already written.
+`prog.arrOrder = { mode: 'shuffle'|'reverse', when }` — ↻ Order's exact store shape,
+When grid and dedicated seeded RNG, one rung up. The two rows now say what they
+reorder: **↻ Chords** inside a set of changes, **↻ Parts** inside a round.
 
-Insertion point is one function, `_ambArrGridSeq(cfg, iter, nParts, ranges)`, plus
-`_ambPovOrder` for the strip. **A permutation preserves the round's total**, so this
-is the case option 2 above was built for. Store: `{ mode, when }`, absent = written.
+**It took the HORIZON route (option 1), not the per-loop memo.** A permutation does
+preserve the round's total, but the plan holds SLOTS and the order changes which
+slots those are — so the expansion itself has to run long enough to contain the
+variation. `_ambArrOrderRounds` declares the period (4 for a shuffle, the When
+grid's own for a reverse, reduced if the super-cycle would not fit) and
+`_ambGridSlots`' state key carries `it % H`. Without that the walk stops the first
+time the passes line up again, while the order is still changing, and every later
+round replays the first one's.
+
+**It engages the grid clock** (`_ambGridOn`), because `_ambArrGridSeq` is only
+called from the grid expansion — otherwise the setting would store, draw and play
+the written order. It stays inert with one part: reordering one thing is not a
+question, and the row says so.
+
+**It moves PARTS, not VISITS.** The list it permutes holds a visit per pass, so a
+part with two passes appears twice consecutively; permuting that directly would deal
+its second pass to the far side of another part, undoing the documented
+back-to-back rule. Consecutive equal entries are grouped into runs and the runs are
+permuted. Measured, 3 parts where A has two passes:
+`2100 · 1200 · 0021 · 2001` — every round a whole permutation, A's passes always
+adjacent, 32 bars = 4 × the written 8.
+
+Gate: 6 new **arch-parity** configs (`arr-order-rev/shuf/when/grid/plays/meta`) — the
+standing gate for the chord clock, not only its own probe — plus
+`node test/probe-arrorder.js` (31 checks). Re-baselined deliberately: the 62 existing
+configs were **unmoved**, only the 6 added. Poison-verified on four axes (the
+closure-key horizon, the grid engagement, the plan signature, and run-grouping).
 
 ### 4b. `parts[i].chance` — the part-level probability the masks already have
 

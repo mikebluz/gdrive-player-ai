@@ -119,6 +119,8 @@ Take ID's own promise that the same id replays the same performance.
 
 ## 4. Not built — the form axis, in order of value
 
+(4d shipped; it was never on the form axis — it is the density axis at one more rung.)
+
 ### 4a. `prog.arrOrder` — ↻ Order one level up
 
 ↻ Order shuffles the **chords** in a cycle. The exactly-analogous thing at the
@@ -147,11 +149,37 @@ each go) and the most expensive: it makes the super-cycle length vary per round,
 `_ambProgChainBars`, the Scheduler lane, phrase fits and Write snapping all assume
 one answer. Own slice, own gate, last.
 
-### 4d. Per-part Arc depth
+### ~~4d. Per-part Arc depth~~ — SHIPPED 2026-09-25
 
-`parts[i].arc = { amount }`, ↔ Rubato's grammar at the part rung: the chorus always
-full, the verse breathing. Touches no clock at all and reuses everything §2 built —
-so it is the cheapest item here, and the natural next one.
+`parts[i].arc = { amount }`, ↔ Rubato's grammar at the part rung: absent = inherit,
+an explicit `{amount: 0}` = **flat here** however deep the area's arc is. "The
+chorus is always full, the verse breathes."
+
+**DEPTH ONLY, and that is a design decision rather than a first slice.** `shape`
+and `bars` describe the piece and the phase runs on the global bar clock, so a part
+that redefined them would jump to a different point of a different shape halfway
+through — the curve would be discontinuous at its own boundary. Depth is the one
+axis a part can scale without breaking the phase, and it is the musical one.
+
+Three things it needed beyond the store:
+
+- **`_ambArcAmountAt`** resolves part → area, and is skipped entirely unless some
+  part actually overrides — so the ordinary area-only arc still costs no chord-clock
+  work and still runs on an area with no changes. It asks `_ambPartPassAt`, which
+  answers exactly "which part is sounding", rather than the heavier
+  `_ambPartChordAt`.
+- **The gate engages on EITHER rung.** Testing only the area's depth would leave a
+  part that breathes against a flat area stored, drawn and silent.
+- **The area's curve is no longer pruned at depth 0 while a part overrides.** Only
+  the area stores `shape`/`bars`, so the old prune rule threw away a chosen wave/64
+  the moment someone said "flat everywhere except the verse".
+
+An OPEN part can carry one, unlike `passRubato`: rubato moves chord lengths and an
+open part has none, while the arc thins the layers playing over it — which is what
+an open part is for.
+
+Gate: `node test/probe-arc-part.js`, 22 checks, poison-verified on four axes
+(resolver 4 · engagement 1 · part carry 8 · the prune rule 1).
 
 ---
 

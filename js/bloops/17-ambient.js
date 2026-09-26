@@ -3224,12 +3224,16 @@
       if (prog.arc != null) {
         const a = prog.arc;
         const amt = (a && typeof a === 'object') ? Math.max(0, Math.min(100, a.amount | 0)) : 0;
-        if (!amt) delete prog.arc;
+        // KEEP IT AT DEPTH 0 WHILE A PART OVERRIDES. `shape` and `bars` are the
+        // piece's curve and only the AREA stores them, so pruning the object away
+        // when the area's own depth is 0 would throw away a chosen wave/64 the
+        // moment someone said "flat everywhere except the verse".
+        if (!amt && !_ambAnyPartArc(prog)) delete prog.arc;
         else {
           prog.arc = {
             amount: amt,
-            bars: Math.max(2, Math.min(128, (a.bars | 0) || _AMB_ARC_BARS)),
-            shape: (_AMB_ARC_SHAPES.indexOf(a.shape) >= 0) ? a.shape : 'build',
+            bars: Math.max(2, Math.min(128, ((a && a.bars) | 0) || _AMB_ARC_BARS)),
+            shape: (a && _AMB_ARC_SHAPES.indexOf(a.shape) >= 0) ? a.shape : 'build',
           };
         }
       }
@@ -3381,6 +3385,10 @@
           }
           { const _rb0 = _ambRubatoCoerce(p.rubato); if (_rb0) e0.rubato = _rb0; }
           { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e0.passSalt = _psx; }
+          // AN OPEN PART CAN CARRY AN ARC, unlike passRubato: rubato moves CHORD
+          // lengths and an open part has none, while the arc thins the LAYERS
+          // playing over it — which is exactly what an open part is for.
+          { const _acx = _ambArcPartCoerce(p.arc); if (_acx) e0.arc = _acx; }
           // NO passRubato ON AN OPEN PART, deliberately. `_ambPassRubatoStore` returns
           // null for `open`, so a value carried here could never be read — and a
           // stored field with no reader is what got `mutateRate` deleted. The
@@ -3453,6 +3461,7 @@
         { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e.passSalt = _psx; }
         { const _prx = _ambPassRubatoCoerce(p.passRubato); if (_prx) e.passRubato = _prx; }
         { const _rb = _ambRubatoCoerce(p.rubato); if (_rb) e.rubato = _rb; }
+        { const _ac = _ambArcPartCoerce(p.arc); if (_ac) e.arc = _ac; }
         // HANGS — same fresh-object rule as everything above it.
         { const _hh = _ambNormalizeHang(p.head); if (_hh) e.head = _hh;
           const _ht = _ambNormalizeHang(p.tail); if (_ht) e.tail = _ht; }
@@ -5169,6 +5178,20 @@
       if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
       return { amount: Math.max(0, Math.min(100, v.amount | 0)) };
     }
+    // \ud83c\udf12 Arc at the PART rung \u2014 DEPTH ONLY, deliberately. `shape` and `bars`
+    // describe the piece's curve and its phase runs on the global bar clock, so a
+    // part that redefined them would make the curve DISCONTINUOUS at its own
+    // boundary \u2014 it would jump to a different point of a different shape halfway
+    // through. Depth is the one axis a part can scale without breaking the phase,
+    // and it is the musical one: "the chorus is always full, the verse breathes".
+    // Same grammar as \u2194 Rubato's part rung: absent = inherit, explicit
+    // `{amount: 0}` = FLAT HERE however much the area has.
+    function _ambArcPartCoerce(v) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+      return { amount: Math.max(0, Math.min(100, v.amount | 0)) };
+    }
+    const _ambAnyPartArc = (prog) => !!(prog && Array.isArray(prog.parts)
+      && prog.parts.some(x => x && x.arc && typeof x.arc === 'object'));
     function _ambRubatoAt(cfg, step) {
       const prog = cfg && cfg.prog;
       if (!prog || !prog.on) return 0;
@@ -6862,9 +6885,14 @@
     // `hard` skips it, exactly as it skips the mask hashes: a hard check asks "is
     // this layer allowed here at all", which the drawing and the outlines need, and
     // a probabilistic answer there would make the picture disagree with itself.
-    function _ambArcMulAtSlice(cfg, absSlice) {
+    // `amtIn` (optional) OVERRIDES the area depth — that is the part rung. `shape`
+    // and `bars` always come from the area, so the curve and its phase stay one
+    // continuous thing and only its depth changes from part to part.
+    function _ambArcMulAtSlice(cfg, absSlice, amtIn) {
       const a = cfg && cfg.prog && cfg.prog.arc;
-      const amt = a ? Math.max(0, Math.min(100, a.amount | 0)) : 0;
+      const amt = Number.isFinite(amtIn)
+        ? Math.max(0, Math.min(100, amtIn | 0))
+        : (a ? Math.max(0, Math.min(100, a.amount | 0)) : 0);
       if (!amt) return 1;
       const S = _AMB_ARC_SLICES;
       const i = (((absSlice | 0) % S) + S) % S;
@@ -6901,12 +6929,31 @@
       const bars = Math.max(0, (+atSec || 0) - anchor) / barSec;
       return Math.floor(bars / (arcBars / _AMB_ARC_SLICES));
     }
+    // The depth in force at `atSec`: the PART's if it carries one, else the area's.
+    // The part lookup is skipped entirely unless some part actually overrides, so
+    // the ordinary area-only arc costs nothing extra and still needs no chord clock
+    // at all — which is what lets it work on an area with no changes.
+    function _ambArcAmountAt(E, atSec, cfg) {
+      const p = cfg && cfg.prog;
+      const area = (p && p.arc && (p.arc.amount | 0)) || 0;
+      if (!_ambAnyPartArc(p)) return area;
+      try {
+        const r = (typeof _ambPartPassAt === 'function') ? _ambPartPassAt(E, cfg, atSec) : null;
+        const pt = (r && r.pi >= 0) ? p.parts[r.pi] : null;
+        // An explicit object wins even at 0 — the meaningful zero, "flat here".
+        if (pt && pt.arc && typeof pt.arc === 'object') return Math.max(0, Math.min(100, pt.arc.amount | 0));
+      } catch (e) {}
+      return area;
+    }
     function _ambArcGateOK(E, L, atSec, cfg, hard) {
       if (hard) return true;
       const cfg0 = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
-      const a = cfg0 && cfg0.prog && cfg0.prog.arc;
-      if (!a || !(a.amount > 0)) return true;          // absent → one property chain, then out
-      const mul = _ambArcMulAtSlice(cfg0, _ambArcSliceAt(E, atSec, cfg0));
+      const p0 = cfg0 && cfg0.prog;
+      const a = p0 && p0.arc;
+      // ENGAGED BY EITHER RUNG. Testing only the area's depth would make a part
+      // that breathes against a flat area inert — stored, drawn and silent.
+      if ((!a || !(a.amount > 0)) && !_ambAnyPartArc(p0)) return true;
+      const mul = _ambArcMulAtSlice(cfg0, _ambArcSliceAt(E, atSec, cfg0), _ambArcAmountAt(E, atSec, cfg0));
       if (!(mul < 1)) return true;
       // Layer identity, per-type bases so the primaries (which share no id) do not
       // thin in LOCKSTEP — the decorrelation `_ambChordGateOK` documents. The
@@ -8780,6 +8827,13 @@
           if (!ps || !ps[pi] || !ps[pi].rubato) return;
           ps[pi].rubato.amount = Math.max(0, Math.min(100, parseInt(inp.value, 10) || 0));
         });
+        // \ud83c\udf12 Arc's own field \u2014 same shape, third store.
+        host.addEventListener('change', (e) => {
+          const inp = e.target && e.target.closest && e.target.closest('[data-pearc]'); if (!inp || !_ambProgEd) return;
+          const ps = _ambPeParts(_ambProgEd), pi = parseInt(inp.getAttribute('data-pearc'), 10);
+          if (!ps || !ps[pi] || !ps[pi].arc) return;
+          ps[pi].arc.amount = Math.max(0, Math.min(100, parseInt(inp.value, 10) || 0));
+        });
         // Per-part KEY selects. Clearing the root drops the modulation; it does NOT
         // transpose the written chords back — the chords are the music, and silently
         // re-keying authored harmony because a label changed would be a surprise.
@@ -9234,6 +9288,7 @@
           const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
           const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
           const rv = (pt.rubato && typeof pt.rubato === 'object') ? pt.rubato : null;
+          const av = (pt.arc && typeof pt.arc === 'object') ? pt.arc : null;
           const pnm = esc(pt.name || ('Changes ' + (ed.part + 1)));
           const nch = _peRange.to - _peRange.from;
           const pk = (pt.key && Number.isFinite(pt.key.root)) ? pt.key : null;
@@ -9305,6 +9360,21 @@
                 '<span class="pe-partgrp-hint">' + (rv ? 'this part only' : 'follows the progression') + '</span>' +
                 (rv ? '<span class="pe-partsalt">' +
                   '<label title="Re-slice these changes\u2019 chord lengths each cycle. Their own total is preserved, so the rest of the chain does not move.">Amount<input type="number" class="pe-saltin" data-perub="' + ed.part + '" min="0" max="100" step="5" value="' + (rv.amount | 0) + '"></label>' +
+                  '</span>' : '') +
+              '</div>' +
+              // 🌒 ARC — DEPTH ONLY at this rung. The curve's shape and length belong
+              // to the whole piece (its phase runs on the bar clock, so a part that
+              // redefined them would jump mid-curve); what a part sensibly says is
+              // HOW HARD it breathes. "The chorus is always full" is depth 0 here.
+              '<div class="pe-partgrp">' +
+                '<span class="pe-partgrp-lbl">🌒 Arc</span>' +
+                '<span class="pe-partseg">' +
+                  '<button type="button" class="pe-partbtn pe-partsegbtn' + (!av ? ' on' : '') + '" data-pe="partarc:' + ed.part + ':0" title="Use whatever Arc depth the area has">Inherit</button>' +
+                  '<button type="button" class="pe-partbtn pe-partsegbtn' + (av ? ' on' : '') + '" data-pe="partarc:' + ed.part + ':1" title="Give these changes their own Arc depth — set it to 0 to stay FULL here however much the area thins">Its own</button>' +
+                '</span>' +
+                '<span class="pe-partgrp-hint">' + (av ? 'this part only' : 'follows the area') + '</span>' +
+                (av ? '<span class="pe-partsalt">' +
+                  '<label title="How much the arrangement thins during these changes. 0 = every layer plays throughout, however deep the area’s Arc is. The curve’s shape and length stay the area’s, so only the depth changes here.">Depth<input type="number" class="pe-saltin" data-pearc="' + ed.part + '" min="0" max="100" step="5" value="' + (av.amount | 0) + '"></label>' +
                   '</span>' : '') +
               '</div>') +
             sec('Structure',
@@ -9724,6 +9794,20 @@
           const want = (a[2] == null) ? !ps[pi].rubato : (a[2] === '1');
           if (want && !ps[pi].rubato) ps[pi].rubato = { amount: 0 };
           else if (!want && ps[pi].rubato) delete ps[pi].rubato;
+        } }
+      // \u2026and the same again for \ud83c\udf12 Arc. Engaging it seeds from the AREA depth,
+      // not from 0: an "Its own" that silently flattened the part would change what
+      // you hear the instant you pressed it, before you had set anything.
+      else if (op === 'partarc') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
+        if (ps && ps[pi]) {
+          const want = (a[2] == null) ? !ps[pi].arc : (a[2] === '1');
+          if (want && !ps[pi].arc) {
+            let seed = 0;
+            try { const c9 = ed.E && ed.E.getCfg && ed.E.getCfg();
+              seed = (c9 && c9.prog && c9.prog.arc && (c9.prog.arc.amount | 0)) || 0; } catch (e9) {}
+            ps[pi].arc = { amount: seed };
+          }
+          else if (!want && ps[pi].arc) delete ps[pi].arc;
         } }
       // Merge this part into a NAMED neighbour. Parts are contiguous runs, so the
       // merge is purely additive on `len` — the chord array is never touched, which

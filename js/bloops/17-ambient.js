@@ -5638,8 +5638,27 @@
           const r = rg && rg[i];
           const pp = (parts && r && parts[r.pi]) || null;
           let n = pp ? (pp.plays | 0) : 1; if (!(n > 0)) n = 1; if (n > 64) n = 64;
+          // THE PART'S OWN GRID WIDTH, not `_ambPartPassCols`. That helper falls back
+          // to `_ambPartNaturalPasses` when a part has no grid, and natural passes
+          // ARE `plays` \u2014 so `n * cols` was `plays \u00d7 plays`, and `plays: 3` played
+          // NINE times. The two axes do compose as `cols \u00d7 plays` (the comment above
+          // is right); the bug was reading `plays` twice to get `cols`.
+          //
+          // The helper is CORRECT for its other callers \u2014 the \u25a6 Passes grid and the
+          // layer matrix draw `plays` columns for a grid-less part, which is what
+          // "natural passes" means. This fix restores the VISIT COUNT to the
+          // documented `cols \u00d7 plays` and nothing more.
+          //
+          // MEASURED, AND STILL OPEN: the column INDEX is a separate disagreement.
+          // `_ambGridSlots` stamps `col: visit % partCols[k]` from its own grid-only
+          // width, so a grid-less part with `plays: 3` plays three visits all stamped
+          // column 0 while the \u25a6 Passes grid draws it three columns. Benign today
+          // \u2014 with no grid there is nothing authored in columns 1-2 to lose, and
+          // editing any cell creates the grid and the width with it \u2014 but it is the
+          // same family as this bug and the two readings should be made one.
           let cols = 1;
-          try { if (r) cols = Math.max(1, _ambPartPassCols(cfg, r.pi)); } catch (e) { cols = 1; }
+          try { const _g = _ambGridStore(cfg, r ? r.pi : 0, false);
+            if (_g && (_g.cols | 0) > 0) cols = _ambGridCols(_g); } catch (e) { cols = 1; }
           const total = Math.min(64, n * cols);
           for (let z = 0; z < total; z++) a.push(i);
         }

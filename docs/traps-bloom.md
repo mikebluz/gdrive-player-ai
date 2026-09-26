@@ -70,11 +70,18 @@
   reports. Anything reordering that list must group consecutive equal entries into RUNS and permute the
   runs — permuting the visits deals a part's second pass to the far side of another part, silently
   undoing that fix. ↻ Parts (`_ambArrGridSeq`'s `_ord`) does; poison-verified.
-- **`plays` IS COUNTED TWICE whenever the grid clock is on and a part has no grid of its own.**
-  `_ambArrGridSeq`'s default walk does `plays × _ambPartPassCols(cfg, pi)`, and that helper falls back
-  to `_ambPartNaturalPasses` — which IS `plays`. So `plays: 3` gives NINE visits. Pre-existing and
-  BASELINED (arch-parity `grid-plays-3`, part C), so it is not a free fix: correcting it re-baselines
-  that config. It became reachable without any grid when ↻ Parts started engaging the grid clock.
+- **~~`plays` IS COUNTED TWICE~~ — FIXED 2026-09-26.** `_ambArrGridSeq`'s default walk did
+  `plays × _ambPartPassCols(cfg, pi)`, and that helper falls back to `_ambPartNaturalPasses` — which
+  IS `plays` — so `plays: 3` gave NINE visits whenever the grid clock was on and the part had no grid
+  of its own. The walk now reads the part's OWN grid width (1 when absent); `_ambPartPassCols` is
+  unchanged because it is right for the ▦ Passes grid and the layer matrix. Re-baselined with
+  `--update --force` on exactly 3 configs (`grid-plays-3`, `arr-order-plays`, `arr-chance-plays`) and
+  asserted, not just pinned, in `probe-partchance` §5b.
+- **STILL OPEN, same family: the pass COLUMN index has two readings.** `_ambGridSlots` stamps
+  `col: visit % partCols[k]` from its own grid-only width, so a grid-less part with `plays: 3` plays
+  three visits all stamped column 0 while the ▦ Passes grid draws it three columns. Benign today —
+  nothing is authored in columns 1-2 to lose, and editing any cell creates the grid and its width —
+  but the two readings should be made one.
 - **Anything that varies per ROUND must put its period in `_ambGridSlots`' state key.** The expansion
   stops when `(it % arrCols) | visits…` repeats; a seeded shuffle never repeats, so without a declared
   horizon folded into that key the super-cycle closes while the order is still changing and every later

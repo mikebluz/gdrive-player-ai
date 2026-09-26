@@ -185,6 +185,39 @@ const ok = (name, cond, detail) => {
     shared.both % shared.order === 0 && shared.both % shared.chance === 0 &&
     shared.both >= Math.max(shared.order, shared.chance), JSON.stringify(shared));
 
+  // ---- 5b. `plays` IS COUNTED ONCE -------------------------------------------
+  // A DECISION WITH A RIGHT ANSWER, so it is asserted here and not only pinned in
+  // arch-parity: a part is visited `cols × plays` times. `_ambPartPassCols` falls
+  // back to `_ambPartNaturalPasses` for a grid-less part and natural passes ARE
+  // `plays`, so the default walk used to read `plays` twice — `plays: 3` played NINE
+  // times. Only reachable without a grid once ↻ Parts / 🎲 Chance began engaging the
+  // grid clock, which is how it surfaced.
+  console.log('\n  5b. a part is visited cols × plays times, not plays × plays');
+  const counts = await page.evaluate(() => {
+    const E = _masterEng, c = E.getCfg();
+    c.prog.on = true; c.seed = 4242; c.barsPerChord = 1;
+    c.prog.chords = [0, 5, 7, 9, 2, 4].map(r => ({ root: r, intervals: [0, 4, 7], bars: 1 }));
+    // A: a real grid (cols 3) AND plays 2 → 6.   C: plays 3, NO grid → 3, not 9.
+    c.prog.parts = [{ name: 'A', len: 3, plays: 2, grid: { cols: 3, seq: { 1: [0], 2: [2, 0] } } },
+                    { name: 'B', len: 1 }, { name: 'C', len: 2, plays: 3 }];
+    delete c.prog.arrOrder; delete c.prog.arrGrid; delete c.prog.chain;
+    c.prog.parts.forEach(pt => { delete pt.chance; });
+    const cfg = E.getCfg(), pl = _ambGridPlan(cfg);
+    if (!pl) return { plan: false };
+    const v = pl.slots.filter(x => x.pFirst);
+    const per = {}; v.forEach(x => { per[x.pi] = (per[x.pi] || 0) + 1; });
+    return { plan: true, per, cycle: pl.cycle, order: v.map(x => x.pi).join('') };
+  });
+  console.log('     visits per part: ' + JSON.stringify(counts.per) + '  cycle ' + counts.cycle);
+  ok('a part with a grid of 3 and Repeats 2 is visited 6 times (cols × plays)',
+    counts.per && counts.per['0'] === 6, JSON.stringify(counts.per));
+  ok('a part with Repeats 3 and NO grid is visited 3 times, not 9',
+    counts.per && counts.per['2'] === 3, JSON.stringify(counts.per));
+  ok('a part with neither is visited once', counts.per && counts.per['1'] === 1,
+    JSON.stringify(counts.per));
+  ok('…and the cycle is the sum of what those visits actually cover',
+    counts.cycle === 19, String(counts.cycle));
+
   // ---- 6. REACHABLE ----------------------------------------------------------
   console.log('\n  6. reachable — the part editor, measured');
   await setUp();

@@ -119,8 +119,8 @@ Take ID's own promise that the same id replays the same performance.
 
 ## 4. The form axis — shipped, except one
 
-**4c is the only item left on this document**, and §4c says why it is blocked rather
-than merely next. (4d shipped too; it was never on the form axis — it is the density
+**4c is the only item left on this document.** It was blocked on a double count in
+`plays`; that is fixed, so it is now a short slice — §4c has what it needs. (4d shipped too; it was never on the form axis — it is the density
 axis at one more rung.)
 
 ### ~~4a. `prog.arrOrder`~~ — SHIPPED 2026-09-25 as **↻ Parts**
@@ -190,7 +190,7 @@ re-baselined deliberately with the 68 existing **unmoved**, plus
 `node test/probe-partchance.js` (27 checks), poison-verified on three axes — the
 empty-round fallback, the shared horizon, and the plan signature.
 
-### 4c. `plays` as a range — `{min, max}` — **DELIBERATELY NOT BUILT**
+### 4c. `plays` as a range — `{min, max}` — **UNBLOCKED 2026-09-26, not yet built**
 
 The one item left, and it is blocked on a bug rather than on effort.
 
@@ -198,19 +198,30 @@ The machinery is now in place: 🎲 Chance already makes a round's length vary a
 everything downstream coped, so "the same dice, applied to the repeat count" would
 be a small slice rather than the large one this section first predicted.
 
-**It is blocked because `plays` is COUNTED TWICE.** `_ambArrGridSeq`'s default walk
-does `plays × _ambPartPassCols(cfg, pi)`, and that helper falls back to
-`_ambPartNaturalPasses` — which *is* `plays`. So `plays: 3` yields **nine** visits
-whenever the grid clock is on and the part carries no grid of its own. It is
-pre-existing and BASELINED (arch-parity `grid-plays-3`, part C), so it is not a free
-fix; ↻ Parts only made it reachable without a grid.
+~~**It is blocked because `plays` is COUNTED TWICE.**~~ **That is fixed** (2026-09-26).
+`_ambArrGridSeq`'s default walk did `plays × _ambPartPassCols(cfg, pi)`, and that
+helper falls back to `_ambPartNaturalPasses` — which *is* `plays` — so `plays: 3`
+yielded **nine** visits whenever the grid clock was on and the part carried no grid of
+its own. The walk now reads the part's OWN grid width (1 when absent).
+`_ambPartPassCols` is untouched: it is correct for the ▦ Passes grid and the layer
+matrix, which draw `plays` columns for a grid-less part by design.
 
-Building a RANGE on top of a squared count would ship a control whose numbers cannot
-be read: "2 to 4" would play 4 to 16 times. **Fix the double count first** — its own
-change, its own deliberate re-baseline of `grid-plays-3` — and then this is short.
+Re-baselined with `--update --force` on exactly three configs — `grid-plays-3`,
+`arr-order-plays`, `arr-chance-plays` — which are precisely the ones with `plays > 1`
+on a grid-less part, and nothing else moved. Asserted rather than only pinned, in
+`probe-partchance` §5b: a part is visited `cols × plays` times.
 
-Until then 🎲 Chance covers most of the same musical ground (a part that does not
-always come round) without depending on the broken number.
+**So the range is now a short slice**, and the pieces are all in place — 🎲 Chance
+already proved a varying round length rides the horizon safely. What it needs:
+`plays: {min, max}` coerced beside the plain number for save-compat, a roll per
+(round, part, seed) on the shared horizon, and the ▦ Passes / layer-matrix column
+count deciding whether it follows `max` or the roll (it must follow `max`, or the
+matrix would resize as you listen).
+
+One thing to settle first, recorded in `docs/traps-bloom.md`: the pass COLUMN index
+still has two readings — `_ambGridSlots` stamps `col` from its grid-only width while
+the UI uses the natural fallback — so a grid-less part's columns and its played
+visits do not line up. Benign today; a `plays` range makes it load-bearing.
 ### ~~4d. Per-part Arc depth~~ — SHIPPED 2026-09-25
 
 `parts[i].arc = { amount }`, ↔ Rubato's grammar at the part rung: absent = inherit,

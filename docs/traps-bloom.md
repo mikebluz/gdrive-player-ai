@@ -53,6 +53,17 @@
 
 ### Bloom: the arrangement clock
 
+- **THE SUPER-CYCLE IS NOT THE HORIZON — the horizon is a FLOOR.** `_ambGridSlots` closes when its whole
+  state key repeats, and with a per-round die that changes a round's LENGTH the cumulative visit count
+  advances by a different amount each round, so `visits % partCols` has to realign too. Measured: a
+  2–4 Repeats range over a horizon of 4 closes after **8** rounds. Do not assert `rounds === horizon`.
+- **EVERY per-round die must be named in `_ordRounds`' guard**, not only in `_ambArrRoundHorizon`. That
+  guard decides whether the expansion runs past one round at all, so a die missing from it is stored,
+  drawn, and silently flat — the range shipped that way for one run.
+- **`_ambPartNaturalPasses` returns the CEILING of a Repeats range, never the roll.** ▦ Passes and the
+  layer matrix draw their columns from it, and following the roll would resize the matrix while you
+  listen and vanish a cell you had authored on a short round.
+
 - **EVERY per-round die must share ONE horizon.** `_ambArrRoundHorizon` is the LCM of all of them and
   `_ambGridSlots`' state key carries `it % H`. Two periods would let the key close the super-cycle
   while the other die was still varying, so each new die widens the shared number — and every existing

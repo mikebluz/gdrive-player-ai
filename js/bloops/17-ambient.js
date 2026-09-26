@@ -3404,6 +3404,11 @@
           // `passSalt` line above predates that rule; this one does not copy it.
           // (An open part has no changes, so it has no chord lengths to borrow from.)
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
+          // \ud83c\udfb2 A RANGE, as an additive sibling \u2014 `plays` stays the plain number every
+          // existing reader already reads, and `playsTo` is the ceiling. Absent, or not
+          // above `plays`, means FIXED: today's behaviour, one representation.
+          { const _pl = Math.max(1, Math.min(64, (p.plays | 0) || 1));
+            if (Number.isFinite(p.playsTo) && (p.playsTo | 0) > _pl) e0.playsTo = Math.min(64, p.playsTo | 0); }
           // HOLD is the part's own property, not something inferred from having
           // no changes. Both kinds are real and musically different:
           //   hold  — the harmony FREEZES; the chord in force stays in force.
@@ -3454,6 +3459,11 @@
         // How many times this part runs before the progression moves on. 1 is the
         // neutral value and is NOT stored, so a plain chain stays byte-identical.
         if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e.plays = Math.min(64, p.plays | 0);
+        // \ud83c\udfb2 A RANGE, as an additive sibling \u2014 `plays` stays the plain number every
+        // existing reader already reads, and `playsTo` is the ceiling. Absent, or not
+        // above `plays`, means FIXED: today's behaviour, one representation.
+        { const _pl = Math.max(1, Math.min(64, (p.plays | 0) || 1));
+          if (Number.isFinite(p.playsTo) && (p.playsTo | 0) > _pl) e.playsTo = Math.min(64, p.playsTo | 0); }
         // PART MATRIX — carried EXPLICITLY, like key/salt above: this builds a
         // fresh object per part, so anything not copied here is dropped on every
         // normalize (the trap that once silently ate per-part keys).
@@ -5419,6 +5429,40 @@
       const lid = ((pi | 0) + 1) * 41 + 19;
       return _ambChordHash01(r + 1 + ((cfg.seed | 0) & 1023), lid) * 100 < pct;
     }
+    // \ud83c\udfb2 REPEATS RANGE \u2014 how many times this part runs THIS round. `plays` is the
+    // floor and `playsTo` the ceiling; absent or not above the floor means fixed, so
+    // every project written before this rolls nothing and plays exactly as it did.
+    //
+    // It is the same shape as \ud83c\udfb2 Chance one step along: chance asks WHETHER the part
+    // comes round, this asks HOW MANY TIMES. Both change a round's LENGTH, which is
+    // what the shared horizon exists to contain.
+    const _ambPartPlaysHi = (pt) => {
+      const lo = Math.max(1, Math.min(64, (pt && pt.plays | 0) || 1));
+      const hi = (pt && Number.isFinite(pt.playsTo)) ? Math.min(64, pt.playsTo | 0) : lo;
+      return Math.max(lo, hi);
+    };
+    const _ambAnyPlaysRange = (cfg) => {
+      const p = cfg && cfg.prog;
+      return !!(p && Array.isArray(p.parts) && p.parts.some(x => x && _ambPartPlaysHi(x) > Math.max(1, (x.plays | 0) || 1)));
+    };
+    // NOT `_ambPartPlaysRound` — that one answers WHETHER the part plays this round
+    // (🎲 Chance). This answers HOW MANY TIMES. Two questions, two names.
+    function _ambPartRepeatsRound(cfg, pi, round) {
+      const p = cfg && cfg.prog;
+      const parts = Array.isArray(p && p.parts) ? p.parts : null;
+      const pt = parts && parts[pi | 0];
+      const lo = Math.max(1, Math.min(64, (pt && pt.plays | 0) || 1));
+      const hi = _ambPartPlaysHi(pt);
+      if (hi <= lo) return lo;
+      const h = _ambArrRoundHorizon(cfg, 1);
+      const r = ((((round | 0) % h) + h) % h);
+      // Its own salt, so the repeat count and the sit-out decision are independent
+      // dice on the same part \u2014 sharing a hash would tie "plays four times" to
+      // "plays at all", which reads as one control doing two things.
+      const lid = ((pi | 0) + 1) * 53 + 23;
+      const u = _ambChordHash01(r + 1 + ((cfg.seed | 0) & 2047), lid);
+      return lo + Math.min(hi - lo, Math.floor(u * (hi - lo + 1)));
+    }
     // THE ONE HORIZON, shared by every per-round die. Two features now declare a
     // period and they must agree on ONE, or the state key would close the
     // super-cycle while the other was still varying \u2014 so this is their LCM, not
@@ -5427,6 +5471,7 @@
     function _ambArrRoundHorizon(cfg, slotsPerRound) {
       let h = _ambArrOrderRounds(cfg, slotsPerRound);
       try { if (_ambAnyPartChance(cfg)) h = _ambLcm(h, _AMB_ARRCHANCE_ROUNDS); } catch (e) {}
+      try { if (_ambAnyPlaysRange(cfg)) h = _ambLcm(h, _AMB_ARRCHANCE_ROUNDS); } catch (e) {}
       h = Math.max(1, Math.min(64, h | 0));
       const per = Math.max(1, slotsPerRound | 0);
       while (h > 1 && h * per > (_AMB_GRID_MAX_SLOTS >> 1)) h = h >> 1;
@@ -5548,6 +5593,7 @@
       // written order. `_ambArrOrderOn` already requires two parts to reorder.
       try { if (_ambArrOrderOn(cfg)) return true; } catch (e) {}
       try { if (_ambAnyPartChance(cfg)) return true; } catch (e) {}
+      try { if (_ambAnyPlaysRange(cfg)) return true; } catch (e) {}
       if (!Array.isArray(p.parts)) return live(p.grid);
       return p.parts.some(x => x && live(x.grid));
     }
@@ -5637,7 +5683,11 @@
         for (let i = 0; i < nParts; i++) {
           const r = rg && rg[i];
           const pp = (parts && r && parts[r.pi]) || null;
-          let n = pp ? (pp.plays | 0) : 1; if (!(n > 0)) n = 1; if (n > 64) n = 64;
+          // A ROLL, not a read, when the part carries a range \u2014 and the SAME roll
+          // every time this round is expanded, because it is a pure function of
+          // (seed, round, part) folded on the shared horizon.
+          let n = pp ? _ambPartRepeatsRound(cfg, r ? r.pi : 0, iter | 0) : 1;
+          if (!(n > 0)) n = 1; if (n > 64) n = 64;
           // THE PART'S OWN GRID WIDTH, not `_ambPartPassCols`. That helper falls back
           // to `_ambPartNaturalPasses` when a part has no grid, and natural passes
           // ARE `plays` \u2014 so `n * cols` was `plays \u00d7 plays`, and `plays: 3` played
@@ -5913,9 +5963,10 @@
       // \ud83c\udfb2 Chance rides here too \u2014 it decides WHICH SLOTS the plan holds, exactly
       // as the order does, so a sig blind to it serves a pre-edit expansion.
       const _ch = parts ? parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : '-').join('.') : '-';
+      const _pr = parts ? parts.map(x => (x && Number.isFinite(x.playsTo)) ? (x.playsTo | 0) : '-').join('.') : '-';
       return out + ';' + _ambGridSigOf(p.arrGrid) + ';' + (Array.isArray(p.chain) ? p.chain.join('.') : '')
         + ';' + (_ao ? (_ao.mode + '@' + (_ao.when || 'always') + '#' + (cfg.seed | 0)) : '-')
-        + ';c' + _ch + '#' + (cfg.seed | 0);
+        + ';c' + _ch + ';r' + _pr + '#' + (cfg.seed | 0);
     }
     // The expansion PLUS the cumulative bar edges, so the clock can bisect the
     // slot instead of walking it.
@@ -6049,9 +6100,22 @@
       const ranges = _ambGridRanges(cfg);
       if (!ranges.length) return null;
       const parts = Array.isArray(p.parts) ? p.parts : null;
+      // ONE READING OF "HOW MANY PASSES", shared with the UI. This used to be the
+      // part's GRID width alone, while \u25a6 Passes and the layer matrix drew
+      // `_ambPartPassCols` \u2014 which falls back to Repeats when there is no grid. So a
+      // grid-less part with Repeats 3 was visited three times and stamped `col: 0`
+      // every time, while the grid beside it drew three columns: every per-pass
+      // override past the first was unreachable, silently.
+      //
+      // `_ambPartGridSeq` still indexes `g.seq` by the GRID's own width \u2014 that is a
+      // different question (which row of the authored grid) and is unchanged. This is
+      // only the number that makes "pass 3" mean the same thing on the layer, in the
+      // arrangement, and to `_ambPartSaltAt` / `_ambPassRubatoAt` / `L.partSeqs`.
       const partCols = ranges.map(r => {
-        const g = _ambGridStore(cfg, r.pi, false);
-        return (g && g.seq) ? _ambGridCols(g) : 1;
+        try { return Math.max(1, _ambPartPassCols(cfg, r.pi)); } catch (e) {
+          const g = _ambGridStore(cfg, r.pi, false);
+          return (g && g.seq) ? _ambGridCols(g) : 1;
+        }
       });
       const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
       // \u21bb PART ORDER'S PERIOD RIDES IN THE STATE KEY. Without it the walk below
@@ -6062,7 +6126,10 @@
       // closed" has to mean once the order varies.
       const _ordRounds = (function () {
         try {
-          if (!_ambArrOrderOn(cfg) && !_ambAnyPartChance(cfg)) return 1;
+          // EVERY per-round die has to be named here, not just the ones that came
+          // first: this guard decides whether the expansion runs past one round at
+          // all, so a die missing from it is stored, drawn, and silently flat.
+          if (!_ambArrOrderOn(cfg) && !_ambAnyPartChance(cfg) && !_ambAnyPlaysRange(cfg)) return 1;
           const per = ranges.reduce((n2, r) => n2 + Math.max(1, r.len | 0), 0) * Math.max(1, arrCols);
           return _ambArrRoundHorizon(cfg, per);
         } catch (e) { return 1; }
@@ -9645,6 +9712,10 @@
         // Controls for the ACTIVE part: name, how many times it runs, and its salt.
         if (ed.part >= 0 && _peParts[ed.part]) {
           const pt = _peParts[ed.part], plays = Math.max(1, (pt.plays | 0) || 1);
+          // The Repeats CEILING. There are two `plays` in this function — the part
+          // TABS loop above has its own — and the Playback markup below reads THIS
+          // one, so the ceiling has to be declared here beside it.
+          const _phi = Number.isFinite(pt.playsTo) ? Math.max(plays, Math.min(64, pt.playsTo | 0)) : plays;
           const sv = (pt.salt && typeof pt.salt === 'object') ? pt.salt : null;
           const rv = (pt.rubato && typeof pt.rubato === 'object') ? pt.rubato : null;
           const av = (pt.arc && typeof pt.arc === 'object') ? pt.arc : null;
@@ -9674,7 +9745,20 @@
                   '<b>' + plays + '×</b>' +
                   '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplays:' + ed.part + ':1" title="One more repeat" aria-label="One more repeat">+</button>' +
                 '</span>' +
-                '<span class="pe-partgrp-hint">' + (plays > 1 ? 'runs ' + plays + '× before the next part' : 'runs once, then the next part') + '</span>' +
+                // \u2026TO \u2014 the ceiling of a RANGE. Equal to Repeats means fixed, which is
+                // every project written before this, so the pair reads as one control
+                // with an off state rather than a new one bolted beside it.
+                '<span class="pe-partgrp-lbl pe-partto-lbl">to</span>' +
+                '<span class="pe-partplays">' +
+                  '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplayshi:' + ed.part + ':-1" title="Lower the most it can run" aria-label="Lower the maximum">\u2013</button>' +
+                  '<b>' + _phi + '\u00d7</b>' +
+                  '<button type="button" class="pe-partbtn pe-partstep" data-pe="partplayshi:' + ed.part + ':1" title="Raise the most it can run \u2014 above Repeats it becomes a range, and rolls a different number each round" aria-label="Raise the maximum">+</button>' +
+                '</span>' +
+                '<span class="pe-partgrp-hint">' +
+                  (_phi > plays
+                    ? ('runs ' + plays + '\u2013' + _phi + '\u00d7 \u2014 a different number each round')
+                    : (plays > 1 ? 'runs ' + plays + '\u00d7 before the next part' : 'runs once, then the next part')) +
+                '</span>' +
               '</div>' +
               // \ud83c\udfb2 CHANCE \u2014 beside Repeats, because they are one pair: Repeats says
               // how many times this part runs WHEN IT COMES ROUND, Chance says how
@@ -10152,7 +10236,22 @@
           if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }
       else if (op === 'partplays') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10), d = parseInt(a[2], 10) || 0;
         if (ps && ps[pi]) { const v = Math.max(1, Math.min(64, (Math.max(1, (ps[pi].plays | 0) || 1)) + d));
-          if (v > 1) ps[pi].plays = v; else delete ps[pi].plays; } }
+          if (v > 1) ps[pi].plays = v; else delete ps[pi].plays;
+          // RAISING Repeats past the ceiling would leave a range that reads backwards
+          // ("4 to 2"). The floor wins and the ceiling is dropped, which is the same
+          // thing the normalizer does \u2014 said here too so the number you see is
+          // right before the next getCfg rather than after it.
+          if (Number.isFinite(ps[pi].playsTo) && (ps[pi].playsTo | 0) <= v) delete ps[pi].playsTo; } }
+      // \ud83c\udfb2 The REPEATS CEILING. Clamped at the floor, and pruned the moment it
+      // reaches it \u2014 so "fixed" has one representation and an old project can never
+      // gain a range by arithmetic.
+      else if (op === 'partplayshi') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10), d9 = parseInt(a[2], 10) || 0;
+        if (ps && ps[pi]) {
+          const lo = Math.max(1, (ps[pi].plays | 0) || 1);
+          const cur = Number.isFinite(ps[pi].playsTo) ? Math.max(lo, ps[pi].playsTo | 0) : lo;
+          const v = Math.max(lo, Math.min(64, cur + d9));
+          if (v > lo) ps[pi].playsTo = v; else delete ps[pi].playsTo;
+        } }
       else if (op === 'partsalt') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
         // EXPLICIT value, not a toggle: the control is segmented, so pressing the
         // state you are already in must be a no-op rather than flipping you out of it.
@@ -21671,7 +21770,15 @@
       } catch (e) {}
       try {
         const parts = Array.isArray(p.parts) ? p.parts : null;
-        if (parts && parts[pi]) return Math.max(1, Math.min(64, (parts[pi].plays | 0) || 1));
+        // THE CEILING, not the roll. With a Repeats RANGE the \u25a6 Passes grid and the
+        // layer matrix must draw a fixed number of columns \u2014 following the roll would
+        // make the matrix resize while you listen, and a cell you authored would
+        // vanish on a short round. `playsTo` is that number; absent it is `plays`.
+        if (parts && parts[pi]) {
+          const _pl = Math.max(1, Math.min(64, (parts[pi].plays | 0) || 1));
+          const _hi = Number.isFinite(parts[pi].playsTo) ? Math.min(64, parts[pi].playsTo | 0) : _pl;
+          return Math.max(1, Math.max(_pl, _hi));
+        }
       } catch (e) {}
       // NOT multiplied by the area's Plays. The layer matrix and the ▦ Passes
       // grid must show the SAME number of columns — they are two views of one

@@ -15263,6 +15263,10 @@
     /* The pass modal holds TWO axes (Salt and Rubato), each with its own
        Inherit / Its own. A rule separates them so the second pair cannot read as
        more options for the first — same tokens as the note above it, no new chrome. */
+    /* The Repeats pair: floor, then ceiling. "to" is a label between two steppers,
+       so it must not take the 68px a group label takes. */
+    .pe-partto-lbl { flex: 0 0 auto; margin: 0 2px; opacity: 0.75; }
+
     /* ✺ NOVELTY — the macro group. Same tokens as its neighbours on the ▤ Parts bar;
        the only new chrome is the preview's from → to rows, which nothing else needs. */
     .ambient-nov-row { display: flex; flex-direction: column; gap: 9px; min-width: 0; }

@@ -254,6 +254,22 @@ const CONFIGS = [
   // …and with `plays`, because a skipped part must take its REPEATS with it.
   { id: 'arr-chance-plays', chords: [0, 5, 7, 9, 2, 4],
     parts: [['A', 2, 2], ['B', 2], ['C', 2]], chance: { 0: 50 } },
+  // 🎲 REPEATS RANGE — `parts[i].playsTo`. The third per-round die, and the second
+  // that changes a round's LENGTH. Its super-cycle is NOT the horizon: the cumulative
+  // visit count advances by a different amount each round, so the column phase has to
+  // realign too — measured 8 rounds against a horizon of 4.
+  { id: 'arr-range', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 2], ['B', 2], ['C', 2]], playsTo: { 0: 4 } },
+  // …with a Passes grid on the ranged part, so the roll and the authored columns
+  // compose (the grid width wins for WHICH chords, the ceiling for HOW MANY columns).
+  { id: 'arr-range-grid', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 2, null, null, { cols: 2, seq: { 1: [1, 0] } }], ['B', 2], ['C', 2]],
+    playsTo: { 0: 4 } },
+  // …and all three per-round dice at once, which is the state the shared horizon
+  // exists for: order, chance and range must agree on ONE period.
+  { id: 'arr-range-all', chords: [0, 5, 7, 9, 2, 4],
+    parts: [['A', 2, 2], ['B', 2], ['C', 2]],
+    playsTo: { 0: 3 }, chance: { 1: 50 }, arrOrder: { mode: 'shuffle', when: 'always' } },
 ];
 
 // The walk: 32 bars at a quarter bar. Long enough that part repeats, section
@@ -335,6 +351,9 @@ const WALK_BARS = 32, WALK_STEP = 0.25;
       // 🎲 CHANCE: per-part, so it is applied after the parts are built
       if (c.chance) Object.keys(c.chance).forEach(k => {
         if (cfg.prog.parts && cfg.prog.parts[k | 0]) cfg.prog.parts[k | 0].chance = c.chance[k] | 0; });
+      // 🎲 REPEATS RANGE: the ceiling, per part (`plays` is the floor, on the tuple)
+      if (c.playsTo) Object.keys(c.playsTo).forEach(k => {
+        if (cfg.prog.parts && cfg.prog.parts[k | 0]) cfg.prog.parts[k | 0].playsTo = c.playsTo[k] | 0; });
       if (c.chain) cfg.prog.chain = c.chain;        // ORDER OF PLAY (outranks `plays`)
       if (c.sections) cfg.sections = c.sections.map(([name, bars, part, key, groove, rot]) => ({
         name, bars, ...(part != null ? { part } : {}), ...(key != null ? { key } : {}),

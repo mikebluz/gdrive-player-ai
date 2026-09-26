@@ -117,10 +117,10 @@ Take ID's own promise that the same id replays the same performance.
 
 ---
 
-## 4. The form axis — shipped, except one
+## 4. The form axis — shipped
 
-**4c is the only item left on this document.** It was blocked on a double count in
-`plays`; that is fixed, so it is now a short slice — §4c has what it needs. (4d shipped too; it was never on the form axis — it is the density
+**Everything on this document is built.** §§2–4 are the dice, §5 is ✺ Novelty over
+them. What remains is tuning, not structure. (4d shipped too; it was never on the form axis — it is the density
 axis at one more rung.)
 
 ### ~~4a. `prog.arrOrder`~~ — SHIPPED 2026-09-25 as **↻ Parts**
@@ -190,38 +190,43 @@ re-baselined deliberately with the 68 existing **unmoved**, plus
 `node test/probe-partchance.js` (27 checks), poison-verified on three axes — the
 empty-round fallback, the shared horizon, and the plan signature.
 
-### 4c. `plays` as a range — `{min, max}` — **UNBLOCKED 2026-09-26, not yet built**
+### ~~4c. `plays` as a range~~ — SHIPPED 2026-09-26 as **Repeats … to**
 
-The one item left, and it is blocked on a bug rather than on effort.
+"This vamp runs 2 to 4 times." `parts[i].playsTo` is an **additive sibling**, not a
+reshape: `plays` stays the plain number every existing reader already reads and
+`playsTo` is the ceiling. Absent, or not above `plays`, means FIXED — so every project
+written before this rolls nothing and plays exactly as it did.
 
-The machinery is now in place: 🎲 Chance already makes a round's length vary and
-everything downstream coped, so "the same dice, applied to the repeat count" would
-be a small slice rather than the large one this section first predicted.
+It was blocked twice over, and both blockers were cleared first:
 
-~~**It is blocked because `plays` is COUNTED TWICE.**~~ **That is fixed** (2026-09-26).
-`_ambArrGridSeq`'s default walk did `plays × _ambPartPassCols(cfg, pi)`, and that
-helper falls back to `_ambPartNaturalPasses` — which *is* `plays` — so `plays: 3`
-yielded **nine** visits whenever the grid clock was on and the part carried no grid of
-its own. The walk now reads the part's OWN grid width (1 when absent).
-`_ambPartPassCols` is untouched: it is correct for the ▦ Passes grid and the layer
-matrix, which draw `plays` columns for a grid-less part by design.
+- **`plays` was counted twice** (`plays × _ambPartPassCols`, which falls back to
+  `_ambPartNaturalPasses` = `plays`). A range on a squared count would have shipped
+  numbers that cannot be read — "2 to 4" playing 4 to 16 times.
+- **The pass column had two readings**, benign until a range made it load-bearing.
+  `_ambGridSlots` now stamps `col` from the same `_ambPartPassCols` the UI draws from,
+  so a grid-less part with Repeats 3 walks columns 0·1·2 instead of 0·0·0 — which is
+  what made every per-pass override past the first reachable at all.
 
-Re-baselined with `--update --force` on exactly three configs — `grid-plays-3`,
-`arr-order-plays`, `arr-chance-plays` — which are precisely the ones with `plays > 1`
-on a grid-less part, and nothing else moved. Asserted rather than only pinned, in
-`probe-partchance` §5b: a part is visited `cols × plays` times.
+Three things beyond the store:
 
-**So the range is now a short slice**, and the pieces are all in place — 🎲 Chance
-already proved a varying round length rides the horizon safely. What it needs:
-`plays: {min, max}` coerced beside the plain number for save-compat, a roll per
-(round, part, seed) on the shared horizon, and the ▦ Passes / layer-matrix column
-count deciding whether it follows `max` or the roll (it must follow `max`, or the
-matrix would resize as you listen).
+- **The columns follow the CEILING, never the roll.** Following the roll would resize
+  ▦ Passes while you listen and vanish a cell you had authored on a short round.
+- **The horizon is a FLOOR, not the period.** The cumulative visit count advances by a
+  different amount each round, so the column phase has to realign as well: measured
+  **8** rounds for a horizon of 4. The expansion still closes, and `plan.cycle` is
+  still its exact total.
+- **Raising Repeats past the ceiling drops the range** rather than inverting it, in the
+  edit path as well as the normalizer, so the number on screen is right before the
+  next `getCfg` rather than after it.
 
-One thing to settle first, recorded in `docs/traps-bloom.md`: the pass COLUMN index
-still has two readings — `_ambGridSlots` stamps `col` from its grid-only width while
-the UI uses the natural fallback — so a grid-less part's columns and its played
-visits do not line up. Benign today; a `plays` range makes it load-bearing.
+Gate: 3 new **arch-parity** configs (`arr-range`, `-grid`, `-all` — the last being all
+three per-round dice at once, which is the state the shared horizon exists for),
+re-baselined with the 72 existing **unmoved**, plus `node test/probe-playsrange.js`
+(27 checks), poison-verified on three axes — the horizon guard, the ceiling-vs-floor
+column count, and the plan signature.
+
+**§4 is closed.** Every item on the form and density axes is built.
+
 ### ~~4d. Per-part Arc depth~~ — SHIPPED 2026-09-25
 
 `parts[i].arc = { amount }`, ↔ Rubato's grammar at the part rung: absent = inherit,

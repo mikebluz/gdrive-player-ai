@@ -218,6 +218,31 @@ const ok = (name, cond, detail) => {
   ok('…and the cycle is the sum of what those visits actually cover',
     counts.cycle === 19, String(counts.cycle));
 
+  // ONE READING OF "HOW MANY PASSES". `_ambGridSlots` used to stamp `col` from the
+  // part's GRID width while ▦ Passes drew `_ambPartPassCols` — which falls back to
+  // Repeats when there is no grid. So a grid-less part with Repeats 3 played three
+  // visits all stamped column 0 against three drawn columns, and every per-pass
+  // override past the first was unreachable, silently.
+  const cols = await page.evaluate(() => {
+    const E = _masterEng, c = E.getCfg();
+    c.prog.parts = [{ name: 'A', len: 2, plays: 3 },
+                    { name: 'B', len: 2, grid: { cols: 2, seq: { 1: [1, 0] } } },
+                    { name: 'C', len: 2 }];
+    const cfg = E.getCfg(), pl = _ambGridPlan(cfg);
+    if (!pl) return { plan: false };
+    const played = {}, drawn = {};
+    pl.slots.filter(x => x.pFirst).forEach(x => { (played[x.pi] = played[x.pi] || []).push(x.col); });
+    [0, 1, 2].forEach(i => { drawn[i] = _ambPartPassCols(cfg, i); });
+    return { plan: true, played, drawn };
+  });
+  console.log('     columns played ' + JSON.stringify(cols.played) + ' · drawn ' + JSON.stringify(cols.drawn));
+  ok('a grid-less part with Repeats 3 walks columns 0·1·2, not 0·0·0',
+    cols.played && JSON.stringify(cols.played['0']) === '[0,1,2]', JSON.stringify(cols.played));
+  ok('…and every part plays exactly the columns ▦ Passes draws for it',
+    cols.drawn && [0, 1, 2].every(i => (cols.played[i] || []).length === cols.drawn[i] &&
+      (cols.played[i] || []).every((cv, k) => cv === k)),
+    JSON.stringify([cols.played, cols.drawn]));
+
   // ---- 6. REACHABLE ----------------------------------------------------------
   console.log('\n  6. reachable — the part editor, measured');
   await setUp();

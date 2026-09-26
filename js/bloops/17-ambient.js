@@ -43763,7 +43763,10 @@
       // exist (▦ Passes was retired into ▦ Schedule), while `schedgrid` — which does
       // exist — was missing, so ▦ Schedule (v2) was never swept and could not hide
       // itself when empty. `sched` stays for the parked v1: absent is a no-op.
-      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'overview', 'schedgrid', 'sched'].forEach(k => {
+      // \u25a6 `schedgrid` IS NESTED INSIDE `overview`, so it must be resolved FIRST:
+      // the parent's test is "does my body have any visible child", and a child still
+      // carrying last pass's display makes that answer one frame stale.
+      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'schedgrid', 'overview', 'sched'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -53648,6 +53651,23 @@
               '<span class="ambient-hint ambient-pov-len" id="ambient-prog-chainlen"></span>' +
               '</div>' +
             '<div class="ambient-pov-strip" id="ambient-prog-overview" style="display:none"></div>' +
+            // \u25a6 SCHEDULE IS A SUBSECTION OF \u25a4 PARTS, not a sibling of it.
+            //
+            // It was asked whether it should sit under \u273a Variation as an advanced
+            // edit. It should not: measured, it is HALF STRUCTURE \u2014 its all-layers
+            // "Which chords" mode IS the shared harmonic clock, which the part matrix
+            // says cannot be per-layer \u2014 and half variation (\ud83e\uddc2 Salt at the pass rung,
+            // the Follows-salt column). Filing that under a variation header would
+            // repeat the mistake the \u273a Variation split had just fixed, one level up.
+            //
+            // It belongs HERE because a PASS is a definition of how a part plays, and
+            // this section is the parts and their definitions. The ladder then reads
+            // down the pane exactly as the stores do: \u273a Variation is the AREA rung,
+            // the part editor is the PART rung, and this is the PASS rung.
+            (E.isLane ? '' :
+              _ambProgGrpOpen('schedgrid', '\u25a6 Schedule', false) +
+              '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
+              _ambProgGrpClose()) +
             _ambProgGrpClose() +
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
@@ -53823,10 +53843,7 @@
             // ▦ SCHEDULE — the one grid for "who plays where" (18-schedule.js).
             // It replaced ▦ Passes (retired 2026-09-16 — every one of its edits
             // has a door here) and the Scheduler's Coarse modal.
-            (E.isLane ? '' :
-              _ambProgGrpOpen('schedgrid', '\u25a6 Schedule (v2)', false) +
-              '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
-              _ambProgGrpClose()) +
+            // \u25a6 SCHEDULE MOVED \u2014 it is now a subsection INSIDE \u25a4 Parts. See there.
             // \u23f1 SCHEDULE (v1) IS PARKED, NOT DELETED (user, 2026-09-26: "don't want
             // to delete yet but don't want it in the UI for now"). \u25a6 Schedule (v2)
             // has taken its work over.

@@ -15272,6 +15272,17 @@
        so it must not take the 68px a group label takes. */
     .pe-partto-lbl { flex: 0 0 auto; margin: 0 2px; opacity: 0.75; }
 
+    /* A NESTED SECTION HAS TO READ AS NESTED. ▦ Schedule sits inside ▤ Parts now (a
+       pass is a definition of how a part plays), and without this it is a second
+       accordion at the same visual level as its own parent. Indented, with a quieter
+       head and a rule down the left showing what it belongs to. */
+    .ambient-proggrp .ambient-grp-body .ambient-proggrp {
+      margin: 8px 0 2px 10px; padding-left: 10px; border-left: 1px solid #23233a; min-width: 0;
+    }
+    .ambient-proggrp .ambient-grp-body .ambient-proggrp > .ambient-grp-head {
+      font-size: 0.66rem; color: #8b8baa;
+    }
+
     /* ✺ VARIATION — A GRID, NOT A WRAPPING LINE.
        Six axes of one subject, so they are six identical cells on a symmetric grid —
        the same answer 🧂 THE SALT DIALS below got to the same complaint ("present in

@@ -204,7 +204,13 @@ const ok = (name, cond, detail) => {
              v1Section: secs.some(x => /v1/.test(x.grp || '')),
              v1BodyInDom: !!body, v1BodyVisible: !!(body && body.offsetParent),
              v1HostInDom: !!g('ambient-sched'),
-             v2Visible: secs.some(x => /v2/.test(x.grp || '') && x.shown),
+             // "(v2)" is gone from the label: with v1 out of the UI there is only one
+             // Schedule, and a version number the user cannot compare against is noise.
+             schedGrp: !!g('ambient-proggrp-schedgrid'),
+             schedNested: (function () {
+               const sg = g('ambient-proggrp-schedgrid'), ov = g('ambient-proggrp-overview');
+               return !!(sg && ov && sg !== ov && ov.contains(sg));
+             })(),
              v2Rendered: (g('ambient-schedgrid') || { innerHTML: '' }).innerHTML.length };
   });
   console.log('     visible: ' + JSON.stringify(parked.visible));
@@ -212,8 +218,43 @@ const ok = (name, cond, detail) => {
   ok('…but its nodes are STILL in the DOM, so nothing that writes them is a no-op',
     parked.v1BodyInDom === true && parked.v1HostInDom === true, JSON.stringify(parked));
   ok('…and they are not visible', parked.v1BodyVisible === false, String(parked.v1BodyVisible));
-  ok('▦ Schedule (v2) is still a section, and still renders',
-    parked.v2Visible === true && parked.v2Rendered > 100, JSON.stringify(parked));
+  ok('▦ Schedule still exists and still renders',
+    parked.schedGrp === true && parked.v2Rendered > 100, JSON.stringify(parked));
+
+  // ---- 6. ▦ SCHEDULE NESTS INSIDE ▤ PARTS ------------------------------------
+  // Asked whether it should sit under ✺ Variation as an advanced edit. It should not:
+  // it is HALF STRUCTURE — its all-layers "Which chords" mode IS the shared harmonic
+  // clock, which the part matrix says cannot be per-layer — and half variation
+  // (🧂 Salt at the pass rung, the Follows-salt column). It belongs under ▤ Parts
+  // because a PASS is a definition of how a part plays, which makes the pane read
+  // down the same ladder the stores do: area → part → pass.
+  console.log('\n  6. ▦ Schedule nests inside ▤ Parts');
+  ok('▦ Schedule is a DESCENDANT of ▤ Parts, not a sibling of it',
+    parked.schedNested === true, String(parked.schedNested));
+  const nest = await page.evaluate(() => {
+    const E = _masterEng;
+    const sg = () => _ambGet(E, 'ambient-proggrp-schedgrid');
+    const ov = () => _ambGet(E, 'ambient-proggrp-overview');
+    const out = {};
+    const partsHead = ov().querySelector(':scope > .ambient-grp-head');
+    if (ov().classList.contains('open')) partsHead.click();
+    out.schedHiddenWhenPartsClosed = !sg().offsetParent;
+    partsHead.click();
+    out.partsOpen = ov().classList.contains('open');
+    out.schedShownWhenPartsOpen = !!sg().offsetParent;
+    // its own head must toggle IT, not collapse its parent
+    const schedHead = sg().querySelector(':scope > .ambient-grp-head');
+    schedHead.click();
+    out.schedOpens = sg().classList.contains('open');
+    out.parentStillOpen = ov().classList.contains('open');
+    return out;
+  });
+  ok('closing ▤ Parts takes ▦ Schedule with it',
+    nest.schedHiddenWhenPartsClosed === true, JSON.stringify(nest));
+  ok('…opening it brings ▦ Schedule back, still collapsed',
+    nest.partsOpen === true && nest.schedShownWhenPartsOpen === true, JSON.stringify(nest));
+  ok('…and ▦ Schedule\u2019s own head opens IT without collapsing its parent',
+    nest.schedOpens === true && nest.parentStillOpen === true, JSON.stringify(nest));
 
   // EVERY SWEEP KEY MUST NAME A REAL GROUP, and every real group must be swept. The
   // list had drifted both ways: `passes`/`sections` named groups retired long ago,

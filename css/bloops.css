@@ -15260,6 +15260,17 @@
     .ambient-psalt-modal .psalt-note {
       display: block; white-space: normal; overflow-wrap: anywhere; margin-top: 4px;
     }
+    /* The pass modal holds TWO axes (Salt and Rubato), each with its own
+       Inherit / Its own. A rule separates them so the second pair cannot read as
+       more options for the first — same tokens as the note above it, no new chrome. */
+    .ambient-psalt-modal .psalt-rub {
+      margin-top: 12px; padding-top: 10px; min-width: 0;
+      border-top: 1px solid rgba(159,122,234,0.28);
+    }
+    .ambient-psalt-modal .psalt-rubhead {
+      display: block; white-space: normal; overflow-wrap: anywhere;
+      font-weight: 700; color: #cfd2e6; margin-bottom: 2px;
+    }
     /* The per-pass order editor. */
     .ambient-pseq-modal .pseq-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 34px; }
     .ambient-pseq-modal .pseq-chip {

@@ -272,14 +272,45 @@ is always preserved (measured 8.00 bars at every setting). `Stretch`, `Swing` an
 | changes | Variation → Colours / Scatter | Variation → ↔ Rubato |
 | pass | ▦ Passes → 🧂 Salt | **absent — see below** |
 
-### Rubato is absent at the PASS rung on purpose
+### ~~Rubato is absent at the PASS rung on purpose~~ — SHIPPED 2026-09-25
 
-Not "not yet". Per-pass salt resolves only through `_ambProgPassHint`, which is
-stashed by the GRID branch of `_ambProgStepAt` — and that same branch is the one
-that skips length salt. **The only state in which a per-pass value can be read is
-the state in which Rubato does nothing.** Offering the field would be a control
-that can never act. The store still coerces `len` and the edit path carries it
-forward, so nothing is lost if the plan learns about it later.
+**This section was true when written and went stale the same week.** Original
+reasoning: per-pass salt resolves only through `_ambProgPassHint`, stashed by the
+GRID branch of `_ambProgStepAt` — and that same branch skipped length salt, so
+"the only state in which a per-pass value can be read is the state in which Rubato
+does nothing", and offering the field would be a control that can never act.
+
+**§9c removed exactly that.** `_ambGridCumAt` IS a per-super-cycle re-slice of the
+cached plan, and it already receives each pass's FIRST SLOT, which carries its
+`col`. So the state that could read a pass value became the state that acts on it,
+and the rung is a lookup.
+
+**What shipped.** `parts[i].passRubato['<pass>'] = {amount}` (and
+`prog.passRubato` with no parts) — its **own store**, not a `len` field on
+`passSalt`: §9b split the axes so each rung gets its own Inherit / Its own, and
+folding it back in would re-couple them one rung below the coupling already
+recorded as open. `_ambPassSaltCoerce` therefore still drops `len`, and the note
+about the store "keeping `len` for later" was already untrue — that field had been
+removed from the coercion.
+
+Three wirings, not one, and each is separately poison-verified:
+
+| | | severing it fails |
+|---|---|---|
+| resolver | `_ambRubatoForSlot` reads pass → part → area | 4 checks |
+| engagement | `_ambProgSaltAnyLen` (else `_ambGridCumAt` returns written edges) | 3 checks |
+| memo key | `_ambRubatoSig` (else pre-edit bar edges are served) | 1 check |
+
+**The invariant holds, measured.** Four 1-bar chords over a 2-pass grid, pass 1 as
+written and pass 2 at 85: edges `[0,1,2,3,4,5.625,6.125,7.625,8]`. Pass 1 untouched
+edge for edge, pass 2 moved inside, **the pass boundary at bar 4 fixed and the
+super-cycle total still 8** — which is what `gloops` is derived from.
+
+It acts ONLY under a Passes grid, which is also the only place a pass can be
+edited, so there is no state where the control exists and cannot bite; the modal
+says so when there is no grid yet. UI: the pass cell's modal, which is now titled
+for both axes it holds. Gate: `node test/probe-passrubato.js` (32 checks).
+Golden 82/82, arch-parity 62/62, mod-parity 9/9 — unmoved, by construction.
 
 ### §9b — Rubato is now its own STORE and its own SECTION (schema v10)
 

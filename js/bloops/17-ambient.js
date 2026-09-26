@@ -2981,6 +2981,19 @@
       });
       return parts.join(' — ');
     }
+    // ---- \ud83c\udf12 ARC \u2014 the arrangement's own density curve --------------------
+    // Declared HERE, above `_ambNormalizeProgMeta`, not beside the gate that reads
+    // them: the normalizer coerces `prog.arc` and runs on the first getCfg(), so a
+    // `const` sitting further down the file would be in its temporal dead zone if
+    // anything normalized during load. The engine is at `_ambArcGateOK`.
+    //
+    // ONE ARC is `bars` bars long and is divided into a fixed number of SLICES.
+    // The slice is what the density decision is quantized to: a layer holds its
+    // in-or-out state for a whole slice (4 bars at the default 32/8) instead of
+    // re-deciding per chord, which is the difference between an arrangement where
+    // parts enter and leave and one where every layer flickers.
+    const _AMB_ARC_BARS = 32, _AMB_ARC_SLICES = 8;
+    const _AMB_ARC_SHAPES = ['build', 'wave', 'drift'];
     function _ambNormalizeProgMeta(prog) {
       if (!prog || typeof prog !== 'object') return;
       // KEEP AN AUTO-GENERATED NAME HONEST. `prog.name` is written once — when a
@@ -3115,6 +3128,21 @@
           } catch (e) {}
           delete prog.passSalt;
         }
+        // PER-PASS RUBATO — its OWN store, the same two homes and the same
+        // migrate-don't-drop rule. Not a field on `passSalt`: §9b split the axes
+        // precisely so each rung gets its own Inherit / Its own, and folding this
+        // back in would re-couple them one rung lower than the coupling that is
+        // already recorded as open at the part rung.
+        if (!Array.isArray(prog.parts)) {
+          const _pr0 = _ambPassRubatoCoerce(prog.passRubato);
+          if (_pr0) prog.passRubato = _pr0; else delete prog.passRubato;
+        } else if (prog.passRubato) {
+          try {
+            const _p2 = (prog.parts || []).find(x => x && !x.open);
+            if (_p2 && !_p2.passRubato) { const _mr = _ambPassRubatoCoerce(prog.passRubato); if (_mr) _p2.passRubato = _mr; }
+          } catch (e) {}
+          delete prog.passRubato;
+        }
       }
       // VERSIONS (Feat 2b): whole-prog snapshots; coerce + cap; each carries its own parts.
       if (prog.versions != null && Array.isArray(prog.versions)) {
@@ -3187,6 +3215,23 @@
         const o = prog.order;
         if (typeof o !== 'object' || (o.mode !== 'shuffle' && o.mode !== 'reverse')) delete prog.order;
         else o.when = (typeof o.when === 'string' && (o.when === 'always' || /^[01]+$/.test(o.when))) ? o.when : 'always';
+      }
+      // \ud83c\udf12 ARC (additive): the arrangement's density curve. `amount` 0 /
+      // absent \u2192 the whole key is deleted, so untouched projects stay
+      // byte-identical. `bars` is the length of ONE arc and `shape` how the
+      // density moves across it; both are coerced but only MEANINGFUL while
+      // amount > 0, so they are never stored alone.
+      if (prog.arc != null) {
+        const a = prog.arc;
+        const amt = (a && typeof a === 'object') ? Math.max(0, Math.min(100, a.amount | 0)) : 0;
+        if (!amt) delete prog.arc;
+        else {
+          prog.arc = {
+            amount: amt,
+            bars: Math.max(2, Math.min(128, (a.bars | 0) || _AMB_ARC_BARS)),
+            shape: (_AMB_ARC_SHAPES.indexOf(a.shape) >= 0) ? a.shape : 'build',
+          };
+        }
       }
     }
     // Repair a parts list against a chord count: coerce {name,len}, clamp Σlen to total,
@@ -3278,11 +3323,36 @@
       Object.keys(v).forEach(k => {
         const i = k | 0; if (!(i >= 0 && i < 64) || String(i) !== String(k)) return;
         const o = v[k]; if (!o || typeof o !== 'object') return;
-        // NO length axis: ↔ Rubato is its own store and, at this rung, cannot act
-        // at all (per-pass salt resolves only under a grid, which is exactly when
-        // rubato is silenced). Storing one would be storing a value nothing reads.
+        // NO length axis — and this is a STORE boundary, not an ability one. ↔ Rubato
+        // has its own store at every rung (`prog.rubato`, `parts[i].rubato`,
+        // `passRubato` below), which is the whole point of the v10 split: the two
+        // axes get their own Inherit / Its own rather than sharing one object.
+        // (This comment used to say rubato "cannot act at all" at this rung. That
+        // was true only until per-pass rubato was wired — see _ambPassRubatoCoerce.)
         out[String(i)] = { colors: Math.max(0, Math.min(7, o.colors | 0)),
                            scatter: Math.max(0, Math.min(100, o.scatter | 0)) };
+      });
+      return Object.keys(out).length ? out : null;
+    }
+    // ---- ↔ RUBATO AT THE PASS RUNG ----------------------------------------
+    // WHY THIS BECAME POSSIBLE. docs/bloom-salt-organisation.md §9 recorded per-pass
+    // rubato as absent ON PURPOSE: per-pass values resolve only through the GRID
+    // branch of `_ambProgStepAt`, and that branch was the one that skipped length
+    // salt — "the only state in which a per-pass value can be read is the state in
+    // which Rubato does nothing". §9c removed exactly that: `_ambGridCumAt` now
+    // re-slices each part-visit under a grid, and it already receives the pass's
+    // FIRST SLOT, which carries its `col`. So the rung the doc calls impossible is
+    // a lookup, and the doc's paragraph is stale rather than wrong-at-the-time.
+    //
+    // It acts ONLY under a Passes grid, which is also the only place a pass can be
+    // edited — so there is no state where the control exists and cannot bite.
+    function _ambPassRubatoCoerce(v) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+      const out = {};
+      Object.keys(v).forEach(k => {
+        const i = k | 0; if (!(i >= 0 && i < 64) || String(i) !== String(k)) return;
+        const o = v[k]; if (!o || typeof o !== 'object') return;
+        out[String(i)] = { amount: Math.max(0, Math.min(100, o.amount | 0)) };
       });
       return Object.keys(out).length ? out : null;
     }
@@ -3311,6 +3381,11 @@
           }
           { const _rb0 = _ambRubatoCoerce(p.rubato); if (_rb0) e0.rubato = _rb0; }
           { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e0.passSalt = _psx; }
+          // NO passRubato ON AN OPEN PART, deliberately. `_ambPassRubatoStore` returns
+          // null for `open`, so a value carried here could never be read — and a
+          // stored field with no reader is what got `mutateRate` deleted. The
+          // `passSalt` line above predates that rule; this one does not copy it.
+          // (An open part has no changes, so it has no chord lengths to borrow from.)
           if (Number.isFinite(p.plays) && (p.plays | 0) > 1) e0.plays = Math.min(64, p.plays | 0);
           // HOLD is the part's own property, not something inferred from having
           // no changes. Both kinds are real and musically different:
@@ -3376,6 +3451,7 @@
                      scatter: Math.max(0, Math.min(100, p.salt.scatter | 0)) };
         }
         { const _psx = _ambPassSaltCoerce(p.passSalt); if (_psx) e.passSalt = _psx; }
+        { const _prx = _ambPassRubatoCoerce(p.passRubato); if (_prx) e.passRubato = _prx; }
         { const _rb = _ambRubatoCoerce(p.rubato); if (_rb) e.rubato = _rb; }
         // HANGS — same fresh-object rule as everything above it.
         { const _hh = _ambNormalizeHang(p.head); if (_hh) e.head = _hh;
@@ -4957,6 +5033,40 @@
       }
       return true;
     }
+    // ↔ Rubato's pass rung — _ambPassSaltStore / _ambPassSaltSet, one store over.
+    function _ambPassRubatoStore(cfg, pi, create) {
+      const p = cfg && cfg.prog; if (!p) return null;
+      const parts = Array.isArray(p.parts) ? p.parts : null;
+      if (parts && parts[pi]) {
+        if (parts[pi].open) return null;             // no changes of its own to move
+        if (!parts[pi].passRubato && create) parts[pi].passRubato = {};
+        return parts[pi].passRubato || null;
+      }
+      if (parts) return null;
+      if (!p.passRubato && create) p.passRubato = {};
+      return p.passRubato || null;
+    }
+    function _ambPassRubatoSet(cfg, pi, pass, v) {
+      const st = _ambPassRubatoStore(cfg, pi, !!v); if (!st) return false;
+      const k = String(pass | 0);
+      // An explicit `{amount: 0}` is KEPT — the meaningful zero, the only way to say
+      // "this pass falls exactly as written" against changes that have rubato.
+      if (!v) delete st[k];
+      else st[k] = { amount: Math.max(0, Math.min(100, v.amount | 0)) };
+      if (!Object.keys(st).length) {
+        const p = cfg.prog, parts = Array.isArray(p.parts) ? p.parts : null;
+        if (parts && parts[pi]) delete parts[pi].passRubato; else delete p.passRubato;
+      }
+      return true;
+    }
+    // The amount in force on ONE pass of one part, narrowest-first: pass -> part ->
+    // area. Returns null when the pass says nothing, so the caller can fall through
+    // rather than having "inherit" and "zero" collapse into one number.
+    function _ambPassRubatoAt(cfg, pi, pass) {
+      const st = _ambPassRubatoStore(cfg, pi, false); if (!st) return null;
+      const v = st[String(pass | 0)];
+      return (v && typeof v === 'object') ? Math.max(0, Math.min(100, v.amount | 0)) : null;
+    }
     // IS ANYTHING COLOURING THESE CHORDS — at ANY rung of the ladder (pass, part,
     // area)? Used only to explain a stored-but-inaudible edit. Deliberately
     // LAYER-INDEPENDENT: the old version asked `L.salt`, which was retired
@@ -5079,6 +5189,13 @@
       const prog = cfg && cfg.prog;
       if (!prog || !prog.on) return false;
       if ((prog.rubato && (prog.rubato.amount | 0)) > 0) return true;
+      // A PASS RUNG ON ITS OWN ENGAGES IT. `_ambGridCumAt` returns the written edges
+      // untouched unless this says yes, so a pass amount with nothing at the part or
+      // area rung would have been stored, drawn, and silent — and the parts-length
+      // guard below would have hidden it in the part-less case as well.
+      const anyPassR = (st) => !!st && Object.keys(st).some(k => (st[k] && (st[k].amount | 0)) > 0);
+      if (anyPassR(prog.passRubato)) return true;
+      if (Array.isArray(prog.parts) && prog.parts.some(p => p && anyPassR(p.passRubato))) return true;
       if (!Array.isArray(prog.parts) || prog.parts.length < 2) return false;
       return prog.parts.some(p => p && p.rubato && typeof p.rubato === 'object' && (p.rubato.amount | 0) > 0);
     }
@@ -5618,6 +5735,14 @@
     function _ambRubatoForSlot(cfg, slot) {
       const p = cfg && cfg.prog; if (!p) return 0;
       const parts = Array.isArray(p.parts) ? p.parts : null;
+      // PASS FIRST — the narrowest rung, and the one this function is uniquely able
+      // to answer: the slot knows its own part AND its own column outright, where
+      // `_ambRubatoAt` has only a chord index and cannot derive the pass from it (a
+      // chain revisiting a part makes `step` repeat inside one cycle).
+      if (slot) {
+        const pv = _ambPassRubatoAt(cfg, slot.pi | 0, slot.col | 0);
+        if (pv != null) return pv;                   // explicit 0 = as written on this pass
+      }
       const pr = (parts && slot && parts[slot.pi | 0]) ? parts[slot.pi | 0].rubato : null;
       if (pr && typeof pr === 'object') return pr.amount | 0;
       return (p.rubato && (p.rubato.amount | 0)) || 0;
@@ -5628,8 +5753,14 @@
     function _ambRubatoSig(cfg) {
       const p = cfg && cfg.prog; if (!p) return '';
       const parts = Array.isArray(p.parts) ? p.parts : [];
+      // THE PASS RUNG MUST RIDE IN THE KEY. `_ambGridCumMemo` is keyed on this
+      // string, so a rung the signature cannot see serves PRE-EDIT bar edges until
+      // something else in the key happens to move — the same class of bug the
+      // plan's own sig comment records for hangs and the layer line-up.
+      const ps = (st) => st ? Object.keys(st).sort().map(k => k + '=' + (st[k].amount | 0)).join('.') : '-';
       return ((p.rubato && (p.rubato.amount | 0)) || 0) + ':' +
-        parts.map(x => (x && x.rubato) ? (x.rubato.amount | 0) : '-').join(',');
+        parts.map(x => (x && x.rubato) ? (x.rubato.amount | 0) : '-').join(',') + ':' +
+        ps(p.passRubato) + ':' + parts.map(x => ps(x && x.passRubato)).join(',');
     }
     // ---- ↔ RUBATO UNDER A PASSES GRID --------------------------------------
     // The plan's `cum` is the WRITTEN bar edges, memoised on the grid signature
@@ -6710,7 +6841,89 @@
     // Deterministic (instance, layer)-keyed hashes (salts differ from the chord
     // mask so the two masks decorrelate) — ZERO shared-RNG draws; no mask / no
     // sections → true (byte-identical, harness-safe).
+    // 🌒 ARC — THE ORCHESTRATION TWIN OF 🌡 TENSION. Tension ramps HARMONY across a
+    // cycle; Arc ramps HOW MUCH PLAYS across a span of bars, so the arrangement
+    // builds and drops instead of sitting at one density for the whole play. It is
+    // the missing arrangement-level die: every other one (🌊 vary, 🌡 tension,
+    // ↻ order, 🧂 salt, ↔ rubato) varies the CONTENT of a fixed form.
+    //
+    // CLOCKED ON BARS ELAPSED, DELIBERATELY — not on the chord clock. `_ambProgStepAt`
+    // has four branches and under a Passes grid one "cycle" is a super-cycle, so a
+    // chord-clock phase would breathe at a different rate depending on which branch
+    // a project happens to be on, and would cost a step resolution per note. Bars
+    // are the one unit every branch agrees about, it reads "builds over 32 bars",
+    // and it works with NO progression at all.
+    //
+    // A PURE FUNCTION of (bars, layer, arc settings). It consumes NO shared RNG
+    // draw — the in/out decision is `_ambChordHash01`, the same deterministic hash
+    // the chord and section masks use — so engaging it cannot shift a downstream
+    // draw, and the same take replays identically.
+    //
+    // `hard` skips it, exactly as it skips the mask hashes: a hard check asks "is
+    // this layer allowed here at all", which the drawing and the outlines need, and
+    // a probabilistic answer there would make the picture disagree with itself.
+    function _ambArcMulAtSlice(cfg, absSlice) {
+      const a = cfg && cfg.prog && cfg.prog.arc;
+      const amt = a ? Math.max(0, Math.min(100, a.amount | 0)) : 0;
+      if (!amt) return 1;
+      const S = _AMB_ARC_SLICES;
+      const i = (((absSlice | 0) % S) + S) % S;
+      const shape = (_AMB_ARC_SHAPES.indexOf(a.shape) >= 0) ? a.shape : 'build';
+      let u;                                    // 0 = thinnest, 1 = fullest
+      if (shape === 'wave') u = 0.5 + 0.5 * Math.cos((2 * Math.PI * i) / S);
+      else if (shape === 'drift') {
+        // The SAME S density levels as build, in an order that is re-shuffled every
+        // arc. So it is unpredictable without ever being stuck thin — each level is
+        // visited exactly once per arc — which iid noise per slice cannot promise.
+        // Fisher-Yates on a dedicated seeded RNG, the ↻ Order idiom.
+        const arcN = Math.floor((absSlice | 0) / S);
+        const rnd = _ambSeededRand(((((arcN + 1) * 1274126177) >>> 0) ^ (((cfg.seed | 0) * 2654435761) >>> 0) ^ 0x0A2C) >>> 0);
+        const perm = []; for (let z = 0; z < S; z++) perm.push(z);
+        for (let z = S - 1; z > 0; z--) { const j = Math.floor(rnd() * (z + 1)); const t = perm[z]; perm[z] = perm[j]; perm[j] = t; }
+        u = perm[i] / (S - 1);
+      } else u = i / (S - 1);                   // 'build'
+      // The floor keeps the thinnest slice audible: at amount 100 it is 10% density,
+      // not silence. A curve that can empty the arrangement outright reads as a bug
+      // rather than as a breakdown, and "everything stopped" has no way to say which
+      // control did it.
+      const floor = 1 - (amt / 100) * 0.9;
+      return floor + (1 - floor) * Math.max(0, Math.min(1, u));
+    }
+    // Which slice of the arc `atSec` falls in, counted from the progression anchor
+    // so it lines up with every other arrangement clock. Absolute, not folded into
+    // one arc, because the drift shuffle needs to know WHICH arc it is in.
+    function _ambArcSliceAt(E, atSec, cfg) {
+      const a = cfg && cfg.prog && cfg.prog.arc;
+      const arcBars = Math.max(2, Math.min(128, (a && (a.bars | 0)) || _AMB_ARC_BARS));
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const anchor = (E && Number.isFinite(E._progAnchor)) ? E._progAnchor : ((E && Number.isFinite(E._playStartAt)) ? E._playStartAt : 0);
+      const bars = Math.max(0, (+atSec || 0) - anchor) / barSec;
+      return Math.floor(bars / (arcBars / _AMB_ARC_SLICES));
+    }
+    function _ambArcGateOK(E, L, atSec, cfg, hard) {
+      if (hard) return true;
+      const cfg0 = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
+      const a = cfg0 && cfg0.prog && cfg0.prog.arc;
+      if (!a || !(a.amount > 0)) return true;          // absent → one property chain, then out
+      const mul = _ambArcMulAtSlice(cfg0, _ambArcSliceAt(E, atSec, cfg0));
+      if (!(mul < 1)) return true;
+      // Layer identity, per-type bases so the primaries (which share no id) do not
+      // thin in LOCKSTEP — the decorrelation `_ambChordGateOK` documents. The
+      // multipliers are distinct from the chord mask's (×13+7) and the section
+      // mask's (×29+11) so a layer masked AND arced does not make one decision twice.
+      const _lb = Number.isFinite(L && L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[(L && L.type)] || 0);
+      const lid = (_lb + 1) * 37 + 17;
+      return _ambChordHash01(_ambArcSliceAt(E, atSec, cfg0) + 1, lid) < mul;
+    }
     function _ambSectionGateOK(E, L, atSec, cfg, hard) {
+      // 🌒 ARC FIRST, and independently of `sectionMask`: the arc thins the whole
+      // arrangement, so a layer with NO mask must still be subject to it — most
+      // projects have no masks at all, and gating the arc behind one would have made
+      // the flagship control do nothing out of the box. Folded into this gate rather
+      // than added as a 14th call-site sweep because this function IS the
+      // arrangement gate and is already called adjacent to every chord-gate site.
+      if (!_ambArcGateOK(E, L, atSec, cfg, hard)) return false;
       const m = L && L.sectionMask; if (!m) return true;
       const at = _ambSectionAt(E, atSec, cfg);
       if (!at) return true;
@@ -41275,6 +41488,19 @@
           'title="Rubato — how the chord lengths move: the changes fall earlier or later each cycle, with the total preserved">↔ Rubato</span>' +
         '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="grp:order" ' +
           'title="Order — scheduled re-ordering of the changes">↻ Order</span>' +
+        // 🌒 ARC — its door, the second of the TWO edits named above. It reads its
+        // own state like 🧂 Salt does, because a curve that is doing something and
+        // one that is off must not look identical: Arc is the only control here
+        // that can make a layer stop playing, so "why did the pad go away" needs
+        // an answer on the bar rather than two clicks in.
+        ((function () {
+          const _a = prog && prog.arc, _amt = _a ? (_a.amount | 0) : 0;
+          const _sh = { build: 'building', wave: 'waves', drift: 'drifting' }[(_a && _a.shape) || 'build'] || 'building';
+          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_amt > 0 ? ' on' : '') + '" data-pov="grp:arc" ' +
+            'title="' + esc('Arc — the arrangement\u2019s density curve: layers drop out and come back, so it builds and thins instead of playing flat. '
+              + (_amt > 0 ? ('On: ' + _sh + ' over ' + ((_a.bars | 0) || 32) + ' bars, depth ' + _amt + '.') : 'Off — every layer plays wherever its own settings allow.')) + '">' +
+            '🌒 Arc' + (_amt > 0 ? ('<b>' + esc(_sh) + '</b>') : '') + '</span>';
+        })()) +
         // ▤ ARRANGEMENT — the whole piece at a glance, and where the ORDER OF
         // PLAY (the part chain) is edited. Its only other door is the ▤ in the
         // Scheduler's pass row, which lives inside the Advanced block and
@@ -42766,7 +42992,7 @@
     // exactly how two copies of a control drift apart.
     // Titles for the popover groups, in ONE place — a ternary meant a third group
     // silently took the wrong title (or its own key) instead.
-    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order' };
+    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order', arc: '\uD83C\uDF12 Arc' };
     // ── A SALT DIAL ─────────────────────────────────────────────────────
     // (2026-09-19, "change these inputs to mobile-friendly dials and present
     // in a clean symmetrical way".) Five bare number boxes on one wrapping
@@ -42884,7 +43110,7 @@
       try { _ambRenderScheduler(E); } catch (e) {}
     }
     function _ambProgGrpSync(E) {
-      ['salt', 'rubato', 'order', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
+      ['salt', 'rubato', 'order', 'arc', 'overview', 'sched', 'passes', 'sections'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -42919,16 +43145,15 @@
       const area = _ambProgSaltCfg(cfg);
       return area ? { salt: area, from: 'the area' } : { salt: null, from: '' };
     }
-    // The cell face is `colours·scatter` — NO length axis at this rung.
+    // The cell face is `colours·scatter` — NO length axis at this rung, because
+    // ↔ Rubato has its own STORE (`passRubato`) rather than a field in this one.
     //
-    // ↔ Rubato is deliberately absent here, and it is not "not yet": per-pass salt
-    // resolves ONLY through `_ambProgPassHint`, which is stashed by the GRID branch
-    // of `_ambProgStepAt` — and that same branch returns from the cached plan
-    // without ever reaching `_ambProgSaltLensParted`. So the one state in which a
-    // per-pass value can be READ is the one state in which length salt does
-    // NOTHING. Offering the field would be a control that can never act. The STORE
-    // keeps `len` (coerced, and carried forward by the edit path) so nothing is
-    // lost if the plan learns about it later.
+    // THIS COMMENT USED TO SAY RUBATO COULD NEVER ACT AT THIS RUNG, and it was true
+    // when written: per-pass values resolve only under a grid, and the grid branch
+    // of `_ambProgStepAt` returned from the cached plan without ever re-slicing. The
+    // §9c fix (`_ambGridCumAt`) is precisely a per-super-cycle re-slice of that
+    // cached plan, so the state that could READ a pass value became the state that
+    // ACTS on it too. The rung is wired — `_ambRubatoForSlot` reads it first.
     //
     // A ZERO-WIDTH SPACE after the separator is the only break opportunity: eight
     // passes at 390px gives a 41px cell, and the face has to WRAP rather than
@@ -42940,6 +43165,14 @@
     }
     function _ambPassSaltWords(s) {
       return 'colours ' + (s ? (s.colors | 0) : 0) + ', scatter ' + (s ? (s.scatter | 0) : 0);
+    }
+    // ↔ Rubato's inherited amount for one pass — `_ambPassSaltInherited`, one store
+    // over: part first, then area. Its own rung is read by `_ambPassRubatoAt`.
+    function _ambPassRubatoInherited(cfg, pi, parts) {
+      const pr = (parts && parts[pi] && parts[pi].rubato && typeof parts[pi].rubato === 'object') ? parts[pi].rubato : null;
+      if (pr) return { amount: pr.amount | 0, from: 'these changes' };
+      const a0 = (cfg && cfg.prog && cfg.prog.rubato && (cfg.prog.rubato.amount | 0)) || 0;
+      return { amount: a0, from: a0 ? 'the area' : '' };
     }
     function _ambPassSaltGridHtml(E, cfg, r, cols, parts) {
       const esc = _ambEscText, escA = _ambEscAttr;
@@ -43004,10 +43237,28 @@
         const rg = (_ambGridRanges(c2) || [])[pi]; if (!rg) return null;
         const parts = Array.isArray(c2.prog.parts) ? c2.prog.parts : null;
         const store = _ambPassSaltStore(c2, rg.pi, false);
+        const storeR = _ambPassRubatoStore(c2, rg.pi, false);
         return { cfg: c2, rg, parts, own: (store ? store[String(col)] : null) || null,
                  inh: _ambPassSaltInherited(c2, rg.pi, parts),
+                 ownR: (storeR ? storeR[String(col)] : null) || null,
+                 inhR: _ambPassRubatoInherited(c2, rg.pi, parts),
+                 gridOn: (typeof _ambGridOn === 'function') ? !!_ambGridOn(c2) : true,
                  name: _ambPartLabel(c2, rg.pi) };
       };
+      // ONE refresh path for both stores, so the two axes cannot drift apart in what
+      // they repaint. `write` is the only difference between them.
+      const commitWith = (write) => {
+        const st = state(); if (!st) return;
+        write(st);
+        try { E.getCfg(); } catch (e) {}
+        try { E._cfg = E.getCfg(); } catch (e) {}
+        try { _ambRenderPassMatrix(E); } catch (e) {}
+        try { _ambSaltReadoutSync(E, true); } catch (e) {}
+        try { _ambRenderProgOverview(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        paint();
+      };
+      const commitR = (v) => commitWith((st) => _ambPassRubatoSet(st.cfg, st.rg.pi, col, v));
       const commit = (v) => {
         const st = state(); if (!st) return;
         _ambPassSaltSet(st.cfg, st.rg.pi, col, v);
@@ -43029,7 +43280,10 @@
         }
         const v = st.own;
         ov.innerHTML = '<div class="sm-modal ambient-psalt-modal">' +
-          '<div class="sm-title">🧂 Salt — ' + esc(st.name) + ' · pass ' + (col + 1) + '</div>' +
+          // The modal holds TWO axes now, so it is named for both — a title saying
+          // only "Salt" over a Rubato field is the one-vocabulary-for-two-mechanisms
+          // mistake this file's naming rule exists to stop.
+          '<div class="sm-title">🧂 Salt · ↔ Rubato — ' + esc(st.name) + ' · pass ' + (col + 1) + '</div>' +
           '<div class="psalt-seg">' +
             '<button type="button" class="ambient-seg psalt-mode' + (v ? '' : ' active') + '" data-psalt="inherit" ' +
               'title="Take whatever salt these changes or the area have">Inherit</button>' +
@@ -43054,6 +43308,40 @@
             : ('<div class="ambient-hint psalt-note">' + esc('Follows ' +
                 (st.inh.salt ? (st.inh.from + ' — ' + _ambPassSaltWords(st.inh.salt)) : 'nothing above, so this pass has no salt') +
                 '.') + '</div>')) +
+          // ↔ RUBATO — its OWN rung, with its OWN Inherit / Its own. Sharing Salt's
+          // segmented control was impossible by construction: two stores, so two
+          // answers to "does this pass override?". §9b split them for exactly this.
+          '<div class="psalt-rub">' +
+            '<div class="ambient-hint psalt-rubhead" title="' + escA('How much the chord LENGTHS move inside this pass. '
+              + 'The pass keeps its total length either way — only where the changes fall within it moves.') +
+              '">↔ Rubato — where the changes fall in this pass</div>' +
+            '<div class="psalt-seg">' +
+              '<button type="button" class="ambient-seg psalt-mode' + (st.ownR ? '' : ' active') + '" data-prub="inherit" ' +
+                'title="Take whatever rubato these changes or the area have">Inherit</button>' +
+              '<button type="button" class="ambient-seg psalt-mode' + (st.ownR ? ' active' : '') + '" data-prub="own" ' +
+                'title="Give this pass its own rubato — set it to 0 for changes that fall exactly as written on this pass">Its own</button>' +
+            '</div>' +
+            (st.ownR
+              ? ('<div class="psalt-fields">' +
+                  '<label title="' + escA('0 = this pass falls exactly as written. 100 = wild. '
+                    + 'The pass total is always preserved.') + '">Amount<input type="number" class="pe-saltin" data-prubf="amount" ' +
+                    'min="0" max="100" step="5" value="' + (st.ownR.amount | 0) + '"></label>' +
+                '</div>' +
+                '<div class="ambient-hint psalt-note">' +
+                  ((st.ownR.amount | 0)
+                    ? esc('This pass only — every other pass keeps following '
+                        + (st.inhR.from ? st.inhR.from : 'nothing above') + '.')
+                    : esc('Zero — this pass falls exactly as written, even though '
+                        + (st.inhR.from ? (st.inhR.from + ' has ' + st.inhR.amount) : 'nothing above has any') + '.')) +
+                '</div>')
+              : ('<div class="ambient-hint psalt-note">' + esc('Follows '
+                  + (st.inhR.from ? (st.inhR.from + ' — amount ' + st.inhR.amount)
+                                  : 'nothing above, so this pass falls as written') + '.') + '</div>')) +
+            // IT ONLY ACTS UNDER A GRID — `_ambGridCumAt` is the grid path, and a pass
+            // is a grid concept. Say so rather than let a stored value look inert.
+            (st.gridOn ? '' : ('<div class="ambient-hint psalt-note">'
+              + esc('These changes have no Passes grid yet, so there is only one pass to move.') + '</div>')) +
+          '</div>' +
           '<div class="sm-footer"><button type="button" class="sm-apply psalt-close">Done</button></div></div>';
       };
       paint();
@@ -43063,6 +43351,18 @@
       ov.addEventListener('click', (ev) => {
         const t = ev.target;
         if (t === ov || (t.classList && t.classList.contains('psalt-close'))) { close(); return; }
+        // ↔ Rubato's own pair, checked BEFORE Salt's: both wear `.psalt-mode`, and
+        // `closest('[data-psalt]')` on a rubato button would walk past it to the
+        // modal and read Salt's attribute — so the rubato branch must claim its own
+        // press first or Inherit on one axis would clear the other.
+        { const mr = t.closest && t.closest('[data-prub]');
+          if (mr) {
+            const st0 = state(); if (!st0) return;
+            if (mr.getAttribute('data-prub') === 'inherit') { commitR(null); return; }
+            // Seeded from what it was already inheriting, so engaging it is inaudible.
+            if (!st0.ownR) commitR({ amount: st0.inhR.amount | 0 });
+            return;
+          } }
         const m = t.closest && t.closest('[data-psalt]');
         if (!m) return;
         const st = state(); if (!st) return;
@@ -43076,6 +43376,12 @@
                                             scatter: st.inh.salt.scatter | 0 } : { colors: 0, scatter: 0 });
       });
       ov.addEventListener('change', (ev) => {
+        { const fr = ev.target && ev.target.closest && ev.target.closest('[data-prubf]');
+          if (fr) {
+            const st0 = state(); if (!st0 || !st0.ownR) return;
+            commitR({ amount: parseInt(fr.value, 10) || 0 });
+            return;
+          } }
         const f = ev.target && ev.target.closest && ev.target.closest('[data-psaltf]');
         if (!f) return;
         const st = state(); if (!st || !st.own) return;
@@ -52177,6 +52483,32 @@
                 if (wSel) { wSel.style.display = active ? '' : 'none';
                   if (document.activeElement !== wSel) wSel.value = o.when || 'always'; }
               } }
+            // \ud83c\udf12 Arc row: NOT gated on `progOn`. It counts bars, not chords, so it is
+            // the one control on this bar that means something with no changes at
+            // all \u2014 hiding it with the rest would have made it unreachable in exactly
+            // the case it was built for. Its group is a `pop`, so what actually
+            // decides whether it is on screen is _ambProgGrpSync.
+            { const aRow = document.getElementById(tr('ambient-prog-arcrow'));
+              if (aRow) {
+                const av = (cfg.prog && cfg.prog.arc) || {};
+                const aAmt = av.amount | 0, aOn = aAmt > 0;
+                const aTog = document.getElementById(tr('ambient-arc-toggle'));
+                if (aTog) { aTog.classList.toggle('active', aOn);
+                  aTog.title = aOn
+                    ? '\ud83c\udf12 Arc is ON \u2014 click to turn off (flat: every layer plays wherever its own settings allow)'
+                    : '\ud83c\udf12 Arc \u2014 thin the arrangement out and build it back up as it plays. OFF = flat. Click to turn on.'; }
+                const shSel = document.getElementById(tr('ambient-arc-shape'));
+                const bSel = document.getElementById(tr('ambient-arc-bars'));
+                const amtEl = document.getElementById(tr('ambient-arc-amt'));
+                // Hidden while off, the \u21bb Order rule: with nothing stored there is
+                // nothing to show, and the row collapses to its label.
+                if (shSel) { shSel.style.display = aOn ? '' : 'none';
+                  if (document.activeElement !== shSel) shSel.value = av.shape || 'build'; }
+                if (bSel) { bSel.style.display = aOn ? '' : 'none';
+                  if (document.activeElement !== bSel) bSel.value = String((av.bars | 0) || _AMB_ARC_BARS); }
+                if (amtEl) { amtEl.parentElement && (amtEl.parentElement.style.display = aOn ? '' : 'none');
+                  if (document.activeElement !== amtEl) amtEl.value = String(aAmt); }
+              } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
         // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
@@ -52694,6 +53026,31 @@
               '<button type="button" class="ambient-sched-lbl salt-lbl ambient-order-toggle" id="ambient-order-toggle" title="↻ Order — re-order the progression\u2019s chords on scheduled cycles. OFF = written order, every cycle. Click to turn on.">↻ Order</button>' +
               '<select id="ambient-order-mode" class="ambient-select"><option value="shuffle">Random</option><option value="reverse">Reversed</option></select>' +
               '<select id="ambient-order-when" class="ambient-select" title="Which progression cycles play in the altered order (the rest play as written)"><option value="always">every cycle</option><option value="10">1 in 2</option><option value="100">1 in 3</option><option value="1000">1 in 4</option><option value="10000000">1 in 8</option></select>' +
+            '</div>' +
+            _ambProgGrpClose() +
+            // \ud83c\udf12 ARC \u2014 THE ORCHESTRATION AXIS, and the only group on this bar that
+            // is not about harmony. Every neighbour asks WHICH CHORD (\ud83e\uddc2 Salt, \ud83c\udf0a Vary,
+            // \ud83c\udf21 Tension, \ud83c\udfb2 Take, \u21bb Order) or WHEN IT FALLS (\u2194 Rubato). This asks
+            // HOW MUCH PLAYS \u2014 so it is its own group for the same reason Rubato is:
+            // a different axis of editing, with room beside `amount` for the ones
+            // that follow (a per-part depth, a last-slice fill, an entry order).
+            _ambProgGrpOpen('arc', '\ud83c\udf12 Arc', false, true) +
+            '<div class="ambient-row ambient-prog-salt ambient-prog-arc" id="ambient-prog-arcrow" title="Arc \u2014 the arrangement\u2019s density curve. Off = every layer plays wherever its own settings already allow.">' +
+              // The LABEL is the on/off, the \u21bb Order idiom: inactive stores nothing at
+              // all, so "off" and "absent" are one state and there is no stale depth
+              // waiting to surprise anyone. Turning it on seeds a musical middle
+              // rather than 0, because a control that engages inaudibly reads as broken.
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-arc-toggle" id="ambient-arc-toggle" title="\ud83c\udf12 Arc \u2014 thin the arrangement out and build it back up as it plays. OFF = flat: every layer plays wherever its own settings allow. Click to turn on.">\ud83c\udf12 Arc</button>' +
+              '<select id="ambient-arc-shape" class="ambient-select ambient-arc-shape" title="How the density moves across one arc. Building: thinnest at the start, full by the end. Waves: full at the top, thinnest in the middle, full again. Drifting: the same set of densities in a different order every arc \u2014 unpredictable, but never stuck thin.">' +
+                '<option value="build">building</option><option value="wave">waves</option><option value="drift">drifting</option></select>' +
+              '<select id="ambient-arc-bars" class="ambient-select ambient-arc-bars" title="How long ONE arc is. It is divided into 8 slices, and a layer holds its in-or-out state for a whole slice \u2014 so 32 bars means the line-up can change every 4 bars.">' +
+                '<option value="8">8 bars</option><option value="16">16 bars</option><option value="32">32 bars</option><option value="64">64 bars</option><option value="128">128 bars</option></select>' +
+              '<span class="ambient-sched-grp ambient-arc-grp"><span class="ambient-sched-lbl">depth</span>' +
+                '<input type="number" class="ambient-salt-in ambient-arc-amt" id="ambient-arc-amt" min="0" max="100" step="5" value="0" title="How much thinner the thinnest slice gets. 0 = flat. 100 = about a tenth of the layers survive the thinnest slice \u2014 never silence, so a breakdown can still be told apart from a bug."></span>' +
+              '<span class="ambient-hint arc-ladder">Which layers drop is decided per slice and per layer, deterministically \u2014 ' +
+              'the same take replays it exactly. This is the <b>orchestration</b> twin of <b>\ud83c\udf21 Tension</b>: that one ramps ' +
+              'the harmony across a cycle, this one ramps how much is playing across the bars. It needs no changes \u2014 ' +
+              'it counts bars, so it works on an area with no progression at all.</span>' +
             '</div>' +
             _ambProgGrpClose() +
             // Overview strip — the whole progression at a glance (chord chips grouped
@@ -54870,6 +55227,37 @@
             c.prog.order = { mode: (mSel && mSel.value) || 'shuffle', when: (wSel && wSel.value) || 'always' };
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
+          });
+        });
+        // \ud83c\udf12 Arc \u2014 the \u21bb Order idiom exactly: the LABEL is on/off, OFF deletes the
+        // whole key so "off" and "absent" stay one state, and ON seeds a musical
+        // middle (40 over 32 bars, building). Seeding 0 would have made the switch
+        // engage INAUDIBLY, which is the one thing a toggle must never do.
+        { const aTog = G('ambient-arc-toggle');
+          if (aTog) aTog.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (c.prog.arc && (c.prog.arc.amount | 0) > 0) delete c.prog.arc;
+            else c.prog.arc = { amount: 40, bars: _AMB_ARC_BARS, shape: 'build' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
+          }); }
+        // The three faces of one object, so each handler REBUILDS it from all three
+        // controls rather than patching a field: `prog.arc` is replaced wholesale by
+        // the normalizer on every getCfg, so a partial write is an orphan.
+        [['ambient-arc-shape', 'change'], ['ambient-arc-bars', 'change'], ['ambient-arc-amt', 'input']].forEach(pr => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener(pr[1], () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const shSel = G('ambient-arc-shape'), bSel = G('ambient-arc-bars'), aEl = G('ambient-arc-amt');
+            const v = Math.max(0, Math.min(100, parseInt(aEl && aEl.value, 10) || 0));
+            if (!v) { delete c.prog.arc; }
+            else c.prog.arc = { amount: v,
+              bars: Math.max(2, Math.min(128, parseInt(bSel && bSel.value, 10) || _AMB_ARC_BARS)),
+              shape: (shSel && _AMB_ARC_SHAPES.indexOf(shSel.value) >= 0) ? shSel.value : 'build' };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
           });
         });
         // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the

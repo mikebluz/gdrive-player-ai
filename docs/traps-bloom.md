@@ -53,6 +53,32 @@
 
 ### Bloom: the arrangement clock
 
+- **`_ambSectionGateOK` IS the arrangement gate, and it has 13 call sites.** A new arrangement-level
+  gate folds INTO it (🌒 Arc does) rather than becoming a 14th sweep — but its `if (!L.sectionMask)
+  return true` early exit is BEFORE everything, so a gate that must apply to unmasked layers has to go
+  above that line or it silently does nothing on the projects that have no masks (i.e. most of them).
+- **Anything stochastic in the arrangement PATH breaks the super-cycle.** `_ambGridSlots` expands until
+  its state key `(it % arrCols) | visits…` repeats; a random part order or a dice-rolled skip never
+  repeats it, so the walk runs to `_AMB_GRID_MAX_ITERS` and `plan.cycle` — which `gloops` is derived
+  from — is wrong. Two ways out, both precedented: a pure function of (seed, round) with a DECLARED
+  horizon folded into that key, or the `_ambGridCumAt` shape (keep the structural expansion shared, add
+  a second small memo keyed on the loop). A length-PRESERVING permutation can use the second; a skip
+  cannot.
+- **Clock a new arrangement axis on BARS unless it truly needs chords.** `_ambProgStepAt` has four
+  branches and under a Passes grid one "cycle" is a super-cycle, so a chord-clock phase breathes at a
+  rate that depends on which branch the project happens to be on. 🌒 Arc counts bars from the
+  progression anchor, which is why it also works on an area with no changes at all.
+- **A per-pass value needs THREE wirings, not one.** `passRubato` taught this: the resolver
+  (`_ambRubatoForSlot`), the ENGAGEMENT test (`_ambProgSaltAnyLen` — `_ambGridCumAt` returns the written
+  edges untouched unless it says yes) and the MEMO SIGNATURE (`_ambRubatoSig`, or the second memo serves
+  pre-edit bar edges). Poison-verified: severing them fails 4, 3 and 1 named check respectively.
+- **`_ambRepairParts` has TWO carry sites and the `e0` one is the OPEN-part branch.** Both pass stores
+  return null for `open`, so a `passSalt`/`passRubato` carried on `e0` can never be read — `passSalt`
+  does it anyway and predates the rule; don't copy that line for a new store.
+- **docs/bloom-salt-organisation.md §9's "Rubato cannot act at the pass rung" is STALE** — §9c's
+  `_ambGridCumAt` is exactly a re-slice of the cached plan, so the state that could read a pass value
+  became the state that acts on it. The rung is wired.
+
 - **A CONTROL THAT INDEXES THE SOURCE SET MUST BE CAPPED TO IT.** Every branch reading
   `part.pitch.degree` does `clamp(degree - 1, 0, N - 1)`, so a 1-12 stepper over a triad had three
   live values and nine that silently repeated the third. The ceiling is `V2.toneCount` (published from

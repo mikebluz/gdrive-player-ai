@@ -202,6 +202,19 @@
 
 ### Controls, wiring and reachability
 
+- **A new popover group in ⇗ Arrangement is FOUR edits, not two.** The file's own comment says two (the
+  group + the `data-pov="grp:<key>"` door); it is also `_AMB_PROG_GRP_TITLES` (or the popover wears its
+  own key as a title) and the hand-written key list in `_ambProgGrpSync`. Leaving it out of that list
+  does NOT make the group missing — it makes it **STRAY**: a `pop` group's only hide rule is that sweep,
+  so it sits open in the pane as an extra accordion duplicating every control the popover holds. That
+  needs its own check; the reachability checks cannot see it.
+- **The five doors on the ▤ Parts bar all measure 0×0 until that accordion is opened.** 🧂 Salt,
+  ↔ Rubato, ↻ Order, 🌒 Arc and ▤ Song map live in its collapsed body, so a probe that measures them
+  cold reports every one of them unreachable. Measure a SIBLING before believing a 0×0 is your feature.
+- **Give a new control a CLASS as well as an id.** Every instance prefixes its ids (the Mix engine's are
+  `mix-bloom-…`), so `#my-control` addresses nothing from outside; handlers using `G()`/`tr()` are fine
+  while any probe or sweep querying the bare id silently finds null.
+
 - **Know which of three wiring mechanisms a control uses before adding a handler:** DOCUMENT-delegated
   (steppers — `__ambStepperWired`; add nothing), HOST-SWEPT at build time (`.ambient-collapse`,
   `.ambient-grp-head`, `.ambient-euclid-grid` — either let the sweep have it or exclude yourself, never

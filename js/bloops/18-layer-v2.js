@@ -21966,14 +21966,31 @@
             knobFace(k);
           }
         };
+        // ONE TEARDOWN, AND IT RUNS ONCE. `up` was bound to BOTH pointerup and
+        // pointercancel with `{once:true}` — which removes only the one that FIRED,
+        // leaving its sibling armed on the knob for ever. The next gesture that ends
+        // the other way re-ran a teardown holding the PREVIOUS drag's `moved`, so a
+        // knob could open its numeric entry, or dispatch a stale `change`, from a
+        // gesture that had nothing to do with it. They accumulate: one per drag.
+        //
+        // The capture is released EXPLICITLY too. Implicit release on pointerup is
+        // the spec's behaviour and normally enough, but a capture held by a document
+        // -level handler that also calls `preventDefault()` is the one thing in this
+        // card that could swallow a press meant for something else — so it is not
+        // left to the implicit path.
+        let done = false;
         const up = () => {
+          if (done) return; done = true;
           k.removeEventListener('pointermove', mv);
+          k.removeEventListener('pointerup', up);
+          k.removeEventListener('pointercancel', up);
+          try { if (k.hasPointerCapture && k.hasPointerCapture(ev.pointerId)) k.releasePointerCapture(ev.pointerId); } catch (e) {}
           if (moved < 6) knobEntry(k, inp);
           else inp.dispatchEvent(new Event('change', { bubbles: true }));
         };
         k.addEventListener('pointermove', mv);
-        k.addEventListener('pointerup', up, { once: true });
-        k.addEventListener('pointercancel', up, { once: true });
+        k.addEventListener('pointerup', up);
+        k.addEventListener('pointercancel', up);
       });
 
       // ✎ ADD A NOTE WHERE THE HAND SAYS — shared by the PENCIL (pointerdown,

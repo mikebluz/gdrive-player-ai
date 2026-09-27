@@ -2394,16 +2394,12 @@
       // Absent = written (the phrase replays exactly as captured). Coerce-only.
       if (host.loopVar != null && host.loopVar !== 'live') delete host.loopVar;
       // SCHEDULED TONE cycle: coerce when present; ABSENT = off (additive,
-      // kept out of defaults — the normalize trap).
+      // kept out of defaults — the normalize trap). ONE COPY, shared with the v2
+      // layer normalizer — see `_ambToneSeqCoerce`.
       if (host.toneSeq != null) {
         const q = host.toneSeq;
         if (typeof q !== 'object' || !Array.isArray(q.steps)) delete host.toneSeq;
-        else {
-          q.on = (q.on === true || q.on === 1) ? 1 : 0;
-          q.steps = q.steps.filter(t => t && typeof t === 'object').slice(0, 8)
-            .map(t => ({ tone: (typeof t.tone === 'string') ? t.tone : '', bars: Math.max(1, Math.min(32, t.bars | 0)) || 4 }));
-          if (!q.steps.length) delete host.toneSeq;
-        }
+        else if (!_ambToneSeqCoerce(q)) delete host.toneSeq;
       }
       // PITCH ECHO: coerce when present; ABSENT = off (additive, kept out of
       // defaults — the normalize trap).
@@ -7274,19 +7270,34 @@
     const _AMB_NOV_AXES = [
       { k: 'h', name: 'Harmony', asks: 'which chords, and how they are coloured' },
       { k: 't', name: 'Time',    asks: 'when the changes fall' },
-      { k: 'f', name: 'Form',    asks: 'what comes next, and whether it comes at all' },
+      { k: 'f', name: 'Form',    asks: 'what comes next, how long it stays, and whether it comes at all' },
       { k: 'x', name: 'Texture', asks: 'how much is playing' },
+      // FIVE, NOT FOUR (2026-09-26). Four was derived from "one axis per question the
+      // dice answer", and ◇ Tone set asks a FIFTH: not which chord, not when, not what
+      // comes next, not how much — WHICH INSTRUMENT. Folding it into Texture would put
+      // two questions under one slider, which is the compromise that reasoning exists
+      // to avoid. It is the only axis that writes a LAYER rather than the arrangement.
+      { k: 'i', name: 'Instrument', asks: 'which voice plays it, and how many at once' },
     ];
     // TRANSIENT, deliberately \u2014 module state, never cfg. Re-opening keeps where you
     // were within a session; nothing reaches the save file.
     let _ambNovUi = null;
-    const _ambNovState = () => (_ambNovUi || (_ambNovUi = { amount: 55, bal: { h: 50, t: 50, f: 50, x: 50 } }));
+    const _ambNovState = () => (_ambNovUi || (_ambNovUi = { amount: 55, bal: { h: 50, t: 50, f: 50, x: 50, i: 50 } }));
     // Test seam: the gate drives the real controls, but the PLAN is pure and worth
     // asserting on its own, which needs a way to set the transient state directly.
-    const _ambNovUiSet = (st) => { _ambNovUi = { amount: st.amount | 0, bal: Object.assign({}, st.bal) }; };
+    // A CALLER THAT PREDATES AN AXIS MUST NOT SILENCE IT. Every balance defaults to the
+    // EVEN 50, so a `bal` written before ◇ Instrument existed (a saved probe fixture, a
+    // stale caller) leans nothing rather than reading as 0 and switching the new axis
+    // off — absent means "no opinion", which on this control is 50, not zero.
+    const _ambNovUiSet = (st) => {
+      const bal = {};
+      _AMB_NOV_AXES.forEach(ax => { const v = st && st.bal && st.bal[ax.k]; bal[ax.k] = Number.isFinite(v) ? (v | 0) : 50; });
+      _ambNovUi = { amount: (st && st.amount) | 0, bal: bal };
+    };
     // The BALANCE never adds novelty \u2014 it only leans it. 50 is even, so an untouched
     // balance gives every axis the amount itself.
-    const _ambNovEff = (amount, b) => Math.max(0, Math.min(100, Math.round((amount | 0) * ((b | 0) / 50))));
+    const _ambNovEff = (amount, b) => Math.max(0, Math.min(100,
+      Math.round((amount | 0) * ((Number.isFinite(b) ? (b | 0) : 50) / 50))));
     // WHAT APPLY WOULD DO, as a list of (label, from, to, write). Built without
     // touching cfg so the preview and the write can never disagree: the preview IS
     // the plan, and Apply just runs its `write`s.
@@ -7305,6 +7316,7 @@
       const s0 = st || _ambNovState();
       const H = _ambNovEff(s0.amount, s0.bal.h), T = _ambNovEff(s0.amount, s0.bal.t);
       const F = _ambNovEff(s0.amount, s0.bal.f), X = _ambNovEff(s0.amount, s0.bal.x);
+      const I = _ambNovEff(s0.amount, s0.bal.i);
       const changes = _ambNovHasChanges(p);
       const NEEDS = 'needs changes';
       const out = [];
@@ -7325,12 +7337,40 @@
       // \u2014\u2014 Time \u2014\u2014
       num('\u2194 Rubato', 't', (q) => (q.rubato && q.rubato.amount | 0) || 0,
         (q, v) => { if (v) q.rubato = { amount: v }; else delete q.rubato; }, Math.round(T * 0.6));
-      // \u2014\u2014 Form \u2014\u2014 NOTHING TO REORDER WITH ONE PART, and the row says so rather
-      // than offering a write that cannot act.
+      // —— Form ——
+      // NOTHING TO REORDER WITH ONE PART, and the row says so rather than offering a
+      // write that cannot act.
       let nParts = 1;
       try { nParts = (_ambGridRanges(cfg) || []).length; } catch (e) { nParts = 1; }
       if (nParts > 1) {
-        out.push({ label: '\u21bb Parts', axis: 'f', live: true,
+        // 🎲 REPEATS … TO — the CEILING of the range, never the floor. `plays` is the
+        // number the user set and stays theirs; a `playsTo` above it is what makes the
+        // part run a different number of times each round. Absent, or not above the
+        // floor, is FIXED — one representation, so turning the dial back down takes the
+        // range away rather than leaving a stale ceiling behind.
+        // PER PART, because the floors differ: one shared ceiling would flatten a part
+        // set to 1× and a part set to 4× into the same thing. So the row reports the
+        // WIDTH ("+1 pass") rather than a pair of numbers it cannot have.
+        // IN THIS BRANCH, not beside it, although a single vamp running 2–4× is a
+        // perfectly good musical idea: `prog.parts` is PRUNED at one part, so there is
+        // no per-part store to write a ceiling into. Measured — set one part and
+        // `getCfg` hands back no `parts` at all. The inert ↻ Parts row below names the
+        // way forward for the whole axis; two more dead rows would be noise, which is
+        // the same reason 🎲 Chance is not offered there either.
+        // FIRST, as the gentlest of the three: nothing is removed and nothing is
+        // reordered — a section simply sometimes runs once more.
+        const plExtra = (F >= 40) ? (1 + Math.floor((F - 40) / 30)) : 0;
+        const plLo = (pt) => Math.max(1, Math.min(64, (pt && pt.plays | 0) || 1));
+        const plNow = Array.isArray(p.parts)
+          ? p.parts.reduce((mx, pt) => pt ? Math.max(mx, _ambPartPlaysHi(pt) - plLo(pt)) : mx, 0) : 0;
+        const plWord = (n) => n ? ('+' + n + ' pass' + (n === 1 ? '' : 'es')) : 'fixed';
+        out.push({ label: '🎲 Repeats … to', axis: 'f', live: true,
+          from: plWord(plNow), to: plWord(plExtra),
+          write: (q) => { if (!Array.isArray(q.parts)) return;
+            q.parts.forEach((pt) => { if (!pt) return;
+              const lo = plLo(pt), hi = Math.min(64, lo + plExtra);
+              if (hi > lo) pt.playsTo = hi; else delete pt.playsTo; }); } });
+        out.push({ label: '↻ Parts', axis: 'f', live: true,
           from: (p.arrOrder && p.arrOrder.mode) ? 'random' : 'written',
           to: F > 45 ? 'random' : 'written',
           write: (q) => { if (F > 45) q.arrOrder = { mode: 'shuffle', when: F > 75 ? 'always' : '10' }; else delete q.arrOrder; } });
@@ -7348,17 +7388,97 @@
       }
       // \u2014\u2014 Texture \u2014\u2014
       // ALWAYS LIVE \u2014 it counts bars, not chords.
+      const arcAmt = Math.round(X * 0.8);
       out.push({ label: '\ud83c\udf12 Arc', axis: 'x', live: true,
-        from: (p.arc && p.arc.amount | 0) || 0, to: Math.round(X * 0.8),
-        write: (q) => { const v = Math.round(X * 0.8);
+        from: (p.arc && p.arc.amount | 0) || 0, to: arcAmt,
+        write: (q) => { const v = arcAmt;
           if (v) q.arc = { amount: v, bars: (q.arc && q.arc.bars) || _AMB_ARC_BARS,
                            shape: X > 70 ? 'drift' : (X > 35 ? 'wave' : 'build') };
           else delete q.arc; } });
+      // \ud83c\udf12 ARC AT THE PART RUNG \u2014 the other half of \u00a75b's Orchestration
+      // macro. The area's depth says how hard the whole PIECE breathes;
+      // `parts[i].arc.amount` says how hard THIS part does, and \u00a74d shipped that store
+      // with nothing driving it.
+      // DEPTH ONLY, because depth is all the rung holds: shape and bars run on the global
+      // bar clock, so a part that redefined them would jump to a different point of a
+      // different curve at its own boundary.
+      // IT WRITES A DIFFERENT VALUE PER PART, which no other row here does \u2014 and it has
+      // to. One value across every part is what the AREA rung already IS, so writing that
+      // here would be a second control for one thing. Parts alternate either side of the
+      // area depth: some breathe harder, some stay fuller, which is "the chorus is always
+      // full, the verse breathes" without claiming to know which part is the chorus.
+      // Clamped at 0, and 0 MEANS something at this rung \u2014 full here however deep the
+      // area's arc gets.
+      // GATED ON TWO PARTS, for the reason \ud83c\udfb2 Chance and \ud83c\udfb2 Repeats are:
+      // `prog.parts` is pruned at one part, so there is no per-part store to write into.
+      if (nParts > 1) {
+        const arcSpread = (X >= 55) ? Math.round(X * 0.35) : 0;
+        const arcAt = (i) => Math.max(0, Math.min(100, arcAmt + ((i % 2) ? arcSpread : -arcSpread)));
+        // THE WIDTH, not a pair of numbers \u2014 one row cannot show a value per part, and
+        // the width is what the dial actually moves.
+        const arcNow = (() => {
+          const own = Array.isArray(p.parts)
+            ? p.parts.filter(pt => pt && pt.arc && typeof pt.arc === 'object').map(pt => pt.arc.amount | 0) : [];
+          if (!own.length) return 0;
+          return Math.round((Math.max.apply(null, own) - Math.min.apply(null, own)) / 2);
+        })();
+        const arcWord = (n) => n ? ('\u00b1' + n) : 'even';
+        out.push({ label: '\ud83c\udf12 Arc \u00b7 per part', axis: 'x', live: true,
+          from: arcWord(arcNow), to: arcWord(arcSpread),
+          write: (q) => { if (!Array.isArray(q.parts)) return;
+            q.parts.forEach((pt, i) => { if (!pt) return;
+              if (arcSpread) pt.arc = { amount: arcAt(i) }; else delete pt.arc; }); } });
+      }
+      // —— Instrument ——
+      // ◇ TONE SET — THE ONE ROW THAT WRITES A LAYER, not the arrangement. It moves the
+      // two dials on a layer's own Tone set: ◇ Palette (how much of the set is
+      // eligible) and ◇ Doubling (how often more than one voice sounds at once).
+      // IT NEVER INVENTS A VOICE. `toneSeq.steps` is hand-authored — you pick the
+      // instruments — so this row only acts on layers that ALREADY have a set with two
+      // entries in it, and it never adds, removes or reorders one.
+      // IT NEVER WRITES `maxV` EITHER. The cap is the user's ceiling, the same way
+      // 🎲 Repeats leaves `plays` alone: a macro that overwrites the limit you set is
+      // not a macro you can leave switched on.
+      // ◇ DOUBLING IS SKIPPED PER LAYER, not per row. Only a v2 layer reaches the
+      // play-path fan-out, so writing `dub` to a v1 layer would store a key nothing
+      // reads — and a row is either live or dead as a whole, which cannot express
+      // "this layer but not that one". `_ambToneStacks` is the one test both this and
+      // the control itself ask.
+      const tsL = _ambToneSetLayers(cfg);
+      const tsPal = Math.round(I * 0.9);
+      const tsDub = (I >= 60) ? Math.min(80, Math.round((I - 45) * 1.4)) : 0;
+      const tsWord = (pal, dub, n) => n
+        ? (n + ' layer' + (n === 1 ? '' : 's') + ' · ' + ((!pal && !dub) ? 'off' : ('palette ' + pal + (dub ? ' · doubling ' + dub : ''))))
+        : 'none';
+      const tsNow = (() => {
+        let pal = 0, dub = 0;
+        tsL.forEach(e => { const q = e.L.toneSeq;
+          pal = Math.max(pal, (q.pal | 0) || 0); dub = Math.max(dub, (q.dub | 0) || 0); });
+        return { pal: pal, dub: dub };
+      })();
+      out.push({ label: '◇ Tone set', axis: 'i', live: tsL.length > 0,
+        why: tsL.length ? null : 'needs a layer with a Tone set of two voices',
+        from: tsWord(tsNow.pal, tsNow.dub, tsL.length),
+        to: tsWord(tsPal, tsDub, tsL.length),
+        // THE LAYERS, not `q` — this row takes the cfg it was planned against, which is
+        // the SAME object `_ambNovApply` hands the other rows as `cfg.prog`. No contract
+        // change: `write(prog)` still, and this one simply ignores its argument.
+        write: () => {
+          _ambToneSetLayers(cfg).forEach(e => {
+            const q = e.L.toneSeq; if (!q) return;
+            if (tsPal > 0) q.pal = tsPal; else delete q.pal;
+            if (tsDub > 0 && _ambToneStacks(e.L)) q.dub = tsDub; else delete q.dub;
+          });
+        } });
       return out;
     }
     // The sentence. It describes the RESULT, not the settings \u2014 a readout that only
     // repeats the number it sits under is not a readout.
-    function _ambNovWords(amount, changes) {
+    // `tsets` = how many layers have a Tone set worth choosing from. The sentence must
+    // match the ROWS, so the voice clause is only spoken when a row can actually act —
+    // the same rule that makes the no-changes branch below describe density instead of
+    // a harmony that is not there. Optional, and 0 says nothing.
+    function _ambNovWords(amount, changes, tsets) {
       const n = amount | 0;
       if (!n) return 'Nothing moves. The piece plays exactly as written, every time through.';
       // WITH NO CHANGES only the density curve can act, so the sentence describes THAT
@@ -7367,9 +7487,16 @@
         ? 'Layers thin out and drift back, gently. Add changes and the harmony can move too.'
         : 'Layers drop away and come back as it plays. Add changes and the harmony can move too.';
       if (n < 30) return 'Barely. The odd chord recolours and the density drifts \u2014 you would have to be listening for it.';
-      if (n < 60) return 'It breathes. Chords take substitutes, the arrangement thins and fills, and the odd part sits a round out.';
-      if (n < 85) return 'It improvises. The order of the parts moves, layers drop away and come back, and no two times through are the same.';
-      return 'A different take every time. Expect the form itself to surprise you.';
+      // THESE NAME WHAT ACTUALLY ENGAGES AT THAT AMOUNT, not the whole feature list —
+      // the repeats range comes in at 40 and 🎲 Chance not until 60, so the middle
+      // band promising a part that "sits a round out" was a round early.
+      const voices = ((tsets | 0) > 0);
+      if (n < 60) return 'It breathes. Chords take substitutes, the arrangement thins and fills, and a section sometimes runs an extra time.' +
+        (voices ? ' The voices move around the Tone set.' : '');
+      if (n < 85) return 'It improvises. The order of the parts moves, sections run different lengths, the odd one sits a round out, and no two times through are the same.' +
+        (voices ? ' Voices come and go across the Tone set, and some notes double.' : '');
+      return 'A different take every time. Expect the form itself to surprise you.' +
+        (voices ? ' Even the instruments trade places, and the odd note is played by two at once.' : '');
     }
     // APPLY, with the previous values stashed so one press is undoable. Undo is not a
     // luxury here: this writes TEN keys at once, and a macro you cannot take back is
@@ -7381,7 +7508,29 @@
       _ambNovUndo = { seed: cfg.seed | 0, snap: JSON.stringify({
         vary: p.vary, tension: p.tension, reroll: p.reroll, salt: p.salt, order: p.order,
         rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc,
-        chance: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : null) : null }) };
+        // PER-PART KEYS, one entry per part, `null` where the part had none — Apply
+        // writes both of these across every part, so both have to come back.
+        chance: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : null) : null,
+        playsTo: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.playsTo)) ? (x.playsTo | 0) : null) : null,
+        // `partArc`, NOT `arc` \u2014 the AREA rung already owns that name in this snapshot,
+        // and two rungs under one key is how a restore puts a part's depth on the area.
+        // Snapshotted WHOLE rather than reduced to its one field today, so the rung can
+        // gain one without this silently dropping it (the JSON round-trip deep-copies).
+        partArc: Array.isArray(p.parts) ? p.parts.map(x => (x && x.arc && typeof x.arc === 'object') ? x.arc : null) : null,
+        // ◇ TONE SET — THE FIRST NON-`prog` THING THIS SNAPSHOT HOLDS, and it is keyed
+        // BY LAYER KEY, never by position. The per-part arrays above can be positional
+        // because a part list only changes when you split or merge one; layers are added
+        // and deleted freely, so an index-keyed snapshot would restore layer 3's voices
+        // onto layer 2 the moment one is removed between Apply and ↶ Undo.
+        // Every layer that HAD a set is recorded, not only the ones written — `null`
+        // where a dial was absent, so the restore can delete rather than guess.
+        tset: (function () {
+          const m = {};
+          try { _ambToneSetLayers(cfg).forEach(e => { const q = e.L.toneSeq;
+            m[e.key] = { pal: Number.isFinite(q.pal) ? (q.pal | 0) : null,
+                         dub: Number.isFinite(q.dub) ? (q.dub | 0) : null }; }); } catch (e) {}
+          return m;
+        })() }) };
       let n = 0;
       // A DEAD ROW IS NOT WRITTEN. Storing a key nothing reads is how a project ends
       // up carrying settings it never had a chance to hear.
@@ -7395,9 +7544,24 @@
       ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach((k) => {
         if (was[k] == null) delete p[k]; else p[k] = was[k];
       });
-      if (Array.isArray(was.chance) && Array.isArray(p.parts)) {
+      // [snapshot key, part key] \u2014 they differ for the arc; see the snapshot above.
+      [['chance', 'chance'], ['playsTo', 'playsTo'], ['partArc', 'arc']].forEach((pr) => {
+        const sk = pr[0], pk = pr[1];
+        if (!Array.isArray(was[sk]) || !Array.isArray(p.parts)) return;
         p.parts.forEach((pt, i) => { if (!pt) return;
-          if (was.chance[i] == null) delete pt.chance; else pt.chance = was.chance[i]; });
+          if (was[sk][i] == null) delete pt[pk]; else pt[pk] = was[sk][i]; });
+      });
+      // …and the layer rung. Resolved through `_ambLayerByKey`, so a layer that has
+      // since been deleted is simply skipped rather than throwing the whole undo away.
+      if (was.tset && typeof was.tset === 'object') {
+        Object.keys(was.tset).forEach((k) => {
+          let L = null;
+          try { L = _ambLayerByKey(E, k); } catch (e) { L = null; }
+          if (!L || !L.toneSeq) return;
+          const w = was.tset[k] || {};
+          if (w.pal == null) delete L.toneSeq.pal; else L.toneSeq.pal = w.pal;
+          if (w.dub == null) delete L.toneSeq.dub; else L.toneSeq.dub = w.dub;
+        });
       }
       _ambNovUndo = null;
       return true;
@@ -9378,7 +9542,18 @@
     // `_ambProgTitle` already uses decides it: a name containing ' — ' is
     // derived, so it is regenerated from the part's CURRENT chords; an
     // authored name is returned verbatim and never touched.
-    function _ambPartNumerals(cfg, pi) {
+    // NAMES OR NUMERALS — ONE WALK (2026-09-27, user: "numerals are too obtuse as
+    // default — names of Parts should be the actual chords the progression is in the
+    // selected Key"). Both readings describe the SAME chords through the SAME view
+    // shift, so they share this function: two walks would be two chances to disagree
+    // about which chords a part covers, which is what the numerals did until today.
+    // NAMES unless asked otherwise — and `_ambPartNumerals` below keeps defaulting to
+    // NUMERALS, because a function called “Numerals” that returns chord names is the
+    // naming lie this file keeps weeding out. Two names, two defaults, one walk.
+    function _ambPartChordList(cfg, pi, mode) {
+      return _ambPartNumerals(cfg, pi, mode || 'names');
+    }
+    function _ambPartNumerals(cfg, pi, mode) {
       try {
         const prog = cfg && cfg.prog, chords = prog && prog.chords;
         if (!chords || !chords.length) return '';
@@ -9386,15 +9561,27 @@
         const rg = rgs.find(x => x && (x.pi | 0) === (pi | 0));
         if (!rg) return '';
         const kRoot = _ambAreaKeyRootPc(cfg), kScale = _ambAreaKeyScaleName(cfg);
+        // `_ambProgViewShift(E, cfg, chords, atSec)` — E FIRST. Called as
+        // `(cfg, chords)` it read the chord array as `cfg` and `undefined` as the
+        // chords, so it returned 0 and these numerals silently described the chords
+        // BEFORE the view transpose while the chips beside them showed them after.
+        // Measured at a shift of 10: header I7–IV7–V7 over chips reading D7·G7·A7.
+        // It happens to give the same DEGREES once the key is shifted too (both move
+        // by the same amount), which is why it went unnoticed — but a call that reads
+        // its arguments in the wrong order is one edit away from being visibly wrong.
         let vShift = 0;
-        try { vShift = _ambProgViewShift(cfg, chords) | 0; } catch (e) {}
+        try { vShift = _ambProgViewShift(_E, cfg, chords) | 0; } catch (e) {}
         const out = [];
         const to = (rg.from | 0) + Math.max(0, rg.len | 0);
         for (let i = rg.from; i < to && i < chords.length; i++) {
           const c = _ambChordShift(chords[i], vShift);
-          const pk = _ambPartKeyForSlot(prog, i);
-          out.push(_ambIsTransition(c) ? '\u21dd'
-            : (_ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale) || '?'));
+          const pk = _ambPartKeyShifted(_ambPartKeyForSlot(prog, i), vShift);
+          out.push(_ambIsTransition(c) ? '⇝'
+            : (mode !== 'names'
+              ? (_ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale) || '?')
+              // THE CHORD'S OWN NAME, from the same builder the chips below use, so the
+              // header and the chips cannot spell one chord two ways.
+              : (_ambChordShort(c) || '?')));
         }
         return out.join(' \u2014 ');
       } catch (e) { return ''; }
@@ -9413,6 +9600,18 @@
     function _ambPartOrd(pi) { return (((pi | 0) % _AMB_PART_HUES) + _AMB_PART_HUES) % _AMB_PART_HUES + 1; }
     function _ambPartAttr(pi) {
       return (pi >= 0) ? (' data-part="' + _ambPartOrd(pi) + '"') : '';
+    }
+    // THE SWATCH IS A FUNCTION OF WHAT THE CONTROL NAMES, not of what built it.
+    // `_ambPartAttr` stamps the markup ONCE, at build; anything that moves a live
+    // readout afterwards — the strip's playhead sync moving the select's value every
+    // part boundary — has to move the colour with it, or the select reads "2 · Cm — Gm"
+    // in part 3's hue (reported exactly so). The DOM half of the same rule the layer
+    // cards' `paintPartHue` follows.
+    function _ambPartHueEl(el, pi) {
+      if (!el) return;
+      const v = (pi >= 0) ? String(_ambPartOrd(pi)) : '';
+      if (v) { if (el.getAttribute('data-part') !== v) el.setAttribute('data-part', v); }
+      else if (el.hasAttribute('data-part')) el.removeAttribute('data-part');
     }
     let _ambPartColorCache = null;
     function _ambPartColor(pi) {
@@ -9440,7 +9639,13 @@
     // everywhere at once and none of them parses it back.
     // An UNNAMED part keeps "Part N" rather than becoming "N \u00b7 Part N" — it
     // already leads with its number, and the prefix would only say it twice.
-    function _ambPartLabel(cfg, pi) {
+    // `mode` — 'names' (the default) or 'numerals'. NAMES BY DEFAULT since 2026-09-27:
+    // "I — III — IV" describes a relationship and identifies nothing you can hear, and
+    // it was the first thing on every part card. The chips underneath already say
+    // D · F#m · G; the header now leads with the same words, and Ⅰ Numerals is one press
+    // away on the strip's own toggle — which now governs BOTH readings instead of only
+    // the chips (it was a toggle that moved half the card).
+    function _ambPartLabel(cfg, pi, mode) {
       const p = cfg && cfg.prog;
       const n = (pi | 0) + 1;
       const parts = (p && Array.isArray(p.parts) && p.parts.length) ? p.parts : null;
@@ -9453,7 +9658,7 @@
         // SAME leading token whether or not it has been named.
         const gen = /^(?:Changes|Part)\s+\d+$/i.test(own);
         const body = gen ? 'Changes'
-          : (_ambProgNameIsList(own) ? (_ambPartNumerals(cfg, pi) || own) : own);
+          : (_ambProgNameIsList(own) ? (_ambPartChordList(cfg, pi, mode) || own) : own);
         return n + ' \u00b7 ' + body;
       }
       if (!parts) {
@@ -13993,6 +14198,269 @@
     // Draws come from the CALLER's stream — motif: the live engine stream;
     // riff: its cycle-seeded vRnd, so the ornament pattern LOCKS to the loop.
     // Fully gated at 0 (zero draws → harness byte-identical).
+    // WHICH WINDOW OF THE CYCLE `atSec` FALLS IN, and how many there are. Shared by
+    // the lead pick and the stack so the two can never disagree about the clock.
+    // Returns null when there is no cycle to speak of (absent/off/empty).
+    // DOES THIS LAYER STACK? ◇ Doubling needs the play-path fan-out, which lives at
+    // v2's single `playNote`; v1's bed/bass/motif/texture/arp build their params in
+    // nine places and emit in nine more, so they swap voices but cannot layer them
+    // yet. ONE definition, because both the control (which disables the dial) and
+    // ✺ Novelty (which must not store a doubling nothing reads) ask the question —
+    // two copies of it is how they come to disagree.
+    // A v2 layer keeps its voice fields NESTED (`instrument.tone`), which is the test
+    // the v2 voice normalizer already reads by.
+    function _ambToneStacks(inst) {
+      return !!(inst && inst.instrument && typeof inst.instrument === 'object');
+    }
+    // EVERY LAYER WITH A TONE SET WORTH CHOOSING FROM, keyed the way the rest of the
+    // engine keys layers (`v2:<id>` / `bed` / `seq:<id>` / …). NOT gated on `on` or
+    // `present`: a layer you have muted keeps its settings, and every other ✺ Novelty
+    // row writes the arrangement whether a layer is sounding or not.
+    // Two entries is the floor — a one-voice set is nothing to choose from and nothing
+    // to double (`_ambTonePalN` and `_ambToneStackAt` both already say so).
+    function _ambToneSetLayers(cfg) {
+      const out = [];
+      if (!cfg) return out;
+      const take = (key, L) => {
+        const q = L && L.toneSeq;
+        if (q && Array.isArray(q.steps) && q.steps.length > 1) out.push({ key: key, L: L });
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => take(k, cfg[k]));
+      try { _ambSeqList(cfg).forEach(q2 => take('seq:' + q2.id, q2)); } catch (e) {}
+      try { _ambSampleList(cfg).forEach(L2 => take('samp:' + L2.id, L2)); } catch (e) {}
+      if (Array.isArray(cfg.extras)) cfg.extras.forEach(ex => { if (ex && ex.type) take(ex.type + ':' + ex.id, ex); });
+      if (Array.isArray(cfg.layers)) cfg.layers.forEach(L3 => { if (L3) take('v2:' + L3.id, L3); });
+      return out;
+    }
+    // ── A STEP STATES ITS OWN UNIT ──────────────────────────────────────
+    // (2026-09-27, user: "we need to have Tone in Tone Set to Part (and sub part)
+    // mapping; also Bar and Change both need to be schedulable (on/off)" — clarified as
+    // "wherever scheduling is happening, Bar and Change (whole or fractional) should be
+    // optional units to express scheduling in", and the unit belongs on the ROW.)
+    //   · bar  — hold for N bars (what the set has always done)
+    //   · chg  — hold for N CHANGES, walked against the real chords so an uneven
+    //            cadence is honoured rather than averaged into a bar count
+    //   · part — not a turn in the queue at all: an ANSWER. This voice plays while
+    //            that part plays, optionally narrowed to a window inside it stated in
+    //            changes (`at`/`len`, fractional — "the second half of change 3").
+    // THE COUNT'S KEY STAYS `bars` whatever the unit counts: the data keys are
+    // save-compat and renaming one would silently reset every stored set. N may be
+    // FRACTIONAL now (¼ of a bar, ½ a change) — the rule is the same everywhere.
+    const _AMB_TSQ_UNITS = ['bar', 'chg', 'part'];
+    // ── THE ONE COERCION ────────────────────────────────────────────────
+    // v2 layers keep their own normalizer and it carried a SECOND COPY of this,
+    // introduced "verbatim" — so the day units arrived, a v2 layer's `unit: 'chg'`
+    // was silently dropped on the next getCfg while v1's kept it. Measured: the
+    // store said 'chg', the card drew 'bar'. One function, both callers.
+    // Returns TRUE while the set still holds steps; false means the caller deletes it.
+    function _ambToneSeqCoerce(q) {
+      if (!q || typeof q !== 'object' || !Array.isArray(q.steps)) return false;
+      q.on = (q.on === true || q.on === 1) ? 1 : 0;
+      // A STEP'S UNIT AND ITS WINDOW ARE ADDITIVE AND ABSENT BY DEFAULT — a set
+      // written before units keeps whole-bar counts and the original resolver.
+      // `bars` COUNTS THE STEP'S OWN UNIT (the key is save-compat, not a claim about
+      // bars) and quantizes to ¼ so "half a change" has one spelling.
+      // NON-POSITIVE IS "UNSET", exactly as it was: the old coercion read `(t.bars|0)
+      // || 4`, so a 0 became the default rather than the floor. Keeping that means a
+      // saved set coerces to the same numbers it always did — the fractions are the
+      // only new answer here.
+      const qt = (v, lo, hi, dflt) => {
+        const n2 = (typeof v === 'string') ? parseFloat(v) : v;
+        if (!Number.isFinite(n2) || n2 <= 0) return dflt;
+        return Math.max(lo, Math.min(hi, Math.round(n2 * 4) / 4));
+      };
+      q.steps = q.steps.filter(t => t && typeof t === 'object').slice(0, 8).map(t => {
+        const u = (t.unit === 'chg' || t.unit === 'part') ? t.unit : 'bar';
+        const o = { tone: (typeof t.tone === 'string') ? t.tone : '' };
+        if (u === 'part') {
+          o.unit = 'part';
+          o.part = Math.max(0, Math.min(63, t.part | 0));
+          // `at`/`len` narrow it to a window inside that part, in CHANGES. ABSENT =
+          // the whole part, which is what most rows mean.
+          const a2 = qt(t.at, 0, 63, null), l2 = qt(t.len, 0.25, 64, null);
+          if (a2 != null && a2 > 0) o.at = a2;
+          if (l2 != null && l2 > 0) o.len = l2;
+          return o;
+        }
+        if (u === 'chg') o.unit = 'chg';
+        o.bars = qt(t.bars, 0.25, 32, 4);
+        return o;
+      });
+      if (Number.isFinite(q.pal) && (q.pal | 0) > 0) q.pal = Math.max(0, Math.min(100, q.pal | 0)); else delete q.pal;
+      if (Number.isFinite(q.dub) && (q.dub | 0) > 0) q.dub = Math.max(0, Math.min(100, q.dub | 0)); else delete q.dub;
+      // CAPPED AT 3 FOR NOW (user, 2026-09-26). 1 is "never double", which `dub` already
+      // says, so it prunes to absent and there is one representation of "no stack".
+      if (Number.isFinite(q.maxV) && (q.maxV | 0) > 1) q.maxV = Math.max(2, Math.min(3, q.maxV | 0)); else delete q.maxV;
+      return !!q.steps.length;
+    }
+    function _ambTsqUnit(st) {
+      const u = st && st.unit;
+      return (u === 'chg' || u === 'part') ? u : 'bar';     // absent = bar, as it always was
+    }
+    function _ambTsqN(st) {
+      const v = (st && Number.isFinite(st.bars)) ? st.bars : 4;
+      return Math.max(0.25, Math.min(32, v));
+    }
+    // THE OLD PATH IS KEPT WHOLE, not re-derived. A set with no unit anywhere and
+    // whole-bar counts must resolve through the ORIGINAL arithmetic — that is what
+    // keeps golden bit-exact and every saved project sounding as it did.
+    function _ambToneSeqPlain(q) {
+      for (const st of q.steps) {
+        if (st && st.unit && st.unit !== 'bar') return false;
+        if (st && Number.isFinite(st.bars) && !Number.isInteger(st.bars)) return false;
+      }
+      return true;
+    }
+    // THE WALK'S HINTS ARE SIDE EFFECTS. `_ambProgStepAt` stashes the salt position,
+    // the chord span and the hang flag, and this runs INSIDE an emit — so every extra
+    // walk saves and restores them, exactly as `_ambHangAt` does.
+    function _ambTsqWalk(fn) {
+      const _sp = _ambProgPosHint, _si = _ambProgInstHint, _sh = _ambProgHangHint;
+      try { return fn(); } finally { _ambProgPosHint = _sp; _ambProgInstHint = _si; _ambProgHangHint = _sh; }
+    }
+    function _ambTsqChordAt(E, cfg, t) {
+      const chords = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null;
+      const N = chords ? chords.length : 0;
+      if (!N) return null;
+      let idx = 0;
+      try { idx = _ambProgStepAt(E, t) | 0; } catch (e) { idx = 0; }
+      return chords[((idx % N) + N) % N] || null;
+    }
+    // HOW LONG THIS STEP LASTS, in seconds, STARTING HERE. A change step walks the
+    // actual chords from `atSec` — averaging would make a "2 changes" step slide off
+    // the changes it is named after the moment a cadence is uneven.
+    function _ambTsqExtSec(E, cfg, st, atSec, barSec) {
+      const n = _ambTsqN(st);
+      if (_ambTsqUnit(st) !== 'chg') return n * barSec;
+      let t = atSec, left = n, guard = 0;
+      while (left > 0 && guard++ < 64) {
+        const ch = _ambTsqChordAt(E, cfg, t);
+        const take = Math.min(1, left);
+        t += Math.max(0.05, _ambCadLen(cfg, ch)) * barSec * take;
+        left -= take;
+      }
+      return Math.max(barSec * 0.05, t - atSec);
+    }
+    // WHERE INSIDE THE CURRENT CHANGE WE ARE, 0…1. Only asked for when a window has a
+    // FRACTIONAL bound — a whole-slot window needs the change index and nothing more,
+    // and this costs a bounded search.
+    function _ambTsqChgPhase(E, cfg, atSec, barSec) {
+      let idx = 0;
+      try { idx = _ambProgStepAt(E, atSec) | 0; } catch (e) { return 0; }
+      const span = Math.max(0.05, _ambCadLen(cfg, _ambTsqChordAt(E, cfg, atSec))) * barSec;
+      let lo = atSec - span * 1.05, hi = atSec;
+      for (let k = 0; k < 12; k++) {
+        const mid = (lo + hi) / 2;
+        let m = idx;
+        try { m = _ambProgStepAt(E, mid) | 0; } catch (e) {}
+        if (m === idx) hi = mid; else lo = mid;
+      }
+      return Math.max(0, Math.min(0.999, (atSec - hi) / span));
+    }
+    // A PART ROW IS AN ANSWER, NOT A TURN IN THE QUEUE — so it is asked FIRST and it
+    // wins outright. The most specific row wins: a windowed row beats a whole-part row,
+    // and among equals the EARLIER row wins, because this list is ordered by priority
+    // (the same rule ◇ Palette reads it by).
+    function _ambTsqPartHit(E, cfg, q, atSec, barSec) {
+      let r = null;
+      try { r = _ambTsqWalk(() => _ambPartChordAt(E, cfg, atSec)); } catch (e) { r = null; }
+      if (!r || !(r.pi >= 0)) return -1;
+      let whole = -1, ph = null;
+      for (let i = 0; i < q.steps.length; i++) {
+        const st = q.steps[i];
+        if (_ambTsqUnit(st) !== 'part') continue;
+        if ((st.part | 0) !== (r.pi | 0)) continue;
+        if (!Number.isFinite(st.at) && !Number.isFinite(st.len)) { if (whole < 0) whole = i; continue; }
+        const from = Number.isFinite(st.at) ? Math.max(0, st.at) : 0;
+        const len = Number.isFinite(st.len) ? Math.max(0.05, st.len) : 1;
+        let pos = r.ci | 0;
+        if (!Number.isInteger(from) || !Number.isInteger(len)) {
+          if (ph == null) ph = _ambTsqWalk(() => _ambTsqChgPhase(E, cfg, atSec, barSec));
+          pos += ph;
+        }
+        if (pos >= from && pos < from + len) return i;
+      }
+      return whole;
+    }
+    // The cursor is CACHED per set and advances forward, because notes are scheduled
+    // in order: without it a note ten minutes in would re-walk every lap since the
+    // anchor. A seek backwards (or any signature change) rebuilds from the anchor.
+    const _AMB_TSQ_CUR = new Map();
+    function _ambTsqSig(E, q, anchor, barSec) {
+      return String(anchor) + '|' + barSec.toFixed(6) + '|' +
+        q.steps.map(st => _ambTsqUnit(st) + (_ambTsqUnit(st) === 'part'
+          ? (':' + (st.part | 0) + ':' + (Number.isFinite(st.at) ? st.at : '-') + ':' + (Number.isFinite(st.len) ? st.len : '-'))
+          : (':' + _ambTsqN(st)))).join(',');
+    }
+    function _ambToneWin(inst, atSec) {
+      const q = inst && inst.toneSeq;
+      if (!q || !q.on || !Array.isArray(q.steps) || !q.steps.length) return null;
+      const barSec = (60 / Math.max(20, _ambBpm())) * 4;
+      const E = _E;
+      const anchor = (E && Number.isFinite(E._barGridAnchor)) ? E._barGridAnchor : ((E && E._t0 != null) ? E._t0 : 0);
+      if (!(barSec > 0)) return null;
+      if (_ambToneSeqPlain(q)) {
+        let total = 0; for (const st of q.steps) total += Math.max(1, st.bars | 0);
+        if (!(total > 0)) return null;
+        const absBar = Math.floor((atSec - anchor) / barSec);
+        let bar = ((absBar % total) + total) % total;
+        // `idx` = which STEP the clock is in; `win` = which pass of the whole cycle,
+        // so a random pick can change from one lap to the next instead of being fixed
+        // for ever. Quantized to the BAR, never to the millisecond (the rounding-tie
+        // rule) — every note in a step window draws the same lead.
+        let idx = 0;
+        for (let i = 0; i < q.steps.length; i++) {
+          const b = Math.max(1, q.steps[i].bars | 0);
+          if (bar < b) { idx = i; break; }
+          bar -= b;
+        }
+        return { q: q, idx: idx, win: Math.floor(absBar / total), n: q.steps.length, cyc: null };
+      }
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      if (q.steps.some(st => _ambTsqUnit(st) === 'part')) {
+        const hit = _ambTsqPartHit(E, cfg, q, atSec, barSec);
+        if (hit >= 0) return { q: q, idx: hit, win: 0, n: q.steps.length, cyc: null, fixed: true };
+      }
+      // ── the CYCLE is everything that is not a part row ──
+      const cyc = [];
+      q.steps.forEach((st, i) => { if (_ambTsqUnit(st) !== 'part') cyc.push(i); });
+      if (!cyc.length) return null;                       // an all-part set outside them all
+      const lid = _ambToneLid(inst), sig = _ambTsqSig(E, q, anchor, barSec);
+      let cur = _AMB_TSQ_CUR.get(lid);
+      // `i: -1` is "no window yet". The cached cursor DESCRIBES THE WINDOW IT IS IN,
+      // so a resumed walk must advance the STEP first and only then measure the next
+      // extent — measuring first re-measured the step it was already in and the cycle
+      // never moved off voice 1 (measured: every bar came back "sine").
+      if (!cur || cur.sig !== sig || cur.t0 > atSec) cur = { sig, t0: anchor, t1: anchor, i: -1, lap: 0 };
+      let guard = 0;
+      _ambTsqWalk(() => {
+        while (atSec >= cur.t1 && guard++ < 4096) {
+          const next = cur.i + 1;
+          cur.i = next % cyc.length;
+          if (next >= cyc.length) cur.lap++;
+          const ext = _ambTsqExtSec(E, cfg, q.steps[cyc[cur.i]], cur.t1, barSec);
+          cur.t0 = cur.t1; cur.t1 = cur.t1 + ext;
+        }
+      });
+      if (guard >= 4096) { cur.t0 = atSec; cur.t1 = atSec + barSec; }   // never spin on a bad extent
+      _AMB_TSQ_CUR.set(lid, cur);
+      return { q: q, idx: cyc[Math.max(0, cur.i)], win: Math.max(0, cur.lap), n: cyc.length, cyc: cyc };
+    }
+    // HOW MANY OF THE SET ARE ELIGIBLE at ◇ Palette `pal`. 0 (or absent) means ONE
+    // — no choosing, which is the positional cycle this control has always been.
+    // The set is therefore ORDERED BY PRIORITY: put the voice you want most first,
+    // and raising the dial lets the ones after it in.
+    function _ambTonePalN(q, nOverride) {
+      const n = Number.isFinite(nOverride) ? (nOverride | 0)
+        : ((q && Array.isArray(q.steps)) ? q.steps.length : 0);
+      const pal = (q && q.pal | 0) || 0;
+      if (n < 2 || pal <= 0) return 0;                   // 0 = "not choosing at all"
+      return Math.max(1, Math.min(n, 1 + Math.round((pal / 100) * (n - 1))));
+    }
+    const _ambToneOf = (q, i, fb) => {
+      const st = q.steps[((i % q.steps.length) + q.steps.length) % q.steps.length];
+      return (st && typeof st.tone === 'string') ? st.tone : fb;
+    };
     // SCHEDULED TONE (Instrument axis): L.toneSeq = { on: 1, steps: [{ tone,
     // bars }] } — the layer's Tone cycles on the BAR clock (e.g. 4 bars saw →
     // 4 bars sine → repeat), resolved PER NOTE ONSET (per-note voice
@@ -14000,17 +14468,81 @@
     // override type per note). Deterministic (onset arithmetic, zero RNG
     // draws); absent/off → inst.tone (byte-identical, harness-safe). A step
     // tone of '' = the layer's default voice.
+    // ◇ PALETTE turns the cycle into a CHOICE (2026-09-26): with it up, the step
+    // the clock lands on no longer decides — a deterministic hash picks from the
+    // first N eligible entries instead, re-drawn per cycle lap. `pal` absent or 0
+    // leaves the positional walk untouched, so this is byte-identical by default.
     function _ambToneAt(inst, atSec) {
-      const q = inst && inst.toneSeq;
-      if (!q || !q.on || !Array.isArray(q.steps) || !q.steps.length) return inst ? inst.tone : '';
+      const w = _ambToneWin(inst, atSec);
+      if (!w) return inst ? inst.tone : '';
+      const q = w.q;
+      // A PART ROW IS EXPLICIT: it was asked for by name, so no dial re-picks it.
+      if (w.fixed) return _ambToneOf(q, w.idx, inst.tone);
+      const cyc = w.cyc;
+      const k = _ambTonePalN(q, cyc ? cyc.length : undefined);
+      if (!k) return _ambToneOf(q, w.idx, inst.tone);         // the cycle, as written
+      const lid = _ambToneLid(inst);
+      const pick = Math.floor(_ambChordHash01(w.win * 8 + w.idx + 1, lid) * k) % k;
+      return _ambToneOf(q, cyc ? cyc[pick % cyc.length] : pick, inst.tone);
+    }
+    // A STABLE PER-LAYER SALT so two layers sharing a Tone set do not pick in
+    // lockstep. Derived from the layer's own id/key, never from a counter.
+    function _ambToneLid(inst) {
+      const k = (inst && (inst.id != null ? String(inst.id) : (inst.tone || ''))) || '';
+      let h = 17; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) % 100003;
+      return h + 7;
+    }
+    // ◇ DOUBLING — the EXTRA voices sounding alongside the lead, same pitch and
+    // same time. `dub` is how OFTEN more than one sounds, not how many: rolled per
+    // NOTE ONSET (which is what makes it read as "some notes are reinforced" rather
+    // than "this whole stretch is thick"), capped by `maxV` and by how many entries
+    // the palette has made eligible. Deterministic, zero shared-RNG draws; `dub`
+    // absent or 0 returns EMPTY, so nothing about the default path changes.
+    // Returns tones only — the caller owns headroom, because only it knows what a
+    // voice costs on its own path.
+    function _ambToneStackAt(inst, atSec) {
+      const w = _ambToneWin(inst, atSec);
+      if (!w) return [];
+      const q = w.q, dub = (q.dub | 0) || 0;
+      if (dub <= 0) return [];
+      // THE CYCLE IS THE POOL. A part row was asked for by name, so it is neither a
+      // stack candidate nor something a dial may re-pick — `w.cyc` is the eligible
+      // list (null on the plain path, where it is the whole set as it always was).
+      const cyc = w.cyc;
+      const nPool = cyc ? cyc.length : q.steps.length;
+      const of = (i) => _ambToneOf(q, cyc ? cyc[((i % cyc.length) + cyc.length) % cyc.length] : i, inst.tone);
+      const k = _ambTonePalN(q, cyc ? cyc.length : undefined) || nPool;
+      if (k < 2) return [];                                 // the whole set at pal 0
+      const cap = Math.max(1, Math.min(3, (q.maxV | 0) || 2));
+      const lid = _ambToneLid(inst);
+      // ONSET TICK, quantized to a musical tick (960 per bar) and never to the
+      // millisecond — two notes a float ULP apart must draw the same, which is the
+      // documented rounding-tie rule.
       const barSec = (60 / Math.max(20, _ambBpm())) * 4;
-      let total = 0; for (const st of q.steps) total += Math.max(1, st.bars | 0);
-      if (!(total > 0) || !(barSec > 0)) return inst.tone;
       const E = _E;
       const anchor = (E && Number.isFinite(E._barGridAnchor)) ? E._barGridAnchor : ((E && E._t0 != null) ? E._t0 : 0);
-      let bar = Math.floor((atSec - anchor) / barSec); bar = ((bar % total) + total) % total;
-      for (const st of q.steps) { const b = Math.max(1, st.bars | 0); if (bar < b) return (typeof st.tone === 'string') ? st.tone : inst.tone; bar -= b; }
-      return inst.tone;
+      const tick = Math.round(((atSec - anchor) / (barSec > 0 ? barSec : 1)) * 960);
+      const lead = (function () {
+        const kk = _ambTonePalN(q, cyc ? cyc.length : undefined);
+        if (!kk) return cyc ? cyc.indexOf(w.idx) : w.idx;
+        return Math.floor(_ambChordHash01(w.win * 8 + w.idx + 1, lid) * kk) % kk;
+      })();
+      const out = [];
+      // ONE ROLL PER EXTRA VOICE, each harder than the last, so the dial moves
+      // smoothly from "never" to "always at the cap" instead of jumping.
+      for (let v = 1; v < cap; v++) {
+        const h = _ambChordHash01(tick + v * 5077, lid + v * 131);
+        if (h * 100 >= dub) break;
+        // a DIFFERENT entry from the lead and from the extras already chosen — a
+        // second copy of the same voice is a level change, not a doubling
+        let pi = Math.floor(_ambChordHash01(tick + v * 9091, lid + 17) * k) % k;
+        for (let guard = 0; guard < k; guard++) {
+          const t = of(pi);
+          if (pi !== lead && out.indexOf(t) < 0) { out.push(t); break; }
+          pi = (pi + 1) % k;
+        }
+      }
+      return out;
     }
     // TIGHT (Variance rule): every note lasts exactly until the layer's NEXT
     // onset, then CHOKES — length = the gap to the next seed-pattern hit (the
@@ -40444,35 +40976,51 @@
       });
     }
     // Saved sequences as a "Sequence" optgroup for shape/wave dropdowns.
-    function _ambSeqWaveOptgroup() {
+    function _ambSeqWaveOptgroup(cur) {
       const list = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
       const o = list.map((s, i) => (s && s.type !== 'audio' && Array.isArray(s.steps) && s.steps.length)
-        ? '<option value="seq:' + i + '">' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
+        ? '<option value="seq:' + i + '"' + (cur === ('seq:' + i) ? ' selected' : '') + '>' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
       return o ? ('<optgroup label="Sequence">' + o + '</optgroup>') : '';
     }
     // Mod LFO shapes. Values are stable (saved projects); labels are friendlier.
     // sawtooth = ramp ↑, rampdown = ramp ↓, sharp = sample & hold, smooth = random.
-    const _ambShapeSel = (id) => '<select id="' + id + '" class="ambient-select">' +
-      [['sine', 'sine'], ['triangle', 'triangle'], ['square', 'square'], ['sawtooth', 'ramp ↑'], ['rampdown', 'ramp ↓'], ['sharp', 'sample & hold'], ['smooth', 'random'], ['custom', 'custom (harmonics)']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
-      _ambSeqWaveOptgroup() + '</select>';
+    // THE MARKUP CARRIES THE VALUE when the caller has one. With no `selected`
+    // anywhere this select rendered option 0 ('sine') on every build and only
+    // became true once a sync pass wrote it — a whole frame of wrong answer, and
+    // a dependency on a mirror that legitimately SKIPS a focused element. The
+    // documented rule (a `<select>` whose value matches no option shows the
+    // FIRST one) reads the same way for a select with no marked option at all.
+    // `cur` is the STORED value in dropdown form ('seq:<n>' for a sequence).
+    // v1 passes nothing and gets exactly the markup it always got.
+    const _ambShapeSel = (id, cur) => '<select id="' + id + '" class="ambient-select">' +
+      [['sine', 'sine'], ['triangle', 'triangle'], ['square', 'square'], ['sawtooth', 'ramp ↑'], ['rampdown', 'ramp ↓'], ['sharp', 'sample & hold'], ['smooth', 'random'], ['custom', 'custom (harmonics)']].map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+      _ambSeqWaveOptgroup(cur) + '</select>';
+    // The dropdown value a stored mod target shows ('seq' carries its index).
+    const _ambModShapeVal = (m) => (m && m.shape === 'seq')
+      ? ('seq:' + ((m && m.seqRef) | 0)) : ((m && m.shape) || 'sine');
     // The Pitch/Velocity/Gate · Stepped/Smooth · Zero/Hold sub-row shown under a
     // mod target's Shape when a sequence is selected. `base` = the target's id
-    // stem ('ambient-<layer>-mod-<target>'). Values are set later via sync.
-    function _ambModSeqRow(base) {
-      const sel = (suf, opts) => '<select id="' + base + '-' + suf + '" class="ambient-select">' + opts.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select>';
-      return '<div class="ambient-ctrl ambient-mod-seqrow" id="' + base + '-seqrow" hidden>' +
-        '<label>Read</label>' + sel('seqsrc', [['pitch','Pitch'],['velocity','Velocity'],['gate','Gate']]) +
-        '<label>Curve</label>' + sel('seqinterp', [['step','Step'],['smooth','Smooth']]) +
-        '<label>Rest</label>' + sel('seqrest', [['zero','Zero'],['hold','Hold']]) + '</div>';
+    // stem ('ambient-<layer>-mod-<target>'). `m` = the stored target, when the
+    // caller has one: with it the markup states its own values and its own
+    // hidden-ness, so a rebuild cannot show a default the store disagrees with.
+    // Without it the row renders at the static defaults, which is what v1's
+    // `_ambSyncControls` has always filled in afterwards.
+    function _ambModSeqRow(base, m) {
+      const sel = (suf, opts, cur) => '<select id="' + base + '-' + suf + '" class="ambient-select">' + opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+      return '<div class="ambient-ctrl ambient-mod-seqrow" id="' + base + '-seqrow"' + ((m && m.shape === 'seq') ? '' : ' hidden') + '>' +
+        '<label>Read</label>' + sel('seqsrc', [['pitch','Pitch'],['velocity','Velocity'],['gate','Gate']], m && m.seqSource) +
+        '<label>Curve</label>' + sel('seqinterp', [['step','Step'],['smooth','Smooth']], m && m.seqInterp) +
+        '<label>Rest</label>' + sel('seqrest', [['zero','Zero'],['hold','Hold']], m && m.seqRest) + '</div>';
     }
     // Harmonic sliders shown when a mod target's Shape is 'custom' — 4 partials (H1..H4)
     // build a sum-of-sines waveform. Hidden unless 'custom' is selected.
-    function _ambModPartRow(base) {
+    function _ambModPartRow(base, m) {
+      const amts = m ? _ambModPartials(m) : null, rts = m ? _ambModPartialRates(m) : null;
       const sl = (i) => '<div class="ambient-mod-part"><span>H' + (i + 1) + '</span>' +
-        '<input type="range" id="' + base + '-part' + i + '" class="ambient-mod-partsl" min="0" max="100" value="' + (i === 0 ? 100 : 0) + '" aria-label="Harmonic ' + (i + 1) + ' amount" title="Amount of harmonic ' + (i + 1) + '">' +
-        '<input type="range" id="' + base + '-prate' + i + '" class="ambient-mod-partsl ambient-mod-prate" min="1" max="16" step="1" value="' + (i + 1) + '" aria-label="Harmonic ' + (i + 1) + ' rate" title="Rate of this harmonic — × the base Rate">' +
-        '<span class="ambient-mod-pratev" id="' + base + '-prate' + i + '-v">×' + (i + 1) + '</span></div>';
-      return '<div class="ambient-ctrl ambient-mod-partrow" id="' + base + '-partrow" hidden>' +
+        '<input type="range" id="' + base + '-part' + i + '" class="ambient-mod-partsl" min="0" max="100" value="' + (amts ? amts[i] : (i === 0 ? 100 : 0)) + '" aria-label="Harmonic ' + (i + 1) + ' amount" title="Amount of harmonic ' + (i + 1) + '">' +
+        '<input type="range" id="' + base + '-prate' + i + '" class="ambient-mod-partsl ambient-mod-prate" min="1" max="16" step="1" value="' + (rts ? rts[i] : (i + 1)) + '" aria-label="Harmonic ' + (i + 1) + ' rate" title="Rate of this harmonic — × the base Rate">' +
+        '<span class="ambient-mod-pratev" id="' + base + '-prate' + i + '-v">×' + (rts ? rts[i] : (i + 1)) + '</span></div>';
+      return '<div class="ambient-ctrl ambient-mod-partrow" id="' + base + '-partrow"' + ((m && m.shape === 'custom') ? '' : ' hidden') + '>' +
         '<label>Harmonics<small>amount · rate ×</small></label><div class="ambient-mod-parts">' + sl(0) + sl(1) + sl(2) + sl(3) + '</div></div>';
     }
     // Set a mod target's shape from a dropdown value ('seq:<idx>' → seq + ref).
@@ -40499,7 +41047,10 @@
       // already uses (the salt/order mirrors); this one simply never had it.
       const live = (e) => e && document.activeElement !== e;
       const sh = el('mod-' + t + '-shape');
-      if (live(sh)) sh.value = (m.shape === 'seq') ? ('seq:' + (m.seqRef | 0)) : (m.shape || 'sine');
+      // ONE DEFINITION OF store → dropdown value (`_ambModShapeVal`). Restating
+      // it is what broke `applyGate`'s copy: it compared against `m.shape`, which
+      // is 'seq' where the option is 'seq:<n>'.
+      if (live(sh)) sh.value = _ambModShapeVal(m);
       const sr = el('mod-' + t + '-seqrow'); if (sr) sr.hidden = (m.shape !== 'seq');
       const pr = el('mod-' + t + '-partrow'); if (pr) pr.hidden = (m.shape !== 'custom');
       const setS = (suf, val) => { const e = el('mod-' + t + '-' + suf); if (live(e) && val) e.value = val; };
@@ -40515,15 +41066,25 @@
     // get() → the mod host object (has .mod); sync optional (resync audio).
     function _ambWireModTarget(E, el, get, t, sync) {
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      // BOTH EVENTS, ALWAYS. The rule this file already records for delegated
+      // selects (⇢ Spread order, ⚄ Figure: bound to `input` only and reported as
+      // "doesn't work at all") cuts the other way too — a `<select>` bound to
+      // `change` alone is one event away from a dead control on a platform that
+      // fires only the first. The arms are IDEMPOTENT (already this value →
+      // return), so answering the second event costs nothing.
       const sh = el('mod-' + t + '-shape');
-      if (sh) sh.addEventListener('change', () => {
+      const shApply = () => {
         _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return;
+        if (_ambModShapeVal(L.mod[t]) === sh.value) return;          // already this shape
         _ambSetModShape(L.mod[t], sh.value);
         const sr = el('mod-' + t + '-seqrow'); if (sr) sr.hidden = (L.mod[t].shape !== 'seq');
         const pr = el('mod-' + t + '-partrow'); if (pr) pr.hidden = (L.mod[t].shape !== 'custom');
         if (sync) sync(); persist();
-      });
-      const bindSub = (suf, key) => { const e = el('mod-' + t + '-' + suf); if (e) e.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return; L.mod[t][key] = e.value; if (sync) sync(); persist(); }); };
+      };
+      if (sh) { sh.addEventListener('change', shApply); sh.addEventListener('input', shApply); }
+      const bindSub = (suf, key) => { const e = el('mod-' + t + '-' + suf); if (!e) return;
+        const ap = () => { _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return; if (L.mod[t][key] === e.value) return; L.mod[t][key] = e.value; if (sync) sync(); persist(); };
+        e.addEventListener('change', ap); e.addEventListener('input', ap); };
       bindSub('seqsrc', 'seqSource'); bindSub('seqinterp', 'seqInterp'); bindSub('seqrest', 'seqRest');
       for (let pi = 0; pi < 4; pi++) {
         const ps = el('mod-' + t + '-part' + pi);
@@ -40676,14 +41237,20 @@
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
       if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
     }
-    const _ambModTarget = (layer, target, label, hint, defRate) =>
+    // `m` — THE STORED TARGET, when the caller has one. A builder that only ever
+    // prints defaults hands every rebuild a frame of wrong answers (Depth 60 as a
+    // knob reading 0, over a layer that is plainly still modulating) and leaves
+    // the truth to whatever mirror runs next — v1's `_ambSyncControls`, v2's
+    // `applyGate`. Callers without a store (v1's init-time `_ambModUi`, which
+    // runs before any cfg is chosen) pass nothing and get the old markup.
+    const _ambModTarget = (layer, target, label, hint, defRate, m) =>
       '<div class="ambient-mod-target"><div class="ambient-mod-sub">' + label + '</div>' +
-        _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
-        _ambSl('Rate', 'ambient-' + layer + '-mod-' + target + '-rate', 0, 100, defRate, 'slow → fast') +
+        _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, (m && Number.isFinite(m.depth)) ? m.depth : 0, hint) +
+        _ambSl('Rate', 'ambient-' + layer + '-mod-' + target + '-rate', 0, 100, (m && Number.isFinite(m.rate)) ? m.rate : defRate, 'slow → fast') +
         '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-' + target + '-shape">Shape</label>' +
-          _ambShapeSel('ambient-' + layer + '-mod-' + target + '-shape') + '<span class="ambient-hint">wave</span></div>' +
-        _ambModSeqRow('ambient-' + layer + '-mod-' + target) +
-        _ambModPartRow('ambient-' + layer + '-mod-' + target) + '</div>';
+          _ambShapeSel('ambient-' + layer + '-mod-' + target + '-shape', m ? _ambModShapeVal(m) : undefined) + '<span class="ambient-hint">wave</span></div>' +
+        _ambModSeqRow('ambient-' + layer + '-mod-' + target, m) +
+        _ambModPartRow('ambient-' + layer + '-mod-' + target, m) + '</div>';
     const _ambModUi = (layer) =>
       '<details class="ambient-mod"><summary class="ambient-mod-head">Mod · VCA / Gate / VCO / VCF</summary>' +
         '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-sync">Rate timing</label>' +
@@ -41510,12 +42077,28 @@
       // "another chorus in F" defaulted to C and had to be corrected by hand.
       // Inheriting forward is what writing music actually does: you stay where
       // you are until you decide to move.
+      // ── THIS DIALOG SPEAKS THE KEY YOU CAN SEE ────────────────────────────
+      // (2026-09-27, reported as "I chose A# major but it created the part in C major".)
+      // The same two-spaces bug as _ambPartKeyMenu, one surface further back: a part key
+      // is STORED in the progression's own space and DRAWN through the view shift, so
+      // BOTH ends of this dialog have to convert or it is the one place left speaking
+      // stored values. The inherited default is a stored part key — shift it, or the note
+      // offers a key no chip will ever show (measured: it said "A# bebop" while the chips
+      // read C) — and the pick is written back UNSHIFTED. The AREA key is not shifted: in
+      // transpose mode the shift is defined as "move the progression onto the area root",
+      // so it is already the destination.
+      let vShift = 0;
+      try { vShift = _ambProgViewShift(E, cfg, cfg.prog && cfg.prog.chords) | 0; } catch (e) {}
+      const unshift = (r) => ((((r | 0) - vShift) % 12) + 12) % 12;
       const _inh = (() => {
         try {
           const parts = (cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : [];
           for (let i = parts.length - 1; i >= 0; i--) {
             const k = parts[i] && parts[i].key;
-            if (k && Number.isFinite(k.root)) return { root: ((k.root % 12) + 12) % 12, scale: k.scale || 'major', from: parts[i].name || 'the last set' };
+            if (k && Number.isFinite(k.root)) {
+              const kv = _ambPartKeyShifted({ root: k.root | 0, scale: k.scale || 'major' }, vShift);
+              return { root: ((kv.root % 12) + 12) % 12, scale: kv.scale || 'major', from: parts[i].name || 'the last set' };
+            }
           }
         } catch (e) {}
         return null;
@@ -41626,6 +42209,9 @@
         if (hb) { setHold(hb.dataset.hold | 0); return; }
         if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
         if (kind === 'open') {
+          // An open part stores an OFFSET (keyOff = root - areaRoot), and a difference
+          // is the same in either space — both ends of it are displayed here, so this
+          // branch needs no unshift.
           const r0 = rootSel.value | 0, sc0 = scaleSel.value;
           const cfg0 = E.getCfg() || {};
           if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
@@ -41643,7 +42229,7 @@
         close();
         // Next tick, so this click doesn't reach the menu's own dismiss listener.
         setTimeout(() => { try {
-          _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true, partKey: unchanged ? null : { root: r, scale: sc } });
+          _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true, partKey: unchanged ? null : { root: unshift(r), scale: sc } });
         } catch (e) {} }, 0);
       });
     }
@@ -41656,6 +42242,20 @@
       const part = prog.parts && prog.parts[pi]; if (!part) return;
       const cfg = E.getCfg() || {};
       const aRoot = _ambKeyRootPc(cfg), aScale = _ambKeyScaleName(cfg);
+      // ── THIS MENU SPEAKS THE KEY YOU CAN SEE ─────────────────────
+      // (2026-09-27, reported as "I chose F major and it made a part in G major".)
+      // A part key is stored in the progression's own space and DISPLAYED through the
+      // view shift — the chip, the root and the numerals all moved to displayed space
+      // when the shift bug was fixed, and this menu was the one surface left writing raw
+      // stored values. So a pick landed a whole tone out: choose F, store F, draw F+2.
+      // It also made the picker look DEAD when you chose the key the chip already showed
+      // — the store changed, the drawing did not.
+      // Both directions here: the ✓ is tested against the DISPLAYED key, and a pick is
+      // converted back by subtracting the shift before it is stored.
+      let vShift = 0;
+      try { vShift = _ambProgViewShift(E, cfg, prog && prog.chords) | 0; } catch (e) {}
+      const shown = _ambPartKeyShifted(part.key, vShift);
+      const unshift = (r) => ((((r | 0) - vShift) % 12) + 12) % 12;
       const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
       const items = [];
       items.push({ label: '“' + part.name + '” key', disabled: true });
@@ -41670,8 +42270,8 @@
           { label: '‹ Back', fn: () => setTimeout(() => _ambPartKeyMenu(E, prog, pi, x, y, refresh, persist), 0) },
           { label: sc.charAt(0).toUpperCase() + sc.slice(1), disabled: true },
           ..._AMB_CHROM.map((nm, r) => ({
-            label: '  ' + (part.key && part.key.root === r && part.key.scale === sc ? '✓ ' : '') + nm + ' ' + sc,
-            fn: () => { part.key = { root: r, scale: sc }; persist(); refresh(); }
+            label: '  ' + (shown && shown.root === r && shown.scale === sc ? '✓ ' : '') + nm + ' ' + sc,
+            fn: () => { part.key = { root: unshift(r), scale: sc }; persist(); refresh(); }
           })),
         ]), 0) });
       });
@@ -42047,7 +42647,7 @@
       // the cursor — it is drawn as its own block rather than as a header over an
       // empty run of chips.
       if (parts) { let acc = 0; parts.forEach((p, pi) => {
-        ranges.push({ name: _ambPartLabel(cfg, pi), from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
+        ranges.push({ name: _ambPartLabel(cfg, pi, _ambPovNamesOn(el) ? 'names' : 'numerals'), from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
                       key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
@@ -42242,7 +42842,7 @@
         // drawn once, on its first card.
         if (!card.first) {
           h += '<div class="ambient-pov-part pov-part-revisit" data-povstep="' + card.k + '"' +
-            _ambPartAttr(r.pi) + '>' +
+            ' data-povpi="' + r.pi + '"' + _ambPartAttr(r.pi) + '>' +
             _povOrdHtml(card) +
             '<div class="ambient-pov-parthdr">' +
               '<span class="ambient-pov-partname pov-revname">' + esc(r.name || _ambProgTitle(prog.name)) + '</span>' +
@@ -42253,7 +42853,7 @@
           return;
         }
         h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' +
-          card.k + '"' + _ambPartAttr(r.pi) + '>' + _povOrdHtml(card);
+          card.k + '" data-povpi="' + r.pi + '"' + _ambPartAttr(r.pi) + '>' + _povOrdHtml(card);
         if (r.open) {
           // A part with no changes: name, length, and the same ops as any other
           // part. It reads as a block of time because that is what it is — the
@@ -42261,7 +42861,7 @@
           h += '<div class="ambient-pov-parthdr ambient-pov-openhdr">' +
             '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + '</span>' +
             '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) +
-              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="This part plays in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + '. Click to change or clear it.">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>') : '') +
+              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="This part plays in ' + esc(_ambKeyLabel(_ambPartKeyShifted(r.key, vShift).root, r.key.scale)) + '. Click to change or clear it.">' + _ambPovKeyHtml(_ambPartKeyShifted(r.key, vShift), kRoot, kScale) + '</span>') : '') +
               _povMenuHtml(card) +
             '</span></div>' +
             '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
@@ -42303,7 +42903,7 @@
               // with the key root under transpose and is otherwise readable off
               // the first chord chip directly below — it earns the row only when
               // the two genuinely differ, which is exactly what it is for.
-              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="These changes play in ' + esc(_ambKeyLabel(r.key.root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.">' + _ambPovKeyHtml(r.key, kRoot, kScale) + '</span>') : '') +
+              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="These changes play in ' + esc(_ambKeyLabel(_ambPartKeyShifted(r.key, vShift).root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.">' + _ambPovKeyHtml(_ambPartKeyShifted(r.key, vShift), kRoot, kScale) + '</span>') : '') +
               _povRootIfDiffers(r) +
               _povMenuHtml(card) +
             '</span></div>';
@@ -42367,7 +42967,7 @@
           const c = _ambChordShift(chords[i], vShift);
           // Roman numerals are relative to the key THIS chip plays in — a part
           // with its own key modulates, so the chorus's I must read I and not IV.
-          const pk = _ambPartKeyForSlot(prog, i);
+          const pk = _ambPartKeyShifted(_ambPartKeyForSlot(prog, i), vShift);
           const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
@@ -42389,7 +42989,28 @@
       });
       // (＋ Part now leads the bar at the top of this strip — see above.)
       el.innerHTML = h;
+      try { _ambPovMarkSel(E); } catch (e) {}
       if (!el._wired) { el._wired = true; el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
+    }
+    // ── WHICH PART THE LAYERS ARE ON, MARKED ON THE CARD ──────────────────
+    // (2026-09-27.) With the strip hidden while ▤ Parts is open, the card carries what
+    // the dropdown carried: the SELECTION and the ↻ loop. Both are TRANSIENT engine
+    // state, so they are painted as classes rather than folded into `_sig` — that is a
+    // STRUCTURE signature, and rebuilding this strip on every pick would drop its scroll
+    // and any open menu. The `.pov-playing` rail mark is the same idiom.
+    // 👁 VIEW HAS NO SELECTION: there every layer follows playback and the playhead
+    // already says which part that is, so marking one as chosen would claim otherwise.
+    function _ambPovMarkSel(E) {
+      const el = _ambGet(E, 'ambient-prog-overview'); if (!el) return;
+      let vmode = 'view';
+      try { if (window._v2 && window._v2.viewMode) vmode = window._v2.viewMode(); } catch (e) {}
+      const cur = (vmode === 'edit' && Number.isFinite(E._curPart)) ? (E._curPart | 0) : -1;
+      const lp = Number.isFinite(E._partLoop) ? (E._partLoop | 0) : -1;
+      el.querySelectorAll('.ambient-pov-part[data-povpi]').forEach((c) => {
+        const pi = c.getAttribute('data-povpi') | 0;
+        c.classList.toggle('pov-part-sel', pi === cur);
+        c.classList.toggle('pov-loop', pi === lp);
+      });
     }
     // Per-frame glow of the sounding chord (called from _ambVizFrame; only touches the
     // DOM when the chord index changes — cached on el._curCi).
@@ -42619,7 +43240,23 @@
       host.addEventListener('pointercancel', () => { st = null; clear(); });
     }
     function _ambProgOverviewAct(E, ev) {
-      const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]'); if (!t) return;
+      const t = ev.target && ev.target.closest && ev.target.closest('[data-pov]');
+      if (!t) {
+        // ── PRESSING A PART CARD IS CHOOSING IT ──────────────────────────
+        // (2026-09-27, user: "clicking on the Parts in the Arrangement Parts section
+        // should select which part is being edited in the layers".) The middle strip
+        // hides while this group is open, so this IS the picker — the same action by a
+        // third door, which is why it goes through `_ambCurPartChoose` and not through
+        // its own copy of "switch to ✎ Edit, then pick".
+        // Everything carrying its own `data-pov` has already claimed the press; the
+        // ordinal rail is excluded because a REORDER must not also read as a pick.
+        const pc = ev.target && ev.target.closest && ev.target.closest('.ambient-pov-part[data-povpi]');
+        if (!pc) return;
+        if (ev.target.closest && ev.target.closest('[data-povgrab], input, select, textarea, button')) return;
+        try { ev.preventDefault(); } catch (e) {}
+        _ambCurPartChoose(E, pc.getAttribute('data-povpi') | 0);
+        return;
+      }
       ev.preventDefault();
       const a = String(t.getAttribute('data-pov')).split(':'), op = a[0];
       if (op === 'arrmap') {
@@ -42639,6 +43276,19 @@
       const refresh = () => { el0(); _ambRenderProgOverview(E); try { _ambSyncControls(E); } catch (e) {} try { _ambRefreshSrcChips(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
       const el0 = () => { const el = _ambGet(E, 'ambient-prog-overview'); if (el) el._sig = ''; };
       if (op === 'noop') return;
+      // ↻ LOOP FROM THE CARD. The strip's own ↻ Loop button is hidden while ▤ Parts is
+      // open, and a control that vanishes cannot be found — so the part's ⋯ menu carries
+      // it, against the same transient engine field the button writes.
+      if (op === 'partloop') {
+        const pi = a[1] | 0;
+        const on = Number.isFinite(E._partLoop) && (E._partLoop | 0) === pi;
+        E._partLoop = on ? null : pi; E._passLock = null;
+        try { showToast(on ? '↻ Loop off — the arrangement runs on from here.'
+          : '↻ Looping ' + _ambPartLabel(cfg, pi) + ' — it repeats instead of moving on.', { ms: 4000 }); } catch (e) {}
+        try { _ambPovMarkSel(E); } catch (e) {}
+        try { if (typeof window._ambCurPartRefresh === 'function') window._ambCurPartRefresh(E); } catch (e) {}
+        return;
+      }
       if (op === 'hang') { const pi = a[1] | 0;
         // Deferred a tick: this strip acts on POINTERDOWN and the overlay's own
         // backdrop would eat the trailing click of that same press.
@@ -42699,7 +43349,11 @@
           target: { closest: () => ({ getAttribute: () => v, getBoundingClientRect: () => r0 }) } });
         const cadTxt = (() => { try { const c2 = _ambCadence(cfg, pi); if (!c2.length) return ''; 
           return c2.every(v => Math.abs(v - c2[0]) < 1e-6) ? ('even ×' + c2.length) : _ambCadStr(c2); } catch (e) { return ''; } })();
-        const keyTxt = P.key ? _ambKeyLabel(P.key.root, P.key.scale) : 'area key';
+        // IN THE SPACE THE CHIPS DRAW — a part key is stored in the progression's own
+        // space, and this menu sits on the row that shows the shifted one.
+        const keyTxt = P.key
+          ? _ambKeyLabel(_ambPartKeyShifted(P.key, _ambProgViewShift(E, cfg, prog.chords) | 0).root, P.key.scale)
+          : 'area key';
         const hangTxt = (P.head || P.tail) ? [P.head ? 'intro' : '', P.tail ? 'hang' : ''].filter(Boolean).join(' + ') : 'none';
         const items = [{ label: nm, disabled: true }];
         items.push({ label: '✎ Rename…', fn: () => go('partren:' + pi) });
@@ -42718,6 +43372,8 @@
         }
         items.push({ label: '♪ Key…  ' + keyTxt, fn: () => go('partkey:' + pi) });
         items.push({ label: '⌛ Hangs…  ' + hangTxt, fn: () => go('hang:' + pi) });
+        items.push({ label: (Number.isFinite(E._partLoop) && (E._partLoop | 0) === pi)
+          ? '↻ Stop looping' : '↻ Loop this part', fn: () => go('partloop:' + pi) });
         if (card) {
           // THE ORDINAL IS THE POSITION IN THIS LIST. `_ambPovOrder`'s cards carry
           // no `ord` — that is added at render time by `_povCards` — so reading
@@ -42954,6 +43610,24 @@
       const nm = (typeof _AMB_CHROM !== 'undefined' && _AMB_CHROM[((root | 0) % 12 + 12) % 12]) || '';
       const sc = (typeof prettyScaleName === 'function') ? prettyScaleName(scale || 'major') : (scale || 'major');
       return (nm + ' ' + sc).trim();
+    }
+    // A PART KEY IS STORED IN THE PROGRESSION'S OWN SPACE, so it has to travel with
+    // the chords when the view transposes them (2026-09-27, reported as "why is F# the
+    // I chord in the key of E major").
+    // The overview shifts every chord by `_ambProgViewShift` before drawing it — that
+    // is what puts the progression in the area key — but the part's key chip beside them
+    // named the UNSHIFTED key, and the chip's numerals measured a SHIFTED chord against
+    // that unshifted root. Three surfaces on one row, in two different spaces.
+    // Measured: chords stored E7·A7·B7 with a part key of E and a shift of 10 drew chips
+    // D7·G7·A7 under a chip reading "E Major", and chip numerals of ♭VII7·♭III7·IV7.
+    // Shifted, all three agree: D Major, D7·G7·A7, I7·IV7·V7.
+    // THE AREA KEY IS NOT SHIFTED HERE — in transpose mode the shift is DEFINED as "move
+    // the progression onto the area root", so the area key is already the destination.
+    function _ambPartKeyShifted(pk, vShift) {
+      if (!pk || !Number.isFinite(pk.root)) return pk || null;
+      const sh = (vShift | 0);
+      if (!sh) return pk;
+      return { root: ((((pk.root | 0) + sh) % 12) + 12) % 12, scale: pk.scale };
     }
     function _ambPovKeyHtml(partKey, areaRoot, areaScale) {
       const e = (x) => String(x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -43634,7 +44308,7 @@
     function _ambProgGrpOpen(key, label, open, pop) {
       return '<div class="ambient-grp ambient-proggrp' + (open ? ' open' : '') + '" id="ambient-proggrp-' + key + '"'
         + (pop ? ' data-pop="1"' : '') + ' data-grp="' + label + '">' +
-        '<button type="button" class="ambient-grp-head" data-grp="' + label + '">' + label + '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
+        '<button type="button" class="ambient-grp-head" aria-expanded="' + (open ? 'true' : 'false') + '" data-grp="' + label + '">' + label + '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
         '<div class="ambient-grp-body">';
     }
     function _ambProgGrpClose() { return '</div></div>'; }
@@ -45184,6 +45858,17 @@
       } catch (e) { pi = -1; }
       if (el._playPi === pi) return;
       el._playPi = pi;
+      // THE LAYER CARDS FOLLOW WHAT IS SOUNDING (2026-09-27, "sometimes color does
+      // change with Part change during playback"). `_curPart` is the part being EDITED
+      // and playback deliberately never moves it — this hook is the only thing that
+      // knows which part you are HEARING, and it already runs per frame behind a
+      // change-gate, so the repaint costs one attribute write per part boundary.
+      // Stopped (`pi` − 1) hands the cards back to the edited part.
+      try {
+        if (window._v2 && window._v2.paintPart) {
+          window._v2.paintPart(E, (pi >= 0) ? pi : (Number.isFinite(E._curPart) ? (E._curPart | 0) : 0));
+        }
+      } catch (e) {}
       // 👁 VIEW: THE DROPDOWN IS A READOUT and follows what plays, so the strip
       // names the part you are hearing while the layers draw it. ✎ EDIT: it is
       // a CHOICE and playback must not touch it — a select that doubles as a
@@ -45204,6 +45889,8 @@
         if (sel.value !== v && [...sel.options].some((o) => o.value === v)) sel.value = v;
       }
       if (sel) sel.classList.toggle('playing', vmode === 'view' && pi >= 0);
+      // …AND ITS HUE FOLLOWS ITS VALUE, whichever writer moved it.
+      if (sel) _ambPartHueEl(sel, sel.value === '' ? -1 : (sel.value | 0));
     }
     function _ambRenderCurPart(E) {
       const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
@@ -45308,6 +45995,24 @@
               '</span>';
         }
       }
+      // ── ONE PART PICKER AT A TIME ─────────────────────────────────────
+      // (2026-09-27, user: "this middle Part selector should only show when the
+      // Arrangement > Parts section is closed".) ▤ Parts draws every part as a card you
+      // can press, so while it is open this strip is a second door to the same choice
+      // sitting a few pixels under the first. Hidden, not removed: ✎ Edit and ↻ Loop
+      // ride in this row, so the group's own surfaces have to carry them while it is up
+      // (the card press picks; the card's ⋯ menu loops) and the strip comes straight
+      // back when the group folds.
+      // MEASURED, NOT ASSUMED: a group inside a CLOSED tab pane still carries `.open`,
+      // so the test is `.open` AND an offsetParent — the reachability rule, from the
+      // other side.
+      let povOpen = false;
+      try {
+        const g = _ambGet(E, 'ambient-proggrp-overview');
+        povOpen = !!(g && g.classList.contains('open') && g.style.display !== 'none' && g.offsetParent);
+      } catch (e) {}
+      el.style.display = (!rgs.length || povOpen) ? 'none' : '';
+      try { _ambPovMarkSel(E); } catch (e) {}
       // a rewrite drops the playing mark with the old chips — put it back on
       // the next frame rather than leaving the strip silent about playback
       el._playPi = undefined;
@@ -45382,16 +46087,7 @@
             // following playback, so a deliberate pick can only mean "stop
             // following and show me this one" — which is ✎ Edit. Doing it for
             // them beats a dead control or a value that snaps back.
-            let vm2 = 'view';
-            try { if (window._v2 && window._v2.viewMode) vm2 = window._v2.viewMode(); } catch (e) {}
-            if (vm2 === 'view') {
-              try { if (window._v2 && window._v2.setViewMode) window._v2.setViewMode('edit'); } catch (e) {}
-              try {
-                const nm4 = ((rgsOf(E) || []).find((r) => r.pi === pi2) || {}).nm || ('Part ' + (pi2 + 1));
-                showToast('✎ Edit — holding ' + nm4 + ' while the arrangement runs on.', { ms: 4000 });
-              } catch (e) {}
-            }
-            _ambCurPartPick(E, el, pi2);
+            _ambCurPartChoose(E, pi2);
           }
         });
       }
@@ -45412,6 +46108,22 @@
           return { pi, nm };
         });
       } catch (e) { return []; }
+    }
+    // CHOOSING A PART, FROM WHEREVER. Two doors now — the strip's dropdown and a part
+    // card in ▤ Parts — and the switch out of 👁 View is half of what choosing MEANS, so
+    // it cannot live in one door's handler.
+    function _ambCurPartChoose(E, pi) {
+      let vm = 'view';
+      try { if (window._v2 && window._v2.viewMode) vm = window._v2.viewMode(); } catch (e) {}
+      if (vm === 'view') {
+        try { if (window._v2 && window._v2.setViewMode) window._v2.setViewMode('edit'); } catch (e) {}
+        try {
+          const nm = ((rgsOf(E) || []).find((r) => r.pi === pi) || {}).nm || ('Part ' + (pi + 1));
+          showToast('✎ Edit — holding ' + nm + ' while the arrangement runs on.', { ms: 4000 });
+        } catch (e) {}
+      }
+      try { _ambCurPartPick(E, _ambGet(E, 'ambient-curpart'), pi); } catch (e) {}
+      try { _ambPovMarkSel(E); } catch (e) {}
     }
     function _ambCurPartPick(E, el, pi) {
       {
@@ -45434,7 +46146,7 @@
             E.getCfg();
           } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          el._sig = '';
+          if (el) el._sig = '';           // the strip is hidden while ▤ Parts is open
           try { _ambRenderCurPart(E); } catch (e) {}
           try {
             const h2 = document.getElementById('bloom-v2-layers'); if (h2) h2._sig = '';
@@ -49091,17 +49803,144 @@
     // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
     // Tone-cycle editor rows (steps rendered from state; delegated wiring —
     // no per-card binds, so primaries and extras share one code path).
+    // A COUNTER, not `Math.random()` (which is what this used before): the id only has
+    // to be unique among the selects ALIVE at once, and a stable-per-build id is one
+    // fewer thing that differs between two renders of the same state.
+    let _AMB_TSQ_UID = 1;
     function _ambToneSeqBoxHtml(inst) {
       const q = (inst && inst.toneSeq && Array.isArray(inst.toneSeq.steps)) ? inst.toneSeq : null;
       const on = !!(q && q.on);
-      let h = '<button type="button" class="ambient-seg ambient-toneseq-onoff' + (on ? ' active' : '') + '" title="Cycle the Tone through the steps below (bar-clocked). Off = the single Tone above.">' + (on ? 'On' : 'Off') + '</button>';
-      if (q) q.steps.forEach((st, i) => {
-        h += '<span class="ambient-toneseq-step" data-tsi="' + i + '">' +
-          '<select class="ambient-select ambient-toneseq-tone" data-tsi="' + i + '" id="ambient-tsq-' + Math.floor(Math.random() * 1e9) + '-tone"></select>' +
-          '<input type="number" class="ambient-toneseq-bars" data-tsi="' + i + '" min="1" max="32" step="1" value="' + (Math.max(1, st.bars | 0) || 4) + '" title="bars"> <span class="ambient-hint">bars</span>' +
-          '<button type="button" class="ambient-seq-del ambient-toneseq-del" data-tsi="' + i + '" title="Remove step">✕</button></span>';
-      });
-      h += '<button type="button" class="ambient-seg ambient-toneseq-add" title="Add a step">＋ step</button>';
+      const n = q ? q.steps.length : 0;
+      const pal = (q && q.pal | 0) || 0, dub = (q && q.dub | 0) || 0;
+      const stk = _ambToneStacks(inst);
+      // —— ONE COLUMN, ONE ROW PER VOICE ——————————————————————
+      // (2026-09-27, user: "this Tone Set UI is awful, clean it up and make more user
+      // friendly and symmetrical".) It was ONE wrap-flex holding everything: the On
+      // switch sat inline with voice 1, so voice 1 was indented differently from 2 and
+      // 3; the rows wrapped raggedly because each select sized to its own text; and the
+      // three dials trailed after them as bare numbers.
+      // The switch is a HEADER control — it is about the whole set, not about voice 1 —
+      // so it gets its own line, and each voice is a full-width row whose select FLEXES.
+      // That is what makes the Bars box and the ✕ land on the same x in every row,
+      // which is the symmetry that was actually missing.
+      // NUMBERED, because the order is not decoration: ◇ Palette opens the list FROM
+      // THE TOP, so 1 is the voice you want most. A list whose order carries meaning has
+      // to show its order.
+      // THE PARTS THIS SET CAN POINT AT. A part row is only offerable where parts
+      // exist — with no changes there is nothing to map to, and a unit that cannot
+      // resolve is the dead control this file has a rule about.
+      let _tsCfg = null, _tsParts = [];
+      try {
+        const E0 = _E; _tsCfg = (E0 && (E0._cfg || (E0.getCfg && E0.getCfg()))) || null;
+        if (_tsCfg && _tsCfg.prog && _tsCfg.prog.on && (_tsCfg.prog.chords || []).length) {
+          _tsParts = (_ambGridRanges(_tsCfg) || []).map(rg => ({ pi: rg.pi, nm: _ambPartLabel(_tsCfg, rg.pi) }));
+        }
+      } catch (e) { _tsParts = []; }
+      const canPart = _tsParts.length > 0;
+      const nPart = q ? q.steps.filter(st => _ambTsqUnit(st) === 'part').length : 0;
+      const nChg = q ? q.steps.filter(st => _ambTsqUnit(st) === 'chg').length : 0;
+      const nCyc = n - nPart;
+      const clock = !nCyc ? 'mapped to parts'
+        : ((pal > 0 ? 'choosing from the top ' + Math.max(1, Math.min(nCyc, 1 + Math.round((pal / 100) * (nCyc - 1))))
+                    : 'cycling in turn') +
+           (nChg ? (nChg === nCyc ? ', on the changes' : ', on bars and changes') : ', on the bar clock') +
+           (nPart ? ' · ' + nPart + ' mapped to a part' : ''));
+      const sum = !n ? 'no voices yet'
+        : (n + ' voice' + (n === 1 ? '' : 's') + ' · ' +
+           (!on ? 'off — the single Tone above plays' : clock) +
+           ((on && dub > 0 && stk) ? ' · doubling' : ''));
+      let h = '<div class="tsq-head">' +
+        '<button type="button" class="ambient-seg ambient-toneseq-onoff' + (on ? ' active' : '') +
+          '" title="Play the voices below instead of the single Tone above. Off = the Tone above.">' +
+          (on ? 'On' : 'Off') + '</button>' +
+        '<span class="ambient-hint tsq-sum">' + sum + '</span>' +
+      '</div>';
+      if (q && n) {
+        h += '<div class="tsq-steps">';
+        q.steps.forEach((st, i) => {
+          const u = _ambTsqUnit(st);
+          const uOpts = [['bar', 'Bars'], ['chg', 'Changes']].concat(canPart || u === 'part' ? [['part', 'Part']] : [])
+            .map(([v, lb]) => '<option value="' + v + '"' + (v === u ? ' selected' : '') + '>' + lb + '</option>').join('');
+          h += '<div class="ambient-toneseq-step' + (u === 'part' ? ' tsq-step-part' : '') + '" data-tsi="' + i + '">' +
+            '<span class="tsq-n" aria-hidden="true">' + (i + 1) + '</span>' +
+            // THE `-tone` ID IS LOAD-BEARING, not decoration. These selects are built
+            // EMPTY and filled by two sweeps: `_ambToneSeqPopulate` (which adds the
+            // "— layer default —" entry) and `_ambRefreshAllToneSelects`, which
+            // repopulates every `select[id$="-tone"]` in the app. A v2 card can be
+            // re-rendered by `V2.render` with no `_ambSyncControls` after it, and then
+            // the id sweep is the ONLY thing that fills them — drop the id and the
+            // whole set comes up BLANK, which is how this shipped for one screenshot.
+            // (The documented trap, from the other side: v2's own Instrument Tone
+            // select is deliberately SKIPPED by that sweep because it builds a
+            // narrowed list; these want the full one.)
+            '<select class="ambient-select ambient-toneseq-tone" data-tsi="' + i + '" id="ambient-tsq-' +
+              (_AMB_TSQ_UID++) + '-tone" aria-label="Voice ' + (i + 1) + '"></select>' +
+            // THE UNIT IS THE ROW'S OWN STATEMENT — bars, changes, or a part it plays
+            // for. Whole or fractional: ¼ of a bar and half a change are both sayable.
+            '<select class="ambient-select tsq-unit" data-tsi="' + i + '" aria-label="Unit for voice ' + (i + 1) + '" ' +
+              'title="What this voice\u2019s hold is counted in \u2014 bars, chord changes, or a part it plays for.">' + uOpts + '</select>' +
+            (u === 'part' ? '' :
+              '<input type="number" class="ambient-toneseq-bars" data-tsi="' + i + '" min="0.25" max="32" step="0.25" value="' +
+                _ambTsqN(st) + '" aria-label="' + (u === 'chg' ? 'Changes' : 'Bars') + ' for voice ' + (i + 1) +
+                '" title="How long this voice holds before the next, in ' + (u === 'chg' ? 'changes' : 'bars') + ' — fractions allowed">') +
+            '<button type="button" class="ambient-seq-del ambient-toneseq-del" data-tsi="' + i + '" ' +
+              'title="Remove this voice" aria-label="Remove voice ' + (i + 1) + '">✕</button>' +
+            // ── THE PART ROW'S OWN LINE ──────────────────────────────────
+            // Which part, and optionally WHERE INSIDE IT, stated in changes. Absent
+            // from/for = the whole part, which is what most rows mean; a fractional
+            // pair says "the second half of change 3".
+            (u !== 'part' ? '' :
+              '<div class="tsq-partrow">' +
+                '<select class="ambient-select tsq-partsel" data-tsi="' + i + '" aria-label="Part for voice ' + (i + 1) + '" ' +
+                  'title="This voice plays while that part plays.">' +
+                  (_tsParts.length
+                    ? _tsParts.map(pt => '<option value="' + pt.pi + '"' + ((pt.pi | 0) === (st.part | 0) ? ' selected' : '') + '>' +
+                        _ambEscAttr(pt.nm) + '</option>').join('')
+                    : '<option value="0">no parts yet</option>') +
+                '</select>' +
+                '<span class="tsq-dl2">from</span>' +
+                '<input type="number" class="ambient-toneseq-win tsq-at" data-tsi="' + i + '" data-tsw="at" min="0" max="63" step="0.25" ' +
+                  'placeholder="0" value="' + (Number.isFinite(st.at) ? st.at : '') + '" ' +
+                  'title="Where inside the part this voice starts, counted in changes from its first. Blank = the start.">' +
+                '<span class="tsq-dl2">for</span>' +
+                '<input type="number" class="ambient-toneseq-win tsq-len" data-tsi="' + i + '" data-tsw="len" min="0.25" max="64" step="0.25" ' +
+                  'placeholder="all" value="' + (Number.isFinite(st.len) ? st.len : '') + '" ' +
+                  'title="How many changes it covers. Blank = the rest of the part. ½ is half a change.">' +
+                '<span class="ambient-hint tsq-u">changes</span>' +
+              '</div>') +
+          '</div>';
+        });
+        h += '</div>';
+      }
+      h += '<button type="button" class="ambient-seg ambient-toneseq-add" title="Add a voice to the set">' +
+        '＋ Add a voice</button>';
+      // ◇ PALETTE · ◇ DOUBLING · MAX VOICES — three equal cells, label ABOVE the number,
+      // so they read as one row of three rather than three loose boxes. They appear only
+      // with something to choose from: one voice is not a palette and cannot be doubled.
+      if (q && n > 1) {
+        const na = stk ? '' : ' disabled';
+        const naT = stk ? '' : ' — v2 layers only for now; this layer cycles its set without doubling';
+        const cell = (lab, key, val, mn, mx, tip, dis) =>
+          '<label class="tsq-dial' + (dis ? ' tsq-dial-off' : '') + '" title="' + tip + '">' +
+            '<span class="tsq-dl">' + lab + '</span>' +
+            '<input type="number" class="ambient-toneseq-num" data-tsq="' + key + '" min="' + mn + '" max="' + mx +
+              '" step="' + (key === 'maxv' ? 1 : 5) + '" value="' + val + '"' + (dis ? ' disabled' : '') + '>' +
+          '</label>';
+        h += '<div class="ambient-toneseq-dials">' +
+          cell('◇ Palette', 'pal', pal, 0, 100,
+            'How much of the set gets used. 0 = the plain bar cycle, each voice in turn. Higher and a voice is CHOSEN from the top of the list instead, re-drawn each time round.', false) +
+          cell('◇ Doubling', 'dub', dub, 0, 100,
+            'How often more than one voice sounds at once — the same note, the same moment, a different instrument. 0 = one voice, ever.' + naT, !stk) +
+          // 2–3, NOT 1–3. "Never double" is what ◇ Doubling 0 says; this answers "how
+          // many at most, WHEN it does". Offering 1 made the box lie: the normalizer
+          // prunes a cap of 1 to absent (one representation of "no stack"), and the
+          // resolver reads absent as 2 — so the control displayed 1 while the engine
+          // would have played 2 the moment Doubling came up. Measured. A control's first
+          // duty is not to lie about the model.
+          cell('Max voices', 'maxv', Math.max(2, Math.min(3, (q.maxV | 0) || 2)), 2, 3,
+            'The most voices that may sound together, this one included — 2 or 3. Use ◇ Doubling 0 to never double at all.' + naT, !stk) +
+        '</div>';
+      }
       return h;
     }
     // (Re)populate a toneseq box's selects from the tone catalog + reflect values.
@@ -49943,7 +50782,7 @@
       // its tone's own ADSR and rings across the change.
       if (k === 'ring') return '<div class="ambient-ctrl"><label for="' + p + '-ring">Ring out</label><select id="' + p + '-ring" class="ambient-select"><option value="0">Choke at the chord</option><option value="1">Ring out (tone\u2019s ADSR)</option></select><span class="ambient-hint">off = released by the next chord change</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
-      if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone cycle — schedule Instrument Tone changes on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice.">Tone cycle</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
+      if (k === 'toneseq') return '<div class="ambient-ctrl ambient-toneseq-ctrl"><label title="Tone set — the voices this layer may play, on the bar clock: e.g. 4 bars Sawtooth, then 4 bars Sine, repeating. Each note picks the step active at its onset; a blank tone = the layer\'s default voice. ◇ Palette turns the cycle into a choice.">Tone set</label><span class="ambient-toneseq-box" id="' + p + '-toneseq">' + _ambToneSeqBoxHtml(inst) + '</span></div>';
       if (k === 'tight') return '<div class="ambient-ctrl"><label for="' + p + '-tight">Tight</label><select id="' + p + '-tight" class="ambient-select"><option value="0">Off</option><option value="1">Tight (choke)</option></select><span class="ambient-hint">each note lasts to the next hit, then chokes (overrides the other length controls)</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
@@ -52165,6 +53004,20 @@
            ['restProb','Rests',0,100],['ghosts','Ghosts',0,100],['lenVary','Len var',0,100],
            ['velVar','Vel var',0,100],['humanize','Humanize',0,100],['swing','Swing',0,100],
            ['accent','Accent',0,100],['instrument.register','Register',0,8],
+           // ADDED 2026-09-26 — ranges taken from the card's own rows, not guessed, so a
+           // ramp cannot sweep past what the fader allows.
+           ['instrument.attack','Attack (ms)',0,8000],['instrument.decay','Decay (ms)',0,8000],
+           ['instrument.sustain','Sustain',0,100],['instrument.release','Release (ms)',0,12000],
+           ['part.ms','Cycle (ms)',200,20000],
+           ['part.timing.lean','Lean (ms)',-60,60],
+           ['part.timing.ratchet.chance','Ratchet chance',0,100],
+           ['part.shape.holdSteps','Hold steps',0,16],
+           ['motion','Wobble',0,100],['ornament','Ornament',0,100],['slide','Slide',0,100],
+           ['strumFidelity','Spread wander',0,100],['saltShare','Salt how often',0,100],
+           // NOT HERE ON PURPOSE: `part.bars` (the per-part reconciler rewrites it on
+           // every getCfg, so a ramp is silently outvoted), and `ahead` / `chg.ev` /
+           // `lenSync.passes` — a view setting and two clock DEFINITIONS, where a sweep
+           // between two values has no musical meaning.
            ['level','Level',0,100]],
       // Global (not per-layer): writes the shared tempo, so a BPM ramp retempos
       // grid + Bloom + Shapes together. Range is a musical 40–300.
@@ -52173,7 +53026,36 @@
     // Per-layer FX params are rampable too. They live nested (delay.*, dist.*)
     // and need a live node push (handled in _ambRampResolve). Append to every
     // layer type except the global group.
-    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['dist.tone','Distortion tone',0,100],['dist.focus','Distortion focus',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100],['glitch.mix','Glitch mix',0,100],['glitch.sizeMs','Glitch size (ms)',5,900],['glitch.rate','Glitch rate',1,100],['glitch.jitter','Glitch scatter',0,100],['glitch.pitch','Glitch pitch spread',0,24]];
+    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['dist.tone','Distortion tone',0,100],['dist.focus','Distortion focus',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100],['glitch.mix','Glitch mix',0,100],['glitch.sizeMs','Glitch size (ms)',5,900],['glitch.rate','Glitch rate',1,100],['glitch.jitter','Glitch scatter',0,100],['glitch.pitch','Glitch pitch spread',0,24],
+      // MISSING UNTIL 2026-09-26 — every one of these has a fader on the card and no
+      // ramp target, which is the "a control the automation cannot reach" gap.
+      ['delay.spread','Delay width',0,100],['delay.fxDamp','Delay repeat damp',0,100],
+      ['delay.fxDrive','Delay repeat drive',0,100],
+      ['pecho.mix','Pitch echo mix',0,100],['pecho.timeMs','Pitch echo time (ms)',20,4000],
+      ['pecho.feedback','Pitch echo decay',0,100],['pecho.repeats','Pitch echo repeats',1,12],
+      ['pecho.step','Pitch echo step',-7,7],['pecho.spread','Pitch echo width',0,100]];
+    // ♫ MOD — the per-layer LFO matrix (VCA · VCO · VCF), rampable on every layer
+    // (asked for 2026-09-26: "including Mod"). Depth and Rate only: Shape is a select
+    // and a ramp between two waveforms has no meaning, the same reason Words-as and
+    // Mapping are left out of the Word block below.
+    // THREE LEVELS DEEP (`mod.vca.depth`), so it needs its own resolve branch — the
+    // generic nested-FX branch splits at the FIRST dot and would write
+    // `obj.mod['vca.depth']`, a field nothing reads (the documented dead-field class).
+    const _AMB_MOD_RAMP = [
+      ['mod.vca.depth','VCA depth (tremolo)',0,100],['mod.vca.rate','VCA rate',0,100],
+      ['mod.vco.depth','VCO depth (vibrato)',0,100],['mod.vco.rate','VCO rate',0,100],
+      ['mod.vcf.depth','VCF depth (sweep)',0,100],['mod.vcf.rate','VCF rate',0,100]];
+    // ≡ EQ · ▦ CHOP · ◇ TONE SET · the per-voice trims. All nested one level except the
+    // trims, all previously unreachable from a ramp.
+    // ◇ Tone set is INERT until the layer has a set of two voices and Palette turned up
+    // — the same shape as `spat.width`, which does nothing until Spatialize is on.
+    const _AMB_MISC_RAMP = [
+      ['eq.low','EQ low (dB)',-24,24],['eq.mid','EQ mid (dB)',-24,24],['eq.high','EQ high (dB)',-24,24],
+      ['tg.depth','Chop depth',0,100],['tg.edge','Chop edge (ms)',0,60],
+      ['tg.width','Chop width',10,100],['tg.steps','Chop resolution',4,32],
+      ['toneSeq.pal','Tone set palette',0,100],['toneSeq.dub','Tone set doubling',0,100],
+      ['portamento','Glide (ms)',0,2000],['voiceTrim','Voice trim (dB)',-24,12],
+      ['fine','Fine tune',-100,100],['areaFadeMs','Area fade (ms)',0,4000]];
     // Stereo (the Spread/Pan fader, stored in `space`) is rampable on every layer.
     // Range spans the full Pan field (-100..100); in Spread mode the engine reads
     // the magnitude, so the positive half (0..100) is the spread amount.
@@ -52219,7 +53101,8 @@
     Object.keys(_AMB_RAMP_PARAMS).forEach(k => {
       if (k === 'global') return;
       const list = _AMB_RAMP_PARAMS[k];
-      _AMB_STEREO_RAMP.concat(_AMB_SPAT_RAMP, _AMB_FX_RAMP).forEach(p => { if (!list.some(x => x[0] === p[0])) list.push(p); });
+      _AMB_STEREO_RAMP.concat(_AMB_SPAT_RAMP, _AMB_FX_RAMP, _AMB_MOD_RAMP, _AMB_MISC_RAMP)
+        .forEach(p => { if (!list.some(x => x[0] === p[0])) list.push(p); });
     });
     ['learn', 'sireel'].forEach(t => {
       const list = _AMB_RAMP_PARAMS[t] || (_AMB_RAMP_PARAMS[t] = []);
@@ -52377,6 +53260,52 @@
           o2[path[path.length - 1]] = v;
         } };
       }
+      // ♫ MOD — THREE LEVELS (`mod.vca.depth`), and it needs a live push or a ramped
+      // depth is a number in the store with no sound. `_ambSyncTarget` is the engine's
+      // own per-target sync: it BUILDS the source the first tick depth goes above 0,
+      // updates range/rate in place after that, and disposes it when depth returns to
+      // 0 — exactly the right granularity for a 40 Hz writer. It takes a one-entry cfg
+      // keyed by the layer key, which is the shape every other caller passes it.
+      // MUST SIT ABOVE the generic nested branch below: that one splits at the FIRST
+      // dot and would write `obj.mod['vca.depth']`.
+      if (key.indexOf('mod.') === 0) {
+        const mp = key.split('.');            // ['mod', '<target>', '<field>']
+        const tgt = mp[1], fld = mp[2];
+        if (['vca', 'vco', 'vcf'].indexOf(tgt) < 0 || !fld) return null;
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (!obj.mod || typeof obj.mod !== 'object') {
+            obj.mod = (typeof _ambDefaultMod === 'function') ? _ambDefaultMod() : { sync: 'free' };
+          }
+          if (!obj.mod[tgt] || typeof obj.mod[tgt] !== 'object') obj.mod[tgt] = { depth: 0, rate: 30, shape: 'sine' };
+          obj.mod[tgt][fld] = v;
+          if (_ambLiveApplyOK(_E)) {
+            try { const e = _E && _E.mod && _E.mod[head];
+              if (e) _ambSyncTarget(e, head, tgt, { [head]: obj }); } catch (e) {}
+          }
+        } };
+      }
+      // ≡ EQ — nested one level, and the lazy EQ has to be engaged/flattened by
+      // `_ambApplyEq` or a ramp from flat never inserts the filters at all.
+      if (key.indexOf('eq.') === 0) {
+        const sub = key.slice(3);
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (!obj.eq || typeof obj.eq !== 'object') obj.eq = {};
+          obj.eq[sub] = v;
+          if (_ambLiveApplyOK(_E)) { try { _ambApplyEq(head, obj); } catch (e) {} }
+        } };
+      }
+      // ▦ CHOP and ◇ TONE SET — nested one level and NO node to push to: the gate
+      // scheduler re-reads `tg` each bar and `_ambToneAt` reads `toneSeq` per note
+      // onset, so writing the field IS the whole job. They are listed here rather than
+      // left to the FX branch because that branch would re-apply the whole FX chain at
+      // 40 Hz for nothing.
+      if (key.indexOf('tg.') === 0 || key.indexOf('toneSeq.') === 0) {
+        const di2 = key.indexOf('.'), grp2 = key.slice(0, di2), sub2 = key.slice(di2 + 1);
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (!obj[grp2] || typeof obj[grp2] !== 'object') obj[grp2] = {};
+          obj[grp2][sub2] = v;
+        } };
+      }
       if (key === 'revSend' || key.indexOf('.') >= 0) {
         return { min: spec[2], max: spec[3], set: function (v) {
           if (key === 'revSend') { obj.revSend = v; }
@@ -52417,10 +53346,64 @@
       }
       return { obj, key, min: spec[2], max: spec[3] };
     }
+    // —— SUBSECTIONS IN THE TARGET PICKER ——————————————————————
+    // (2026-09-26, user: "needs to be organized with subsections".) One layer now
+    // offers ~100 targets, and a flat alphabet-soup list of that length is a list you
+    // cannot find anything in.
+    // DERIVED FROM THE KEY, never hand-filed per row. There are ~100 rows across a
+    // dozen layer types plus an auto-derive pass that INVENTS rows from
+    // `_AMB_LAYER_SCHEMA`, so a per-row section column would be wrong the first time
+    // anyone added a control — and a row with no section is the one that vanishes from
+    // the picker. Prefixes cover the nested families; the flat keys fall to three
+    // buckets and then to ⚙ Generative, which is what a Bloom layer's own knobs are.
+    // ORDER IS THE ORDER THEY APPEAR, and it reads outside-in: what it plays, then how
+    // it is struck, then what happens to the sound.
+    const _AMB_RAMP_SECS = [
+      ['▦ Rhythm',      /^part\.rhythm\./],
+      ['♪ Pitch',       /^part\.pitch\./],
+      ['⑁ Note shape',  /^part\.shape\./],
+      ['⏱ Timing',      /^part\.timing\./],
+      ['▤ Content',     /^part\./],
+      ['✦ Instrument',  /^instrument\./],
+      ['◇ Tone set',    /^toneSeq\./],
+      ['♫ Mod',         /^mod\./],
+      ['▦ Chop',        /^tg\./],
+      ['≡ EQ',          /^eq\./],
+      ['⊕ Spatialize',  /^spat\./],
+      ['🗣 Word music', /^word\./],
+      ['✦ FX',          /^(delay|dist|chorus|phaser|autopan|glitch|pecho)\./],
+    ];
+    // The flat keys, by what they answer rather than by where they are stored.
+    const _AMB_RAMP_SEC_FLAT = {
+      level: '🎚 Mix', space: '🎚 Mix', revSend: '🎚 Mix', bus: '🎚 Mix',
+      cutoff: '🎚 Mix', reso: '🎚 Mix', voiceTrim: '🎚 Mix',
+      intervalMs: '⏱ Timing', lengthMs: '⏱ Timing', hold: '⏱ Timing',
+      areaFadeMs: '⏱ Timing', portamento: '⏱ Timing',
+      attack: '✦ Instrument', decay: '✦ Instrument', sustain: '✦ Instrument',
+      release: '✦ Instrument', register: '✦ Instrument', fine: '✦ Instrument',
+      bpm: '♪ Pitch',
+    };
+    const _AMB_RAMP_SEC_DEFAULT = '⚙ Generative';
+    function _ambRampSection(key) {
+      for (let i = 0; i < _AMB_RAMP_SECS.length; i++) {
+        if (_AMB_RAMP_SECS[i][1].test(key)) return _AMB_RAMP_SECS[i][0];
+      }
+      return _AMB_RAMP_SEC_FLAT[key] || _AMB_RAMP_SEC_DEFAULT;
+    }
+    // …and the order a section appears in, so the picker groups without sorting labels
+    // alphabetically (which would put ✦ FX above ▦ Rhythm and read as random).
+    const _AMB_RAMP_SEC_ORDER = (function () {
+      const o = {};
+      _AMB_RAMP_SECS.forEach((r, i) => { o[r[0]] = i; });
+      // the flat buckets slot in after the prefixed families, in the order named here
+      ['🎚 Mix', '⚙ Generative'].forEach((nm, i) => { if (!(nm in o)) o[nm] = _AMB_RAMP_SECS.length + i; });
+      return o;
+    })();
+    const _ambRampSecRank = (nm) => (nm in _AMB_RAMP_SEC_ORDER) ? _AMB_RAMP_SEC_ORDER[nm] : 900;
     // Grouped target list for the dropdown (built-in layers + dynamic layers).
     function _ambRampTargetGroups(cfg) {
       const g = [];
-      const add = (label, head, cat) => g.push({ label, items: (_AMB_RAMP_PARAMS[cat] || []).map(p => ({ value: head + '.' + p[0], label: p[1] })) });
+      const add = (label, head, cat) => g.push({ label, items: (_AMB_RAMP_PARAMS[cat] || []).map(p => ({ value: head + '.' + p[0], label: p[1], sec: _ambRampSection(p[0]) })) });
       // Built-in layers only when present.
       [['Bed', 'bed'], ['Motif', 'motif'], ['Texture', 'texture'], ['Beat', 'beat']].forEach(([lab, t]) => {
         if (cfg[t] && cfg[t].present !== false) add(lab, t, t);
@@ -52748,12 +53731,25 @@
     }
     // Multi-target picker: grouped, checkable list of every layer parameter; tap
     // toggles membership in this ramp's targets[]. One ramp can drive many.
+    // The find box's text, kept across the re-renders a pick causes (the list is rebuilt
+    // on every toggle so the ✓ marks stay honest). Module state, never cfg.
+    let _ambRampFindQ = '';
     function _ambShowRampTargetsMenu(E, id, anchorBtn) {
+      _ambRampFindQ = '';
       const getR = () => { const c = E.getCfg(); return (c && Array.isArray(c.ramps)) ? c.ramps.find(x => x.id === id) : null; };
       if (!getR()) return;
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
-      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      // ABOVE THE SECTION SHEET IT IS OPENED FROM. `.modal-overlay` is z 1200 and
+      // a v2 card's section sheet (`.v2-secpop-wrap`) is z 10250, so from Mix ▸
+      // Ramps this modal BUILT COMPLETELY and painted UNDERNEATH it — measured:
+      // the overlay came up 390×780 with all 61 targets in it, and the centre of
+      // its first item hit-tested to `.ambient-ramps-head-mini`, the sheet's own
+      // row. Reported as "the Ramp target dropdown does nothing on click", which
+      // is exactly how a built-but-covered surface reads. Same family as
+      // `#sd-overlay` and ✎ Written's menu; the extra class puts THIS modal in
+      // the dialog band rather than raising every `.modal-overlay` in the app.
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay amb-ramptgt-ov';
       const modal = document.createElement('div'); modal.className = 'step-div-modal amb-ramptgt-modal';
       overlay.appendChild(modal);
       const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderRamps(E); } catch (e) {} };
@@ -52770,15 +53766,39 @@
           const head = it.value.slice(0, it.value.indexOf('.'));
           return head === lk || sel.has(it.value);
         }) })).filter(g => g.items.length);
-        let h = '<div class="keep-sdiv-title">Ramp targets</div><div class="amb-ramptgt-list">';
+        // TWO LEVELS: the LAYER, then the family within it. A layer offers ~100 targets
+        // and a flat list of that length is unsearchable — the sections are derived from
+        // the key (`_ambRampSection`), so a control added later files itself.
+        // THE TICKED ONES ARE LIFTED TO THE TOP, in their own section: with this many
+        // rows the two or three you have already chosen are the ones you came back to
+        // change, and hunting them through ten families is the actual complaint.
+        let h = '<div class="keep-sdiv-title">Ramp targets</div>' +
+          '<input type="search" class="amb-ramptgt-find" placeholder="Find a parameter…" ' +
+            'aria-label="Find a parameter" autocomplete="off">' +
+          '<div class="amb-ramptgt-list">';
+        const btn = (it) => '<button type="button" class="amb-ramptgt-item' + (sel.has(it.value) ? ' on' : '') +
+          '" data-val="' + esc(it.value) + '" data-find="' + esc((it.label + ' ' + (it.sec || '')).toLowerCase()) + '">' +
+          '<span class="amb-ramptgt-check">' + (sel.has(it.value) ? '✓' : '') + '</span>' + esc(it.label) + '</button>';
         groups.forEach(g => {
           h += '<div class="amb-ramptgt-group">' + esc(g.label) + '</div>';
-          g.items.forEach(it => {
-            h += '<button type="button" class="amb-ramptgt-item' + (sel.has(it.value) ? ' on' : '') + '" data-val="' + esc(it.value) + '">' +
-              '<span class="amb-ramptgt-check">' + (sel.has(it.value) ? '✓' : '') + '</span>' + esc(it.label) + '</button>';
-          });
+          const chosen = g.items.filter(it => sel.has(it.value));
+          if (chosen.length) {
+            h += '<div class="amb-ramptgt-sec amb-ramptgt-sec-on">✓ Driving now</div>';
+            chosen.forEach(it => { h += btn(it); });
+          }
+          // …then every family, in the order the sections are declared
+          const rest = g.items.filter(it => !sel.has(it.value));
+          const bySec = {};
+          rest.forEach(it => { const k = it.sec || ''; (bySec[k] || (bySec[k] = [])).push(it); });
+          Object.keys(bySec)
+            .sort((a, b) => (_ambRampSecRank(a) - _ambRampSecRank(b)) || a.localeCompare(b))
+            .forEach(nm => {
+              h += '<div class="amb-ramptgt-sec">' + esc(nm) + '</div>';
+              bySec[nm].forEach(it => { h += btn(it); });
+            });
         });
         if (!groups.length) h += '<div class="ambient-cap-empty">No layers yet — add a layer first.</div>';
+        h += '<div class="ambient-cap-empty amb-ramptgt-none" hidden>Nothing matches.</div>';
         h += '</div><div class="sm-footer"><button type="button" class="sm-apply amb-ramptgt-ok">Done</button></div>';
         modal.innerHTML = h;
         modal.querySelectorAll('.amb-ramptgt-item').forEach(b => b.addEventListener('click', () => {
@@ -52789,6 +53809,35 @@
           persist(); render();
         }));
         const ok = modal.querySelector('.amb-ramptgt-ok'); if (ok) ok.addEventListener('click', close);
+        // FIND A PARAMETER — filter only, and it NEVER re-renders: `render()` rebuilds
+        // the whole list, which would drop the field the user is typing in (the
+        // documented "re-render replaces the control under the finger" failure). It
+        // hides rows and the section headers that empty out, and the typed text is
+        // restored after a tick so a pick does not clear it.
+        const fi = modal.querySelector('.amb-ramptgt-find');
+        if (fi) {
+          const applyFind = () => {
+            const q2 = String(fi.value || '').trim().toLowerCase();
+            const list = modal.querySelector('.amb-ramptgt-list'); if (!list) return;
+            let shown = 0;
+            [...list.children].forEach((n) => {
+              if (!n.classList.contains('amb-ramptgt-item')) return;
+              const hit = !q2 || (n.getAttribute('data-find') || '').indexOf(q2) >= 0;
+              n.hidden = !hit; if (hit) shown++;
+            });
+            // a heading with nothing under it is a lie about what is there
+            let run = null;
+            [...list.children].forEach((n) => {
+              if (n.classList.contains('amb-ramptgt-sec') || n.classList.contains('amb-ramptgt-group')) { run = n; n.hidden = true; return; }
+              if (n.classList.contains('amb-ramptgt-item') && !n.hidden && run) { run.hidden = false; run = null; }
+            });
+            const em = modal.querySelector('.amb-ramptgt-none');
+            if (em) em.hidden = !!shown || !q2;
+          };
+          fi.addEventListener('input', applyFind);
+          if (_ambRampFindQ) { fi.value = _ambRampFindQ; applyFind(); }
+          fi.addEventListener('input', () => { _ambRampFindQ = fi.value; });
+        }
       };
       render();
       document.body.appendChild(overlay);
@@ -53635,17 +54684,6 @@
               '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub"></span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Changes on to build a chord sequence</span>' +
             '</div>' +
-            // OVERVIEW sits directly under the switch: it is the progression
-            // itself — the chips, their order, and the way in to editing any of
-            // them — so it belongs before the things that COLOUR it (Salt) or
-            // REORDER it (Order), not after.
-            // \u273a VARIATION SITS ABOVE \u25a4 PARTS \u2014 the area \u2192 part ladder this pane
-            // already reads by, and \u273a Novelty is what you reach for before you know
-            // which axis you wanted. OPEN by default: it is the lead, and a collapsed
-            // accordion is where the old bar's chips went to be undiscoverable.
-            _ambProgGrpOpen('variation', '\u273a Variation', true) +
-            '<div class="ambient-pov-strip ambient-pov-varstrip" id="ambient-prog-varbar"></div>' +
-            _ambProgGrpClose() +
             _ambProgGrpOpen('overview', '\u25a4 Parts', false) +
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
               // ＋ Add changes is GONE. Its seed list, Create and roman-numeral
@@ -53678,6 +54716,21 @@
               _ambProgGrpOpen('schedgrid', '\u25a6 Schedule', false) +
               '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
               _ambProgGrpClose()) +
+            _ambProgGrpClose() +
+            // \u273a VARIATION SITS BELOW \u25a4 PARTS (2026-09-27, user: "Variation should be
+            // below Parts"). It led the pane on the area \u2192 part ladder argument \u2014 the
+            // area rung, then the part rung, then the pass rung \u2014 but that is a reading of
+            // the STORES, not of the work: you write the parts, and THEN decide how much
+            // they vary. Same six chips, same sections; only the order of the two
+            // accordions changed, so nothing moved between groups.
+            // CLOSED BY DEFAULT (2026-09-27, user's call). It opened expanded on the
+            // argument that "a collapsed accordion is where the old bar's chips went to
+            // be undiscoverable" — but that was an argument about the chips being HARD TO
+            // FIND, and the fix for that is the header reading as an accordion, which it
+            // now does. An always-open group under ▤ Parts just pushes the parts off the
+            // screen, which is the thing you are actually working in.
+            _ambProgGrpOpen('variation', '\u273a Variation', false) +
+            '<div class="ambient-pov-strip ambient-pov-varstrip" id="ambient-prog-varbar"></div>' +
             _ambProgGrpClose() +
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
@@ -54096,7 +55149,18 @@
       // cards aren't in the DOM yet, so this only catches the primaries.
       host.querySelectorAll('.ambient-grp-head').forEach(h => {
         if (h.closest('.v2-layer')) return;   // v2 cards wire their own — see the note above
-        h.addEventListener('click', () => { const g = h.closest('.ambient-grp'); if (g) g.classList.toggle('open'); });
+        h.addEventListener('click', () => { const g = h.closest('.ambient-grp'); if (!g) return;
+          g.classList.toggle('open');
+          // ▤ Parts owns the part picker while it is open — the middle strip is the door
+          // for when it is closed, so its visibility is settled on this toggle too.
+          // IDS ARE NAMESPACED PER ENGINE (`_ambTrId`): the master in Mix is
+          // `mix-bloom-proggrp-overview`, so an equality test here matches nothing.
+          if (/(^|-)proggrp-overview$/.test(g.id || '')) {
+            try { if (typeof window._ambCurPartRefresh === 'function') window._ambCurPartRefresh(E); } catch (e) {}
+          }
+          // the button SAYS whether it is open — a caret a screen reader cannot see is
+          // not an affordance, and `aria-expanded` is what makes it a disclosure
+          try { h.setAttribute('aria-expanded', g.classList.contains('open') ? 'true' : 'false'); } catch (e) {} });
       });
       // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
       // _ambRenderMixer as layers change).
@@ -56048,7 +57112,8 @@
           if (amtEl && document.activeElement !== amtEl) amtEl.value = String(st.amount);
           if (valEl) valEl.textContent = String(st.amount);
           const _hasCh = _ambNovHasChanges(c.prog);
-          const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount, _hasCh);
+          const _nTs = (function () { try { return _ambToneSetLayers(c).length; } catch (e) { return 0; } })();
+          const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount, _hasCh, _nTs);
           _AMB_NOV_AXES.forEach(ax => { const e = G('ambient-nov-b' + ax.k);
             if (e && document.activeElement !== e) e.value = String(st.bal[ax.k]); });
           const host = G('ambient-nov-preview');
@@ -56629,6 +57694,44 @@
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           hostEl.addEventListener('change', (ev) => {
+            // ── THE ROW'S UNIT ────────────────────────────────────────────
+            // Switching unit REWRITES the row, because a row states one rule and the
+            // fields of the other two are not part of it — left behind they would be
+            // a store saying two things at once, and the normalizer would keep them.
+            const usel = ev.target && ev.target.closest && ev.target.closest('select.tsq-unit');
+            if (usel && hostEl.contains(usel)) {
+              const tk = _ambCardKey(usel.closest('.ambient-layer')); if (!tk) return;
+              _E = E; const Lu = _ambLayerByKey(E, tk); if (!Lu || !Lu.toneSeq) return;
+              const ui = usel.getAttribute('data-tsi') | 0, st = Lu.toneSeq.steps[ui]; if (!st) return;
+              const u = usel.value;
+              delete st.unit; delete st.part; delete st.at; delete st.len;
+              if (u === 'part') {
+                st.unit = 'part'; delete st.bars;
+                let pi0 = 0;
+                try { const rg = _ambGridRanges(E.getCfg()) || []; pi0 = rg.length ? (rg[0].pi | 0) : 0; } catch (e) {}
+                st.part = pi0;
+              } else {
+                if (u === 'chg') st.unit = 'chg';
+                // A CHANGE IS A BIGGER STEP THAN A BAR, so its natural default is 1 —
+                // carrying a 4 across would silently make the row four changes long.
+                if (!Number.isFinite(st.bars)) st.bars = (u === 'chg') ? 1 : 4;
+              }
+              const box0 = usel.closest('.ambient-toneseq-box');
+              if (box0) { box0.innerHTML = _ambToneSeqBoxHtml(Lu); _ambToneSeqPopulate(box0, Lu); }
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+            const psel = ev.target && ev.target.closest && ev.target.closest('select.tsq-partsel');
+            if (psel && hostEl.contains(psel)) {
+              const tk2 = _ambCardKey(psel.closest('.ambient-layer')); if (!tk2) return;
+              _E = E; const Lp = _ambLayerByKey(E, tk2); if (!Lp || !Lp.toneSeq) return;
+              const pi2 = psel.getAttribute('data-tsi') | 0, st2 = Lp.toneSeq.steps[pi2]; if (!st2) return;
+              st2.part = Math.max(0, psel.value | 0);
+              const box2 = psel.closest('.ambient-toneseq-box');
+              if (box2) { const sm = box2.querySelector('.tsq-sum'); if (sm) sm.textContent = sm.textContent; }
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const sel = ev.target && ev.target.closest && ev.target.closest('select.ambient-toneseq-tone');
             if (!sel || !hostEl.contains(sel)) return;
             const tkey = _ambCardKey(sel.closest('.ambient-layer')); if (!tkey) return;
@@ -56642,7 +57745,47 @@
               const tkey = _ambCardKey(tb.closest('.ambient-layer')); if (!tkey) return;
               _E = E; const Lt = _ambLayerByKey(E, tkey); if (!Lt || !Lt.toneSeq) return;
               const ti = tb.getAttribute('data-tsi') | 0;
-              if (Lt.toneSeq.steps[ti]) { Lt.toneSeq.steps[ti].bars = Math.max(1, Math.min(32, tb.value | 0)) || 4; if (typeof persistWorkspace === 'function') persistWorkspace(); }
+              // WHOLE OR FRACTIONAL, and quantized to ¼ so half a change has one
+              // spelling. `| 0` truncated every fraction to an integer here, which is
+              // how a 0.5 typed into the box came back as 0 and then as the 4 default.
+              if (Lt.toneSeq.steps[ti]) {
+                const v0 = parseFloat(tb.value);
+                if (Number.isFinite(v0)) {
+                  Lt.toneSeq.steps[ti].bars = Math.max(0.25, Math.min(32, Math.round(v0 * 4) / 4));
+                  if (typeof persistWorkspace === 'function') persistWorkspace();
+                }
+              }
+              return;
+            }
+            // THE PART WINDOW — from / for, in changes. BLANK IS A REAL VALUE here:
+            // it means "the whole part", which is what most rows mean, so an empty box
+            // DELETES the field rather than writing a 0 the normalizer would keep.
+            const tw = ev.target && ev.target.closest && ev.target.closest('input.ambient-toneseq-win');
+            if (tw && hostEl.contains(tw)) {
+              const tkw = _ambCardKey(tw.closest('.ambient-layer')); if (!tkw) return;
+              _E = E; const Lw = _ambLayerByKey(E, tkw); if (!Lw || !Lw.toneSeq) return;
+              const wi = tw.getAttribute('data-tsi') | 0, stw = Lw.toneSeq.steps[wi]; if (!stw) return;
+              const which = tw.getAttribute('data-tsw') === 'len' ? 'len' : 'at';
+              const raw = String(tw.value == null ? '' : tw.value).trim();
+              const v1 = parseFloat(raw);
+              if (!raw || !Number.isFinite(v1) || v1 <= 0) delete stw[which];
+              else stw[which] = Math.max(which === 'len' ? 0.25 : 0, Math.min(which === 'len' ? 64 : 63, Math.round(v1 * 4) / 4));
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+            // ◇ Palette · ◇ Doubling · Max voices. Written straight onto `toneSeq`, and
+            // the NORMALIZER owns the pruning — 0 (and a cap of 1) delete the field, so
+            // "not choosing" and "never doubling" each have one representation.
+            const tn = ev.target && ev.target.closest && ev.target.closest('input.ambient-toneseq-num');
+            if (tn && hostEl.contains(tn)) {
+              const tkey2 = _ambCardKey(tn.closest('.ambient-layer')); if (!tkey2) return;
+              _E = E; const L2 = _ambLayerByKey(E, tkey2); if (!L2 || !L2.toneSeq) return;
+              const w2 = tn.getAttribute('data-tsq'), v2n = parseInt(tn.value, 10) || 0;
+              if (w2 === 'pal') L2.toneSeq.pal = Math.max(0, Math.min(100, v2n));
+              else if (w2 === 'dub') L2.toneSeq.dub = Math.max(0, Math.min(100, v2n));
+              else if (w2 === 'maxv') L2.toneSeq.maxV = Math.max(2, Math.min(3, v2n));
+              try { E.getCfg(); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
               return;
             }
             const inp = ev.target && ev.target.closest && ev.target.closest('.ambient-write-x, .ambient-write-y, .ambient-write-bmin, .ambient-write-bmax, .ambient-write-tmin, .ambient-write-tmax');

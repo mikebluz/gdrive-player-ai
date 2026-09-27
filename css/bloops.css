@@ -3428,6 +3428,12 @@
     .amb-sec-len button { padding: 2px 7px; font-size: 0.72rem; }
 
     /* Ramp multi-target picker */
+    /* IN THE DIALOG BAND, because this one is opened from INSIDE a v2 section
+       sheet (Mix ▸ Ramps ▸ the target button). `.modal-overlay` is z 1200 and
+       `.v2-secpop-wrap` is 10250, so at the base rung it painted under the sheet
+       that opened it and read as a dead button. Above `.sm-overlay` (10300) so a
+       ⋯ actions menu cannot land under it either, below `.sd-overlay` (10400). */
+    .modal-overlay.amb-ramptgt-ov { z-index: 10320; }
     .amb-ramptgt-modal { min-width: min(92vw, 360px); }
     .amb-ramptgt-list { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow-y: auto; margin: 8px 0; }
     .amb-ramptgt-group {
@@ -3440,6 +3446,24 @@
       background: none; color: #c7b3f0; font-size: 0.82rem; cursor: pointer;
     }
     .amb-ramptgt-item:hover { background: rgba(159,122,234,0.08); }
+    /* SUBSECTION heading inside a layer's group — one rung quieter than the layer name
+       above it, so the two levels read as a hierarchy rather than two kinds of shout. */
+    .amb-ramptgt-sec {
+      font: 600 0.58rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #7e7ea0; padding: 7px 2px 2px; position: sticky; top: 0; background: #050510;
+      white-space: normal; overflow-wrap: anywhere; min-width: 0;
+    }
+    .amb-ramptgt-sec[hidden] { display: none; }
+    /* the ones already driving this ramp, lifted to the top */
+    .amb-ramptgt-sec-on { color: #9f7aea; }
+    /* FIND A PARAMETER. 16px so iOS does not zoom the page on focus (the standing
+       rule for any text input in this app). */
+    .amb-ramptgt-find {
+      width: 100%; min-width: 0; box-sizing: border-box; margin: 8px 0 2px;
+      padding: 7px 9px; font-size: 16px; color: #e2e8f0;
+      background: #0b0b16; border: 1px solid #2d2d3f; border-radius: 8px;
+    }
+    .amb-ramptgt-find::placeholder { color: #55556e; }
     .amb-ramptgt-item.on { background: rgba(159,122,234,0.16); border-color: #9f7aea; color: #f5d0fe; }
     .amb-ramptgt-check { width: 1em; color: #9f7aea; }
     .ambient-layer {
@@ -4680,6 +4704,20 @@
   color: #6b6b8c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .v2-layer .ambient-grp-head .v2-grpsum:empty { display: none; }
+/* ── A LAYER CARD WEARS THE CURRENT PART'S COLOUR ──────────────────
+   `data-part` already means "this belongs to part N" on the ordinal rail, the overview
+   cards, the part chips and the roll's note events, and `[data-part]` resolves `--pt`
+   from the shared palette — so this is the card JOINING that axis, not a new colour
+   scheme. Stamped by `V2.render` and only while there is more than one part.
+   The left edge is the same 3px the area accent uses, so nothing moves; the wash is
+   faint on purpose — it has to read at a glance without fighting the controls. */
+.v2-layer[data-part] { border-left-color: var(--pt); }
+/* NO UNDERLINE ON THE HEAD. An `inset 0 -1px` shadow there spans the head's FULL
+   width — and the head is a flex row that CONTAINS the ⋯ and caret buttons, so the
+   line ran straight through them and read as a stray rule colliding with their
+   borders. The left edge and the layer name already carry the part; a third marker
+   was belt, braces and a piece of string. */
+.v2-layer[data-part] > .ambient-layer-head .ambient-layer-name { color: var(--pt); }
 .v2-layer.v2-soloed { outline: 1px solid #f0b64a; outline-offset: -1px; }
     .v2-layer.v2-soloed .ambient-layer-name::after { content: ' S'; color: #f0b64a; font-weight: 700; }
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -14337,11 +14375,102 @@
     .ambient-pm-size { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
     .ambient-pm-place { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
 
-/* Tone cycle (scheduled Instrument Tone changes) */
-.ambient-toneseq-box { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.ambient-toneseq-step { display: inline-flex; gap: 3px; align-items: center; }
-.ambient-toneseq-step .ambient-toneseq-tone { max-width: 120px; }
-.ambient-toneseq-bars { width: 44px; }
+/* —— TONE SET — the voices this layer may play, on the bar clock ———————
+   ONE COLUMN. It used to be a single wrap-flex holding the switch, every voice and
+   the three dials, so voice 1 sat beside the On button and the rest wrapped under it
+   at whatever width their own text happened to need — reported as "awful … make more
+   symmetrical". Now: a header line, one full-width row per voice, the add button,
+   then the dials. */
+.ambient-toneseq-box { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tsq-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tsq-head > .ambient-toneseq-onoff { flex: 0 0 auto; min-width: 54px; }
+/* the summary wraps rather than pushing the switch off the line (the standing rule) */
+.tsq-sum { flex: 1 1 140px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+
+.tsq-steps { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/* THE SELECT IS THE ONLY THING THAT FLEXES, which is what puts the Bars box and the
+   ✕ at the same x in every row — the symmetry that was missing. The ⚙ sample-bank
+   button `populateGroupedToneSelect` injects after a tone select is optional and lands
+   between the select and Bars; it simply takes width from the select instead of
+   shifting a column, which is why this is a flex and not a grid. */
+.ambient-toneseq-step {
+  display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap;
+  padding: 4px 6px; border: 1px solid #23233a; border-radius: 9px; background: #12121f;
+}
+/* THE UNIT SELECT IS A FIXED COLUMN, so the ✕ still lands at the same x in every row —
+   and it is COMPOUNDED past `.ambient-select`'s `width: 100%`, which is declared later
+   in this file and has swallowed five controls that forgot to (the standing rule). */
+select.ambient-select.tsq-unit { flex: 0 0 92px; width: 92px; min-width: 0; }
+/* A PART ROW STATES ITS WINDOW ON ITS OWN LINE. `1 1 100%` is what makes the row wrap
+   rather than squeezing four more controls into a phone's width. */
+.tsq-partrow { flex: 1 1 100%; display: flex; align-items: center; gap: 5px; min-width: 0;
+  margin-top: 2px; padding-top: 5px; border-top: 1px dashed rgba(159,122,234,0.22); }
+select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
+.tsq-dl2 { flex: 0 0 auto; font-size: 0.58rem; color: #6f6f90; text-transform: uppercase; letter-spacing: 0.04em; }
+.ambient-toneseq-win {
+  box-sizing: border-box; flex: 0 0 52px; min-width: 0; background: #0a0a14; color: #e2e8f0;
+  border: 1px solid #2d2d3f; border-radius: 6px;
+  padding: 4px 6px; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+}
+.ambient-toneseq-win:focus { outline: none; border-color: #9f7aea; }
+@media (pointer: coarse) { .ambient-toneseq-win { font-size: 16px; } }
+/* A MAPPED ROW IS A DIFFERENT KIND OF STATEMENT from a counted one — it answers
+   "when", not "how long" — so it wears the part axis's own accent rather than
+   inventing a colour. */
+.ambient-toneseq-step.tsq-step-part { border-color: rgba(159,122,234,0.4); }
+.ambient-toneseq-step > .ambient-toneseq-tone { flex: 1 1 auto; min-width: 0; max-width: none; }
+.ambient-toneseq-step > .tone-manage-btn { flex: 0 0 auto; }
+/* THE ORDER CARRIES MEANING — ◇ Palette opens the list from the top, so 1 is the
+   voice you want most. */
+.tsq-n {
+  flex: 0 0 auto; min-width: 1.15em; text-align: center;
+  font: 600 0.62rem 'Segoe UI', sans-serif; color: #7e7ea0;
+}
+/* THE NUMBER BOXES ARE THE APP'S, not the browser's. Bare `input[type=number]` comes
+   out WHITE on this card and then dominates the row it is a detail of — the same dark
+   tokens `.ambient-ramp-num` uses, so the two number fields in Bloom match.
+   16px on a coarse pointer so iOS does not zoom the page on focus (the standing rule). */
+.ambient-toneseq-bars, .ambient-toneseq-num {
+  box-sizing: border-box; background: #0a0a14; color: #e2e8f0;
+  border: 1px solid #2d2d3f; border-radius: 6px;
+  padding: 4px 6px; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+}
+.ambient-toneseq-bars:focus, .ambient-toneseq-num:focus { outline: none; border-color: #9f7aea; }
+@media (pointer: coarse) {
+  .ambient-toneseq-bars, .ambient-toneseq-num { font-size: 16px; }
+}
+.ambient-toneseq-bars { flex: 0 0 52px; min-width: 0; }
+.tsq-u { flex: 0 0 auto; font-size: 0.58rem; color: #6f6f90; }
+/* A DELETE IS NOT THE LOUDEST THING IN THE ROW. It kept a red border heavy enough to
+   read as the row's subject; it stays findable and stops competing with the voice. */
+.ambient-toneseq-step > .ambient-toneseq-del {
+  flex: 0 0 auto; border-color: transparent; background: none; opacity: 0.55;
+}
+.ambient-toneseq-step > .ambient-toneseq-del:hover { opacity: 1; border-color: #7a3b4b; }
+.ambient-toneseq-add { align-self: stretch; text-align: center; }
+
+/* ◇ Palette · ◇ Doubling · Max voices — THREE EQUAL CELLS, label above the number.
+   `1fr` each so they are the same width whatever the labels say; at a phone's width
+   they wrap to two rows rather than scrolling (the standing rule). */
+.ambient-toneseq-dials {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+  min-width: 0; margin-top: 2px; padding-top: 7px; border-top: 1px solid rgba(159,122,234,0.18);
+}
+/* THREE CELLS DIVIDE BY 1 AND 3, NEVER 2 — a two-column fallback leaves Max voices
+   alone on a last row of one, which is the exact ragged shape the auto-fit rule in
+   `traps-ui.md` exists to stop. The labels wrap inside their cell instead; at the
+   narrowest it becomes one column, which is even by definition. */
+@media (max-width: 330px) { .ambient-toneseq-dials { grid-template-columns: minmax(0, 1fr); } }
+.tsq-dial { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tsq-dl {
+  font: 600 0.58rem 'Segoe UI', sans-serif; letter-spacing: 0.04em;
+  color: #a8b0c0; white-space: normal; overflow-wrap: anywhere;
+}
+.tsq-dial > .ambient-toneseq-num { width: 100%; min-width: 0; box-sizing: border-box; }
+/* A DISABLED DIAL MUST LOOK DISABLED, or "v2 layers only" is a title nobody sees on a
+   phone (the hint-in-a-title rule). */
+.tsq-dial-off { opacity: 0.45; }
+.ambient-toneseq-num:disabled { cursor: not-allowed; }
 
 /* Performance rec (play-along melody writing) */
 .ambient-piano-rec { background: none; border: none; color: #a33; font-size: 13px; cursor: pointer; opacity: 0.55; padding: 2px 5px; }
@@ -15003,6 +15132,17 @@
        for its ordinal badge, and re-setting it would collapse the badge's
        gutter. The edge simply thickens in place. */
     .ambient-pov-part[data-part] { border-left: 3px solid var(--pt, #2d2d3f); }
+    /* THE PART THE LAYERS ARE ON. While ▤ Parts is open the middle strip is hidden and
+       this card IS the picker, so it has to say which one is chosen — in that part's own
+       hue, because it is the same axis the strip's left edge carried. Painted by
+       `_ambPovMarkSel` from transient state, so it is deliberately OUT of the `_sig`. */
+    .ambient-pov-part.pov-part-sel { border-color: var(--pt, #9f7aea);
+      box-shadow: inset 0 0 0 1px var(--pt, #9f7aea); background: rgba(255,255,255,0.05); }
+    .ambient-pov-part.pov-part-sel > .ambient-pov-ord { background: rgba(159,122,234,0.16); }
+    /* ↻ LOOPING — armed from the card's ⋯ menu while the strip's own button is hidden.
+       On the rail, under the ordinal, where `.pov-playing` already speaks. */
+    .ambient-pov-part.pov-loop > .ambient-pov-ord::after { content: '\21bb'; font-size: 0.62rem;
+      line-height: 1; color: #9fe7de; }
     .ambient-pov-part[data-part] > .ambient-pov-parthdr > .ambient-pov-partname,
     .ambient-pov-part[data-part] > .ambient-pov-solohdr > .ambient-pov-partname { color: var(--pt, #e2e8f0); }
     /* THE CONTENT HEAD'S PER-PART TOGGLE wears the part it is currently on —
@@ -15283,6 +15423,42 @@
       font-size: 0.66rem; color: #8b8baa;
     }
 
+    /* ── AN ACCORDION HAS TO LOOK LIKE ONE ───────────────────────
+       (2026-09-27, user: "these subsections need to be more obviously expandable
+       subsections".) The head was a transparent, borderless, quiet-grey uppercase
+       caption whose only affordance — the caret — was pushed to the far RIGHT by
+       `margin-left: auto`. At pane width that puts it hundreds of pixels from the word
+       it belongs to, so the row reads as a section LABEL and not as something you press.
+       Three changes, no new markup: a pressable surface, a brighter label, and the caret
+       moved to LEAD the title (`order: -1`, so nothing that queries the head's children
+       changes).
+       SCOPED TO `.ambient-proggrp` — the layer cards' own groups sit inside a sheet that
+       is already a surface, and giving every one of them a box would be chrome. */
+    .ambient-proggrp > .ambient-grp-head {
+      background: #12121f; border: 1px solid #23233a; border-radius: 8px;
+      padding: 8px 10px; min-height: 34px; color: #a9a9c8;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    }
+    .ambient-proggrp > .ambient-grp-head:hover {
+      background: #17172a; border-color: #3a3a63; color: #d8ccf5;
+    }
+    /* OPEN READS AS ATTACHED to what it opened — the square bottom corners are the
+       cheapest way to say "this header owns the box under it". */
+    .ambient-proggrp.open > .ambient-grp-head {
+      color: #d8ccf5; border-color: #3a3a63;
+      border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent;
+    }
+    .ambient-proggrp > .ambient-grp-head > .ambient-grp-caret {
+      order: -1; margin-left: 0; margin-right: 6px; font-size: 0.78rem; opacity: 0.9;
+    }
+    /* the rule above the group is redundant once the head is a box of its own */
+    .ambient-proggrp { border-top: none; margin-top: 8px; }
+    .ambient-proggrp.open > .ambient-grp-body {
+      border: 1px solid #3a3a63; border-top: none;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+      padding: 10px; margin-top: 0;
+    }
+
     /* ✺ VARIATION — A GRID, NOT A WRAPPING LINE.
        Six axes of one subject, so they are six identical cells on a symmetric grid —
        the same answer 🧂 THE SALT DIALS below got to the same complaint ("present in
@@ -15380,6 +15556,11 @@
     .ambient-nov-balrow[data-novax="t"] { border-left: 3px solid #5aa9e6; }
     .ambient-nov-balrow[data-novax="f"] { border-left: 3px solid #e6a35a; }
     .ambient-nov-balrow[data-novax="x"] { border-left: 3px solid #5ac8a0; }
+    /* A NEW AXIS NEEDS ITS COLOUR IN THE SAME CHANGE, or it is the one row with no
+       accent — the same "added to the JS list, missing from the CSS" gap the sheet's
+       tab selectors record, and the one place nobody looks. Magenta: clear of the four
+       above and of the state colours (green sounding · amber inert · red delete). */
+    .ambient-nov-balrow[data-novax="i"] { border-left: 3px solid #e07aba; }
     .ambient-nov-preview {
       display: flex; flex-direction: column; gap: 2px; min-width: 0;
       padding: 9px 10px; border: 1px solid #23233a; border-radius: 10px; background: #0f0f1c;

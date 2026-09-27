@@ -71,6 +71,41 @@ byte-identical.
 - **Voice**: `synth` (pitched) · `kit` (drum map; unpitched) · `sample` (buffer; pitch = varispeed).
 - A **tone**, or a **set of tones** (a kit; or per-degree/per-lane/per-note tones that
   the material assigns per event — the wrap-ensemble case).
+- **◇ TONE SET — A ROW STATES ITS OWN UNIT (2026-09-27).** Each voice says how long it
+  holds AND in what: `{ tone, bars }` counts BARS (as it always did), `{ tone, unit:'chg',
+  bars }` counts CHANGES, and `{ tone, unit:'part', part, at?, len? }` is not a turn in
+  the queue at all — it is an ANSWER: that voice plays while that part plays, optionally
+  narrowed to a window inside it stated in changes (`at`/`len`, fractional — "the second
+  half of change 3"). Counts are WHOLE OR FRACTIONAL, quantized to ¼. `bars` keeps its
+  key whatever the row counts (save-compat); `unit`/`part`/`at`/`len` are additive and
+  absent by default, and a set with no unit anywhere resolves through the ORIGINAL
+  arithmetic, so every saved project sounds as it did. A change row is measured by
+  WALKING THE REAL CHORDS (`_ambTsqExtSec`), never a bar average, or "2 changes" slides
+  off the changes it is named after the moment a cadence is uneven. A part row wins over
+  the cycle, most-specific-first, and neither ◇ Palette nor ◇ Doubling may re-pick it.
+- **◇ TONE SET — the voice can be CHOSEN, and several can sound at once (2026-09-26).**
+  `L.toneSeq = { on, steps: [{ tone, bars, unit?, part?, at?, len? }], pal, dub, maxV }`
+  (Instrument ▸ Tone set).
+  The set had always cycled by POSITION on the bar clock; two dials make it an axis:
+  **◇ Palette** (`pal` 0–100) opens the list from the top — N entries become eligible
+  and a hash picks one per cycle lap, so **the set is ordered by priority**; **◇ Doubling**
+  (`dub` 0–100) is how OFTEN more than one voice sounds on the SAME note at the SAME
+  time, rolled per onset and capped by **Max voices** (2–3).
+  Both resolve through `_ambChordHash01` — deterministic, ZERO shared-RNG draws — and
+  `pal`/`dub` at 0 prune to absent, which is why a layer that sets neither is
+  bit-identical and golden-render is unmoved. `_ambToneAt` returns the LEAD voice (its
+  signature is unchanged, so all nine v1 call sites are untouched); `_ambToneStackAt`
+  returns the extras, and the caller owns headroom because only it knows what a voice
+  costs on its own path.
+  **Only the v2 layer stacks so far.** The fan-out lives at v2's single `playNote`; v1's
+  bed/bass/motif/texture/arp build params in nine places and emit in nine more, so there
+  the two dials render DISABLED and say why. ◇ Palette works everywhere, because it only
+  changes which single tone the lead resolves to.
+  **Driven by ✺ Novelty (2026-09-26)** as its fifth axis, ◇ Instrument — the first row in
+  that plan that writes a LAYER rather than `prog`. It moves `pal` on every eligible layer
+  and `dub` only on the ones that can stack, never `maxV` (the user's ceiling) and never
+  `steps` (hand-authored). Its undo rung is keyed BY LAYER KEY, not by position.
+  Gates: `node test/probe-toneset.js` (24 checks) · `node test/probe-novelty.js` §8.
 
 *Author grid docking (2026-07-15):* choosing **Author** on a layer's Seed
 seg now DOCKS the layer's whole composing surface (the editable lock-roll grid

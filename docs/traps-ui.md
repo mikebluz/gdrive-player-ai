@@ -80,6 +80,22 @@
   GREW on the press before looking at the handler — a built-but-hidden panel and a handler that never
   ran look identical from the outside, and they are opposite bugs.
 
+- **A `.modal-overlay` OPENED FROM INSIDE A SECTION SHEET IS BEHIND IT.** The base rung is z 1200 and
+  `.v2-secpop-wrap` is 10250, so from Mix ▸ Ramps the ramp-target picker BUILT COMPLETELY — 390×780,
+  all 61 targets in it — and painted under the sheet that opened it. Reported as "the Ramp target
+  dropdown does nothing on click" (2026-09-26). Give that one modal its own class in the dialog band
+  (`.amb-ramptgt-ov`, 10320) rather than raising every modal in the app. Same family as `#sd-overlay`
+  and ✎ Written's menu, and the same diagnostic: when a press seems dead, ask whether the DOM GREW
+  first — a built-but-covered panel and a handler that never ran are opposite bugs that look alike.
+  **A BOX ON THE BUTTON PROVES NOTHING ABOUT THE SURFACE BEHIND IT** — `probe-v2ramps` measured that
+  button's rect happily for six days. Hit-test the MENU's first item, not the opener.
+
+- **PANEL IDS ARE NAMESPACED PER ENGINE (`_ambTrId`), so `el.id === 'ambient-…'` matches
+  NOTHING on the master.** The Mix master's prefix is `mix-bloom`, so its overview group
+  is `mix-bloom-proggrp-overview`. Look elements up with `_ambGet(E, 'ambient-…')`, which
+  translates; test an id you are handed with a SUFFIX (`/(^|-)proggrp-overview$/`). Probes
+  have the same problem from outside — `document.getElementById('ambient-curpart')` is
+  null there, `[id$="-curpart"]` is not.
 - **A SHEET'S DEFAULT TAB IS `visTabs[0]`, SO TAB ORDER DECIDES WHERE IT OPENS.** FX opened on
   `Chain` purely because Chain is first in that group's list — and since Chain sits BESIDE the
   effect dropdown rather than inside it, the select read "Delay" while Chain was lit: two controls
@@ -88,6 +104,30 @@
   While checking it: **no tab choice survives closing the section sheet** — it reopens on the default
   whatever you left it on, for every group.
 
+- **A ROW OF CONTROLS AND A LIST OF ROWS ARE DIFFERENT LAYOUTS — one wrap-flex cannot be
+  both.** The Tone set held its On switch, every voice and three dials in a single
+  `flex-wrap: wrap`, so the switch sat inline with voice 1 (indenting it differently from
+  2 and 3) and each row wrapped at whatever width its own `<select>` text needed.
+  Reported as "awful … make more symmetrical". A control ABOUT the whole list is a header
+  and belongs on its own line; the list is a column; each row is a flex whose ONE flexing
+  child is the wide field, which is what puts every trailing control at the same x.
+  **AN OPTIONAL CHILD IS WHY IT IS A FLEX AND NOT A GRID:** `populateGroupedToneSelect`
+  injects a ⚙ sample-bank button after any tone select that offers samples, so a grid
+  template would shift a column when it appears; in a flex it just takes width from the
+  select.
+- **A LAYOUT CHECK AT 390px CANNOT SEE A WRAP REGRESSION.** `test:ui` is single-viewport
+  and a row wide enough to fill a phone wraps one-per-line under ANY flex setting, so
+  "every row starts at the same x" passes against the broken layout too. What IS testable
+  there is OVERFLOW (poison the flexing child's `min-width: 0` and the audit catches it)
+  — and a fixture whose rows all hold the SAME text cannot catch a width bug at all, so
+  give them different-length labels before measuring.
+- **A BARE `input[type=number]` COMES OUT WHITE** and then dominates the row it is a
+  detail of. Bloom's dark number token is `.ambient-ramp-num`'s (`#0a0a14` on `#2d2d3f`);
+  match it, and bump to 16px under `@media (pointer: coarse)` so iOS does not zoom on
+  focus.
+- **THREE CELLS DIVIDE BY 1 AND 3, NEVER 2.** A two-column fallback for a three-up row
+  leaves the last cell alone on a row of one — the same ragged shape the `auto-fit` entry
+  above records, one size down. Let the labels wrap inside their cell instead.
 - **`.ambient-select` is `width: 100%` and declared LATE.** Dropped into an auto-sized inline-flex or
   flex row it demands the whole line and crushes its siblings — it has swallowed at least five
   controls. Fix with a COMPOUND selector (`select.ambient-select.<its-class>`), an explicit width and
@@ -234,13 +274,21 @@
   both the displayed `from`/`to` AND the `write` that Apply runs, so the two cannot drift. Poison-verified:
   making the write differ from its own row's `to` by 3 fails a named check.
 
-- **A SYNC THAT WRITES A CONTROL MUST SKIP THE FOCUSED ELEMENT.** `el.value = stored` on a gate/sync
-  pass lands INSIDE an open native `<select>` picker and puts the old value back — the user picks, the
-  sync stomps it, and nothing in the store or the console says so. Reported as "selecting an option
-  does nothing" (`_ambSyncModShapeEl`, 2026-09-25; it was the one sync in 17-ambient without the
-  `document.activeElement !== el` guard every other one already used). Headless CANNOT reproduce it:
-  a `<select>` never takes focus there, `activeElement` stays `BODY`, so a probe must force
-  `activeElement` to test the guard at all.
+- **A SYNC THAT WRITES A CONTROL MUST SKIP THE FOCUSED ELEMENT — AND THERE MUST BE ONLY ONE SYNC.**
+  `el.value = stored` on a gate/sync pass lands INSIDE an open native `<select>` picker and puts the
+  old value back — the user picks, the sync stomps it, and nothing in the store or the console says
+  so. Reported as "selecting an option does nothing" (`_ambSyncModShapeEl`, 2026-09-25; it was the one
+  sync in 17-ambient without the `document.activeElement !== el` guard every other one already used).
+  Headless CANNOT reproduce it: a `<select>` never takes focus there, `activeElement` stays `BODY`, so
+  a probe must force `activeElement` to test the guard at all.
+  **A GUARD ON ONE OF TWO WRITERS IS NOT A GUARD (2026-09-26).** The report came straight back,
+  because `applyGate` kept a hand-rolled COPY of that sync — `sh.value = mt.shape`, no guard — and
+  both of the copy's differences from the real function were bugs. **The store's value is not always
+  the dropdown's value:** a sequence wave is `shape:'seq'` + `seqRef:n` against an option valued
+  `seq:<n>`, so the compare never matched, the write set `'seq'`, that matches NO option, and the
+  select fell to value `""` and rendered option 0 — pick a saved sequence and it snapped back to
+  `sine`. When two places write one control, DELETE ONE; a mirror that restates a mapping will get the
+  mapping wrong.
 - **Binding once and syncing every pass are DIFFERENT JOBS — only the binding may be guarded.** v2's
   mod wiring put both behind `card.__v2modWired`, so `_ambWireModTarget` ran while its partner
   `_ambSyncModShapeEl` never did: the Shape select's dependent rows (Harmonics for `custom`, the seq

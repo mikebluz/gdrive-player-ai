@@ -73,6 +73,87 @@ const ok = (name, cond, detail) => {
     plan.labels.some(l => /Parts/.test(l)) && plan.labels.some(l => /Arc/.test(l)),
     JSON.stringify(plan.labels));
 
+  // ---- 1b. THE REPEATS RANGE -------------------------------------------------
+  // 🎲 Repeats … to shipped as §4c on 2026-09-26 and the macro could not see it:
+  // the Form axis wrote `arrOrder` and `chance` only, so a control that existed was
+  // invisible to the dial. It is the CEILING that moves — `plays` is the user's own
+  // floor and must come out untouched — and the ceiling is per part, because one
+  // shared number would flatten a 1× part and a 4× part into the same thing.
+  console.log('\n  1b. 🎲 Repeats … to — the ceiling, per part, floors untouched');
+  const rng = await page.evaluate(() => {
+    const E = _masterEng, c = E.getCfg();
+    // three DIFFERENT floors, so a shared ceiling could not pass
+    c.prog.parts = [{ name: 'A', len: 2 }, { name: 'B', len: 2, plays: 3 }, { name: 'C', len: 2, plays: 4 }];
+    c.prog.parts.forEach(pt => delete pt.playsTo);
+    const c2 = E.getCfg();
+    const row = (amount) => _ambNovPlan(c2, { amount, bal: { h: 50, t: 50, f: 50, x: 50 } })
+      .find(r => r.label.indexOf('Repeats') >= 0);
+    // READ THE OBJECT APPLY WROTE, not a fresh `getCfg`. The normalizer also drops a
+    // ceiling that is not above its floor, so re-normalizing hides whether the WRITE
+    // pruned — and the write has to, for the same reason the ± edit path repeats the
+    // rule: what is on screen before the next getCfg must already be right.
+    const apply = (amount) => { _ambNovUiSet({ amount, bal: { h: 50, t: 50, f: 50, x: 50 } });
+      const cfgA = E.getCfg();
+      _ambNovApply(E, cfgA);
+      return (cfgA.prog.parts || []).map(pt => (pt.plays | 0 || 1) + '>' + (Number.isFinite(pt.playsTo) ? (pt.playsTo | 0) : '-')); };
+    const out = { at30: row(30).to, at55: row(55).to, at100: row(100).to,
+                  applied55: apply(55), applied100: apply(100), backTo30: apply(30) };
+    // the FLOORS must be exactly what they were, at every amount
+    out.floors = E.getCfg().prog.parts.map(pt => (pt.plays | 0) || 1);
+    // …and the ceiling is clamped, not run past the top of the store
+    c.prog.parts[2].plays = 64; E.getCfg();
+    apply(100);
+    out.clamped = (E.getCfg().prog.parts[2] || {}).playsTo;
+    return out;
+  });
+  ok('below the threshold it is FIXED — no ceiling, so an old project rolls nothing',
+    rng.at30 === 'fixed' && rng.applied55 !== undefined, JSON.stringify(rng));
+  ok('a mid amount widens every part by one pass, over its OWN floor',
+    rng.at55 === '+1 pass' && JSON.stringify(rng.applied55) === '["1>2","3>4","4>5"]', JSON.stringify(rng.applied55));
+  ok('…and full widens it further', rng.at100 === '+3 passes' &&
+    JSON.stringify(rng.applied100) === '["1>4","3>6","4>7"]', JSON.stringify(rng.applied100));
+  ok('turning the dial back DOWN takes the range away rather than leaving a stale ceiling',
+    JSON.stringify(rng.backTo30) === '["1>-","3>-","4>-"]', JSON.stringify(rng.backTo30));
+  ok('the floor the user set is never written', JSON.stringify(rng.floors) === '[1,3,4]',
+    JSON.stringify(rng.floors));
+  ok('the ceiling is clamped to the top of the store', rng.clamped === undefined || rng.clamped === 64,
+    String(rng.clamped));
+
+  // ---- 1c. ARC AT THE PART RUNG ----------------------------------------------
+  // \u00a74d shipped `parts[i].arc = { amount }` on 2026-09-25 and the macro drove only
+  // the AREA rung, so half of \u00a75b's Orchestration idea had no dial. This row is the
+  // only one that writes a DIFFERENT value per part, which is the whole point: one
+  // value everywhere is what the area rung already is.
+  console.log('\n  1c. \ud83c\udf12 Arc \u00b7 per part — parts breathe by different amounts');
+  const parc = await page.evaluate(() => {
+    const E = _masterEng, c = E.getCfg();
+    c.prog.parts = [{ name: 'A', len: 2 }, { name: 'B', len: 2 }, { name: 'C', len: 2 }];
+    c.prog.parts.forEach(pt => { delete pt.arc; delete pt.playsTo; });
+    delete c.prog.arc;
+    const c2 = E.getCfg();
+    const row = (amount) => _ambNovPlan(c2, { amount, bal: { h: 50, t: 50, f: 50, x: 50 } })
+      .find(r => r.label.indexOf('per part') >= 0);
+    // READ THE OBJECT APPLY WROTE — a fresh getCfg re-normalizes and would hide
+    // whether the write itself cleared the overrides.
+    const apply = (amount) => { _ambNovUiSet({ amount, bal: { h: 50, t: 50, f: 50, x: 50 } });
+      const cfgA = E.getCfg(); _ambNovApply(E, cfgA);
+      return { per: (cfgA.prog.parts || []).map(pt => (pt.arc && typeof pt.arc === 'object') ? (pt.arc.amount | 0) : '-'),
+               area: (cfgA.prog.arc && (cfgA.prog.arc.amount | 0)) || 0 }; };
+    return { at40: row(40).to, at55: row(55).to, at100: row(100).to,
+             a55: apply(55), a100: apply(100), back: apply(40) };
+  });
+  ok('below the threshold every part inherits — nothing per part is stored',
+    parc.at40 === 'even' && JSON.stringify(parc.back.per) === '["-","-","-"]', JSON.stringify(parc));
+  ok('above it the parts land either side of the area depth, not all on it',
+    parc.at55 === '\u00b119' && JSON.stringify(parc.a55.per) === '[25,63,25]' && parc.a55.area === 44,
+    JSON.stringify(parc.a55));
+  ok('…the spread widens with the dial, and is clamped at the top of the store',
+    parc.at100 === '\u00b135' && JSON.stringify(parc.a100.per) === '[45,100,45]', JSON.stringify(parc.a100));
+  ok('…and the AREA rung keeps saying exactly what its own row promised',
+    parc.a100.area === 80, String(parc.a100.area));
+  ok('turning the dial back down hands the parts back to the area, not to a stale depth',
+    JSON.stringify(parc.back.per) === '["-","-","-"]' && parc.back.area === 32, JSON.stringify(parc.back));
+
   // ---- 2. BALANCE LEANS, IT DOES NOT ADD -------------------------------------
   console.log('\n  2. balance leans the change, it never adds any');
   const bal = await page.evaluate(() => {
@@ -155,7 +236,7 @@ const ok = (name, cond, detail) => {
   ok('with no changes ONLY 🌒 Arc is live — every other axis needs the chord clock',
     JSON.stringify(empty.live) === '["🌒 Arc"]', JSON.stringify(empty.live));
   ok('…the dead rows say WHY rather than showing a number that cannot act',
-    empty.whys.every(w => /needs changes|two sets/.test(w || '')), JSON.stringify(empty.whys));
+    empty.whys.every(w => /needs changes|two sets|Tone set/.test(w || '')), JSON.stringify(empty.whys));
   ok('…Apply writes only the one that can be heard',
     empty.applied === 1 && empty.arcSet > 0, JSON.stringify([empty.applied, empty.arcSet]));
   ok('…and stores NO harmony or time key it could not act on',
@@ -170,7 +251,7 @@ const ok = (name, cond, detail) => {
     const E = _masterEng, c = E.getCfg();
     ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach(k => delete c.prog[k]);
     c.prog.vary = 17;                       // a hand-set value that must come back
-    c.prog.parts.forEach(pt => delete pt.chance);
+    c.prog.parts.forEach(pt => { delete pt.chance; delete pt.playsTo; delete pt.arc; });
     const before = JSON.stringify({ v: c.prog.vary, a: c.prog.arc, o: c.prog.arrOrder });
     _ambNovUiSet({ amount: 80, bal: { h: 50, t: 50, f: 50, x: 50 } });
     _ambNovApply(E, E.getCfg());
@@ -178,12 +259,18 @@ const ok = (name, cond, detail) => {
     _ambNovRevert(E, E.getCfg());
     const c3 = E.getCfg();
     const after = JSON.stringify({ v: c3.prog.vary, a: c3.prog.arc, o: c3.prog.arrOrder });
-    return { before, mid, after, chanceGone: (c3.prog.parts || []).every(pt => !Number.isFinite(pt.chance)) };
+    return { before, mid, after,
+             chanceGone: (c3.prog.parts || []).every(pt => !Number.isFinite(pt.chance)),
+             rangeGone: (c3.prog.parts || []).every(pt => !Number.isFinite(pt.playsTo)),
+             partArcGone: (c3.prog.parts || []).every(pt => !pt.arc) };
   });
   ok('apply changed things', undo.before !== undo.mid, JSON.stringify([undo.before, undo.mid]));
   ok('…and undo puts the hand-set value back exactly',
     undo.after === undo.before, JSON.stringify([undo.before, undo.after]));
   ok('…including the per-part 🎲 Chance it wrote', undo.chanceGone === true, String(undo.chanceGone));
+  ok('…and the per-part repeats CEILING it wrote', undo.rangeGone === true, String(undo.rangeGone));
+  ok('…and the per-part \ud83c\udf12 Arc depth, which is an OBJECT and a different snapshot key',
+    undo.partArcGone === true, String(undo.partArcGone));
 
   // ---- 5. ONE PART — SAY SO, DO NOT WRITE ------------------------------------
   console.log('\n  5. with one part there is no form to move');
@@ -193,8 +280,12 @@ const ok = (name, cond, detail) => {
     const c2 = E.getCfg();
     const rows = _ambNovPlan(c2, { amount: 90, bal: { h: 50, t: 50, f: 50, x: 50 } });
     const partsRow = rows.find(r => r.label.indexOf('Parts') >= 0);
+    const rngRow = rows.find(r => r.label.indexOf('Repeats') >= 0);
     return { inert: !!(partsRow && !partsRow.write), why: partsRow ? partsRow.why : null,
              noChanceRow: !rows.some(r => r.label.indexOf('Chance') >= 0),
+             rangeLive: !!(rngRow && rngRow.write && rngRow.live !== false),
+             noRangeRow: !rngRow,
+             noPartArcRow: !rows.some(r => r.label.indexOf('per part') >= 0),
              othersStillWrite: rows.filter(r => r.write).length > 5 };
   });
   ok('the ↻ Parts row goes inert rather than offering a write that cannot act',
@@ -202,6 +293,11 @@ const ok = (name, cond, detail) => {
   ok('…and it names the way forward instead of showing a dead number',
     /second set of changes/i.test(one.why || ''), JSON.stringify(one.why));
   ok('…while every other axis still applies', one.othersStillWrite === true, String(one.othersStillWrite));
+  // `prog.parts` is PRUNED at one part, so there is no per-part store for a ceiling —
+  // the range is offered with the rest of the form or not at all, exactly like
+  // 🎲 Chance. Asserting its ABSENCE is what stops it drifting back to a dead row.
+  ok('…and neither the repeats range nor the per-part Arc is offered — no per-part store',
+    one.rangeLive === false && one.noRangeRow === true && one.noPartArcRow === true, JSON.stringify(one));
 
   // ---- 6. REACHABLE ----------------------------------------------------------
   console.log('\n  6. reachable — measured, and driven with a real press');
@@ -290,14 +386,94 @@ const ok = (name, cond, detail) => {
   else {
     ok('moving the dial updates the sentence', /improvises|different take/.test(drive.saysAt80 || ''),
       JSON.stringify(drive.saysAt80));
-    ok('▸ Shape it reveals exactly four balance rows',
-      drive.balShown === true && drive.balRows === 4, JSON.stringify([drive.balShown, drive.balRows]));
+    // FIVE SINCE 2026-09-26 — ◇ Instrument joined, because "which voice plays it" is a
+    // fifth question and not a corner of Texture. The count is asserted exactly, so a
+    // sixth axis cannot arrive without someone reading the reasoning in `_AMB_NOV_AXES`.
+    ok('▸ Shape it reveals exactly five balance rows, one per axis',
+      drive.balShown === true && drive.balRows === 5, JSON.stringify([drive.balShown, drive.balRows]));
     ok('Apply writes through to the real config',
       drive.wrote.vary > 0 && drive.wrote.arc > 0 && drive.wrote.parts === 'shuffle',
       JSON.stringify(drive.wrote));
     ok('…↶ Undo appears once there is something to undo', drive.undoShown === true, String(drive.undoShown));
     ok('…and takes it all back', drive.reverted === true, String(drive.reverted));
   }
+
+  // ---- 8. ◇ TONE SET — THE AXIS THAT WRITES A LAYER ------------------------
+  // (2026-09-26.) Every other row writes `prog`. This one moves the two dials on a
+  // layer's own Tone set, which is why the undo snapshot had to grow a layer rung —
+  // keyed BY LAYER, because layers are added and deleted freely and an index-keyed
+  // snapshot restores the wrong layer's voices the moment one goes.
+  console.log('\n  8. ◇ Tone set — the row that writes layers, not the arrangement');
+  await setUp();
+  // A v2 LAYER, through the real door — this file's fixture is arrangement-only, so
+  // there is none until now, and ◇ Doubling is exactly the thing only a v2 layer has.
+  await page.evaluate(() => { const b = document.getElementById('mix-bloom-add-layer');
+    b.scrollIntoView({ block: 'center' }); b.click(); });
+  await zz(450);
+  await page.evaluate(() => { const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
+    (bs.find((x) => x.textContent.trim() === 'Layer') || bs[0]).click(); });
+  await zz(700);
+  const tset = await page.evaluate(async () => {
+    const E = _masterEng;
+    const c = E.getCfg();
+    const L2 = (c.layers || [])[0];
+    // a v2 layer (stacks) and a v1 layer (swaps only), with DIFFERENT priors so a
+    // restore cannot pass by writing one value everywhere
+    L2.toneSeq = { on: 1, steps: [{ tone: 'sine', bars: 4 }, { tone: 'square', bars: 4 }], pal: 11 };
+    c.bed.toneSeq = { on: 1, steps: [{ tone: 'sine', bars: 4 }, { tone: 'triangle', bars: 2 }], pal: 22 };
+    E.getCfg();
+    const rows = (amount) => _ambNovPlan(E.getCfg(), { amount, bal: { h: 50, t: 50, f: 50, x: 50, i: 50 } });
+    const row = (amount) => rows(amount).find(r => r.label.indexOf('Tone set') >= 0);
+    const out = { label: (row(55) || {}).label, at55: (row(55) || {}).to, at100: (row(100) || {}).to,
+                  live: (row(55) || {}).live };
+    // the AXIS is its own — leaning Instrument down must not move it via Texture
+    const leaned = _ambNovPlan(E.getCfg(), { amount: 80, bal: { h: 50, t: 50, f: 50, x: 50, i: 0 } })
+      .find(r => r.label.indexOf('Tone set') >= 0);
+    out.leanedOff = leaned ? leaned.to : null;
+    // APPLY at full, then read both layers back
+    _ambNovUiSet({ amount: 100, bal: { h: 50, t: 50, f: 50, x: 50, i: 50 } });
+    _ambNovApply(E, E.getCfg());
+    const rd = () => { const c3 = E.getCfg();
+      const a = (c3.layers || [])[0].toneSeq || {}, b = c3.bed.toneSeq || {};
+      return { v2: { pal: a.pal, dub: a.dub, maxV: a.maxV, steps: (a.steps || []).length },
+               v1: { pal: b.pal, dub: b.dub, maxV: b.maxV, steps: (b.steps || []).length } }; };
+    out.applied = rd();
+    // the snapshot must be keyed BY LAYER
+    out.snapKeys = (function () { try { return Object.keys(JSON.parse(_ambNovUndo.snap).tset || {}).sort(); }
+      catch (e) { return ['<err ' + e.message + '>']; } })();
+    // a layer whose set has GONE between Apply and Undo must be skipped, not throw
+    delete E.getCfg().bed.toneSeq;
+    out.reverted = _ambNovRevert(E, E.getCfg());
+    const c4 = E.getCfg();
+    out.after = { v2pal: ((c4.layers || [])[0].toneSeq || {}).pal,
+                  v2dub: ((c4.layers || [])[0].toneSeq || {}).dub,
+                  v1: !!c4.bed.toneSeq };
+    return out;
+  });
+  ok('the row is offered, and live, once a layer has a Tone set of two voices',
+    tset.label === '◇ Tone set' && tset.live === true, JSON.stringify(tset));
+  ok('…and it names how many layers it speaks for',
+    /2 layers/.test(tset.at55 || ''), JSON.stringify(tset.at55));
+  ok('…◇ Palette at mid, and ◇ Doubling only from higher up',
+    /palette/.test(tset.at55 || '') && !/doubling/.test(tset.at55 || '') && /doubling/.test(tset.at100 || ''),
+    JSON.stringify([tset.at55, tset.at100]));
+  ok('…it is its OWN axis — leaning Instrument to 0 switches it off alone',
+    /off/.test(tset.leanedOff || ''), JSON.stringify(tset.leanedOff));
+  ok('Apply writes ◇ Palette to every eligible layer',
+    tset.applied.v2.pal === 90 && tset.applied.v1.pal === 90, JSON.stringify(tset.applied));
+  ok('…◇ Doubling ONLY to the layers that can actually stack',
+    tset.applied.v2.dub > 0 && tset.applied.v1.dub === undefined, JSON.stringify(tset.applied));
+  ok('…it never writes the voice CAP, which is the user\u2019s ceiling',
+    tset.applied.v2.maxV === undefined && tset.applied.v1.maxV === undefined, JSON.stringify(tset.applied));
+  ok('…and never adds, removes or reorders a voice — the set is hand-authored',
+    tset.applied.v2.steps === 2 && tset.applied.v1.steps === 2, JSON.stringify(tset.applied));
+  ok('the undo snapshot is keyed BY LAYER, not by position',
+    JSON.stringify(tset.snapKeys) === '["bed","v2:1"]', JSON.stringify(tset.snapKeys));
+  ok('↶ Undo puts each layer\u2019s OWN prior back',
+    tset.reverted === true && tset.after.v2pal === 11 && tset.after.v2dub === undefined,
+    JSON.stringify(tset.after));
+  ok('…and a layer whose set has gone since is skipped, not thrown away with the undo',
+    tset.after.v1 === false, JSON.stringify(tset.after));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

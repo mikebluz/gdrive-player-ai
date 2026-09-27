@@ -267,11 +267,13 @@ The original ask was two things: *add stochastic/generative aspects* **and** *ma
 even easier*. §§2–4 did the first. Ten dice across six doors is more capable and not
 yet easier, which is what this closes.
 
-**FOUR macros, not the three this section first guessed at.** Three was inherited
-from ⚙ Deep's macros rather than derived. Grouped by the question each die answers
-they fall into four — Harmony (which chord) · Time (when it falls) · Form (what comes
-next) · Texture (how much plays) — and the fourth is Time, which schema v10 split out
-of 🧂 Salt **on purpose**. Folding it back into Harmony here would put one vocabulary
+**FOUR macros, not the three this section first guessed at** — and **FIVE since
+2026-09-26.** Three was inherited from ⚙ Deep's macros rather than derived. Grouped by
+the question each die answers they fall into four — Harmony (which chord) · Time (when
+it falls) · Form (what comes next) · Texture (how much plays) — and the fourth is Time,
+which schema v10 split out of 🧂 Salt **on purpose**. ◇ Instrument (which voice plays
+it) is the fifth, by the same test: it is a question none of the other four asks, and
+folding it into Texture would have put two questions under one slider. Folding it back into Harmony here would put one vocabulary
 over two mechanisms in the macro layer, which is the naming rule's exact failure.
 (Time drives one die today; the Rubato store was deliberately built with room beside
 `amount` for anticipation, skipped changes and a harmonic swing, so the axis is thin,
@@ -297,23 +299,66 @@ per-axis doors, unchanged.
   ↻ Parts row goes **inert with one part**, naming the way forward rather than
   offering a write that cannot act.
 
-Gate: `node test/probe-novelty.js`, 34 checks, poison-verified on three axes — the
-write drifting from its preview, balance adding instead of leaning, and undo
-forgetting the per-part Chance. Golden 82/82, arch-parity 72/72, mod-parity 9/9 all
+Gate: `node test/probe-novelty.js`, 65 checks, poison-verified on ten axes — the
+write drifting from its preview, balance adding instead of leaning, undo forgetting
+either per-part key, the repeats row writing the FLOOR instead of the ceiling, and it
+leaving a stale ceiling instead of pruning, the per-part Arc row writing ONE depth
+everywhere instead of alternating, it failing to hand the parts back on the way down,
+◇ Doubling written to layers that cannot stack, the voice cap overwritten, and the layer
+snapshot keyed by position instead of by layer. Golden 82/82, arch-parity 72/72, mod-parity 9/9 all
 unmoved: it writes only keys that already existed.
 
 Mockup and the rejected shapes (one dial only · named presets · four independent
 dials): https://claude.ai/artifact/P6sotcovHbcuQ5omYxPJCH
 
-## 5b. Still open from the original plan
+## 5b. ~~Still open from the original plan~~ — CLOSED 2026-09-26
 
 ⚙ Deep already solved this shape: three macros (Flourishes · Looseness · Thinning)
-over nine dice, with per-die access behind ▸ Advanced. The arrangement wants the
-same — one **✺ Novelty** group with three:
+over nine dice, with per-die access behind ▸ Advanced. The arrangement wanted the
+same — one **✺ Novelty** group with three. All three now reach every control that
+exists; what is left below is named as an ENGINE gap, not a wiring one.
 
-- **Harmony drift** → `vary` + salt colours + tension
-- **Form** → ↻ Parts + 🎲 Chance (both shipped; plays range is §4c)
-- **Orchestration** → 🌒 Arc depth, area and part (shipped) + a spread over the mask percentages
+- **Harmony drift** → `vary` + salt colours + tension — wired since §5.
+- ~~**Form** → ↻ Parts + 🎲 Chance + the plays range~~ — **all three wired 2026-09-26.**
+  🎲 Repeats … to writes `parts[i].playsTo` = each part's OWN floor + 1/2/3 passes from
+  F ≥ 40 (below ↻ Parts' 45, as the gentlest of the three: nothing is removed and
+  nothing reordered). It sits INSIDE the two-part branch although a single vamp running
+  2–4× is a good musical idea — **`prog.parts` is pruned at one part**, so there is no
+  per-part store to write a ceiling into, and the inert ↻ Parts row already names the
+  way forward for the whole axis.
+- ~~**Instrument** → the Tone set's two dials~~ — **wired 2026-09-26**, and it was not on
+  the original list at all: `◇ Tone set` moves ◇ Palette on every layer that has a set of
+  two voices and ◇ Doubling on the ones that can actually stack (v2 today — skipped PER
+  LAYER, because a row is live or dead as a whole and cannot say "this layer but not
+  that one"). It never writes `maxV`, which is the user's ceiling, and never adds,
+  removes or reorders a voice: the set is hand-authored. See `bloom-layer-model.md`
+  ▸ INSTRUMENT.
+- ~~**Orchestration** → 🌒 Arc depth, area and part~~ — **both rungs wired 2026-09-26.**
+  The area row was there from §5; `🌒 Arc · per part` writes `parts[i].arc.amount` from
+  X ≥ 55, alternating either side of the area depth so parts breathe by DIFFERENT
+  amounts. It is the only row in the plan that writes a different value per part, and it
+  has to be: one value everywhere is what the area rung already is. Clamped at 0 and 100,
+  and 0 is meaningful here (full however deep the area gets). Same two-part gate as
+  🎲 Chance and 🎲 Repeats, for the same pruned-store reason.
+  **THE MASK SPREAD IS STILL NOT HERE, and now for ONE reason rather than three.** Two of
+  the three objections were cleared by ◇ Instrument on 2026-09-26, which is the first row
+  that writes a LAYER: the undo snapshot grew a layer rung (keyed BY LAYER KEY, never by
+  position — layers are added and deleted freely, and an index-keyed snapshot restores the
+  wrong layer's settings the moment one goes), and the preview learned to speak for N
+  layers at once. What stands is the real objection: `chordMask` / `sectionMask` /
+  `saltMask` are HAND-AUTHORED in the ⌗ Matrix, so spreading their percentages is a
+  destructive TRANSFORM of the user's own drawing, not a setting. ◇ Instrument is the
+  precedent for the contract and the counter-example for the content: it moves a layer's
+  two DIALS and never touches the voices you picked.
+
+**Still open, and both are engine gaps rather than missing wiring:**
+
+- **The Time axis drives ONE die.** ↔ Rubato is all there is to lean, because the fields
+  the axis was shaped around — anticipation, skipped changes, a harmonic swing — were
+  never built; the store was only left with room beside `amount` for them. The balance
+  slider is honest (it leans what exists), but Time is one seventh of the plan against
+  Harmony's six. Build the fields, and the row count follows for free.
+- **`_AMB_STOCH` has no arrangement scope** (below).
 
 One filing rule still stands. Everything on this axis is per-pass, so by the
 play-it-twice test it is all **✺ Live**, never ⚙ Deep. And `_AMB_STOCH` has

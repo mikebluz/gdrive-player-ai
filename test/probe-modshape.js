@@ -18,6 +18,21 @@
 // Fixing (2) is what makes (1) safe to fix: syncing every pass would ITSELF stomp
 // an open picker without the guard.
 //
+// ROUND TWO, 2026-09-26 — the report came back ("menu opens but when you select
+// something it doesn't take, stays what it was"), because the fix above guarded
+// ONE of TWO writers. `applyGate` kept a hand-rolled copy, `sh.value = mt.shape`,
+// and both of its differences from the real function were bugs:
+//   3. `mt.shape` IS NOT THE DROPDOWN VALUE for a sequence — the store says
+//      `shape: 'seq'` + `seqRef: n` and the option is `seq:<n>`, so the compare
+//      never matched and the write set `'seq'`, which matches no option: the
+//      select went to value "" and rendered option 0. Pick a saved sequence as
+//      the VCA wave and it snapped straight back to `sine`. Measured.
+//   4. that copy had NO FOCUS GUARD, in the function that runs on every gate
+//      pass. A guard on one of two writers is not a guard.
+// Both are gone: `applyGate` calls `_ambSyncModShapeEl` now, one writer.
+// Mod also moved from Mix to FX in the same change (user: "move Mod to Fx"), so
+// the reachability check here is group-agnostic on purpose.
+//
 //   node test/probe-modshape.js      (needs `npm start`; BLOOPS_URL to retarget)
 import puppeteer from 'puppeteer-core';
 
@@ -188,6 +203,96 @@ const ok = (name, cond, detail) => {
   const r1 = await read();
   ok('the shape comes back after a page reload, in the store and on screen',
     r1.stored === 'rampdown' && r1.displayed === 'rampdown', JSON.stringify(r1));
+
+  // ---- 5. WHERE IT LIVES — Mod is a tab of FX now ---------------------------
+  // (2026-09-26, user: "move Mod to Fx".) Group-agnostic everywhere else in this
+  // file; asserted ONCE here, because a move is a delete plus an add and the
+  // group that used to hold it must not still be offering the tab.
+  console.log('\n  5. Mod is in FX, not Mix');
+  const where = await page.evaluate(() => {
+    const id = document.querySelector('.v2-layer').getAttribute('data-v2id') | 0;
+    const s2 = document.getElementById('ambient-v2-' + id + '-mod-vca-shape');
+    const g = s2 && s2.closest('.ambient-grp');
+    return { grp: g && g.getAttribute('data-v2grp') };
+  });
+  ok('the mod matrix sits in the FX group', where.grp === 'FX', JSON.stringify(where));
+  const sheet = await page.evaluate(async () => {
+    const c = document.querySelector('.v2-layer');
+    const open = async (g) => { const b = c.querySelector('.v2-gototab[data-goto="' + g + '"]');
+      if (!b) return null; b.click(); await new Promise((r) => setTimeout(r, 450));
+      const t = document.querySelector('.v2-layer .v2-pop-tabs'); if (!t) return null;
+      const fx = t.querySelector('.v2-fxpick');
+      return { chips: [...t.querySelectorAll('[data-tab]')].map((x) => x.getAttribute('data-tab')),
+               opts: fx ? [...fx.options].map((o) => o.value) : null, val: fx && fx.value }; };
+    const mix = await open('Mix');
+    const fx = await open('FX');
+    return { mix, fx };
+  });
+  await zz(400);
+  ok('the Mix sheet no longer offers Mod',
+    sheet.mix && sheet.mix.chips.indexOf('Mod') < 0, JSON.stringify(sheet.mix));
+  ok('the FX stage picker offers it', sheet.fx && sheet.fx.opts && sheet.fx.opts.indexOf('Mod') >= 0,
+    JSON.stringify(sheet.fx));
+  ok('…and FX still LANDS on an effect, not on Mod', sheet.fx && sheet.fx.val === 'Delay',
+    JSON.stringify(sheet.fx));
+
+  // ---- 6. A SEQUENCE AS THE WAVE — defect 3 ---------------------------------
+  // The one that reads exactly like the report. `applyGate`'s own copy of the
+  // writer set `sh.value = 'seq'`, which matches no option, so the select blanked
+  // to option 0 the instant a gate pass ran — and one runs on the pick itself.
+  console.log('\n  6. a saved sequence as the wave');
+  await page.evaluate(() => {
+    if (typeof savedSequences === 'undefined') return;
+    savedSequences.push({ name: 'Probe seq', steps: [{ note: 'C4', on: true }, { note: 'E4', on: true }] });
+  });
+  await render();
+  const seqPick = await page.evaluate(async () => {
+    const id = document.querySelector('.v2-layer').getAttribute('data-v2id') | 0;
+    const s2 = document.getElementById('ambient-v2-' + id + '-mod-vca-shape');
+    const opts = [...s2.options].map((o) => o.value);
+    if (opts.indexOf('seq:0') < 0) return { err: 'no Sequence optgroup', opts };
+    s2.value = 'seq:0'; s2.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    const rd = () => { const L2 = (_masterEng.getCfg().layers || []).find((x) => x && (x.id | 0) === id);
+      return { shape: ((L2.mod || {}).vca || {}).shape, ref: ((L2.mod || {}).vca || {}).seqRef }; };
+    const out = { opts, afterPick: s2.value, store: rd() };
+    // A GATE PASS, driven the way any value edit on this card drives one.
+    const lv = document.querySelector('.v2-layer input.v2-f[id$="-level"]');
+    if (lv) { lv.value = String(Math.max(0, (+lv.value || 70) - 1)); lv.dispatchEvent(new Event('input', { bubbles: true })); }
+    await new Promise((r) => setTimeout(r, 450));
+    const s3 = document.getElementById('ambient-v2-' + id + '-mod-vca-shape');
+    out.afterGate = s3 && s3.value;
+    out.storeAfterGate = rd();
+    out.seqRowShown = !(document.getElementById('ambient-v2-' + id + '-mod-vca-seqrow') || {}).hidden;
+    return out;
+  });
+  ok('picking a sequence stores seq + its index',
+    seqPick.store && seqPick.store.shape === 'seq' && (seqPick.store.ref | 0) === 0, JSON.stringify(seqPick));
+  ok('…and the select still SHOWS it (not blanked back to option 0)',
+    seqPick.afterPick === 'seq:0', JSON.stringify(seqPick));
+  ok('…and a gate pass leaves it alone', seqPick.afterGate === 'seq:0', JSON.stringify(seqPick));
+  ok('…with the Read/Curve/Rest sub-row revealed', seqPick.seqRowShown === true, JSON.stringify(seqPick));
+
+  // ---- 7. THE GATE PASS RESPECTS AN OPEN PICKER — defect 4 -------------------
+  // Same test as §3, one writer over: `applyGate`, which runs on every value
+  // edit. Forcing `activeElement` is the only way to test a guard headlessly.
+  console.log('\n  7. applyGate must not overwrite an open picker either');
+  const guard2 = await page.evaluate(async () => {
+    const id = document.querySelector('.v2-layer').getAttribute('data-v2id') | 0;
+    const s2 = document.getElementById('ambient-v2-' + id + '-mod-vca-shape');
+    const real = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement');
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => s2 });
+    s2.value = 'triangle';                       // mid-pick: ahead of the store
+    const lv = document.querySelector('.v2-layer input.v2-f[id$="-level"]');
+    if (lv) { lv.value = String(Math.max(0, (+lv.value || 70) - 1)); lv.dispatchEvent(new Event('input', { bubbles: true })); }
+    await new Promise((r) => setTimeout(r, 450));
+    const focused = document.getElementById('ambient-v2-' + id + '-mod-vca-shape').value;
+    Object.defineProperty(document, 'activeElement', real);
+    const L2 = (_masterEng.getCfg().layers || []).find((x) => x && (x.id | 0) === id);
+    return { focused, stored: ((L2.mod || {}).vca || {}).shape };
+  });
+  ok('a gate pass while the picker is open leaves the visible pick standing',
+    guard2.focused === 'triangle', JSON.stringify(guard2));
 
   ok('no page errors', errs.length === 0, errs.join(' | '));
   console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

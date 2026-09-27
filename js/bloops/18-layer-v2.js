@@ -876,6 +876,11 @@
   // decides where they fall is a consequence, and `rhythm.cells` is derived
   // from it so every existing onset reader keeps working unchanged.
   const PITCHES = new Set(['chord', 'fixed', 'stack', 'walk', 'anchor', 'series', 'chance', 'drawn', 'mixed', 'confug', 'grid']);
+  // ◢ PITCH SHAPE — which note a `fixed` line plays as the change goes by. Only the
+  // VALID SET lives here, beside the normalizer that coerces it; the labelled option
+  // list is in the card's half of the file with its siblings (`PITCH_OPTS`,
+  // `RHYTHM_OPTS`) and DERIVES this set, so the two cannot drift.
+  let V2_PITCH_MOVES = new Set(['root', 'fifth', 'octave', 'up', 'down', 'updown', 'any']);
   const KINDS = new Set(['live', 'recorded']);
 
   // Divisions per bar. Triplet values are in the list because a swung or
@@ -1241,14 +1246,11 @@
     if (L.toneSeq != null) {
       const q = L.toneSeq;
       if (typeof q !== 'object' || !Array.isArray(q.steps)) delete L.toneSeq;
-      else {
-        q.on = (q.on === true || q.on === 1) ? 1 : 0;
-        q.steps = q.steps.slice(0, 8).map(t2 => ({
-          tone: (typeof t2.tone === 'string') ? t2.tone : '',
-          bars: clamp((t2.bars | 0) || 4, 1, 32),
-        }));
-        if (!q.steps.length) delete L.toneSeq;
-      }
+      // ONE COERCION, NOT A COPY. This held v1's rules "verbatim", and the day the
+      // row gained a UNIT the copy silently dropped it on every getCfg — the store
+      // said 'chg', the card drew 'bar'. `_ambToneSeqCoerce` is the one definition.
+      else if (typeof _ambToneSeqCoerce === 'function') { if (!_ambToneSeqCoerce(q)) delete L.toneSeq; }
+      else if (!q.steps.length) delete L.toneSeq;
     }
     // STRUM — absent or 0 is a struck chord and spends no RNG draw, so an
     // untouched layer is byte-identical and stores neither field.
@@ -1722,6 +1724,10 @@
       // version gate.
       p.ground = normGround(p.ground, t);
       t.degree = clamp((t.degree | 0) || 1, 1, 12);        // which source tone (fixed / stack start)
+      // ◢ PITCH SHAPE — how a `fixed` line moves over the change. ADDITIVE AND ABSENT
+      // BY DEFAULT: absent (and 'root') is the root under everything, which is what
+      // ◢ Bass has always played, so nothing written before this moves a note.
+      if (V2_PITCH_MOVES.has(t.move) && t.move !== 'root') t.move = String(t.move); else delete t.move;
       t.span = clamp((t.span | 0) || 4, 1, 24);            // walk: how far it may wander, in source tones
       if (!SERIES_DIRS.has(t.dir)) t.dir = 'up';           // series: sweep direction
       // THE INTENTION PASS (2026-09-16) — three arpeggio / mix choices that were
@@ -2557,6 +2563,25 @@
   // 16-step grid is two steps per bar, and the backbeat came out as one kick
   // every two bars. A fractional last bar simply truncates, which is what a
   // loop running out of room does.
+  // ⊞ Resolution's EUCLID arm: the pulses are counts per bar, so they scale with the
+  // grid — ⊞ 32 from ⊞ 16 is the same figure at twice the speed.
+  // A DECLARATION IN THIS HALF OF THE FILE, not a property of the exports object.
+  // `beatRederive` also needs it, and this file is TWO IIFEs: `V2` is only bound in the
+  // second one (`const V2 = window._v2`), so `V2.beatScalePer(…)` from inside the export
+  // literal is a ReferenceError that the caller's try/catch turns into a silent no-op.
+  // Measured exactly that way: the euclid arm did nothing and reported nothing.
+  function beatScalePerFn(L, prevPer) {
+    const b = L && L.part && L.part.rhythm && L.part.rhythm.beat;
+    const from = BEAT_PERS.indexOf(prevPer | 0) >= 0 ? (prevPer | 0) : BEAT_PER_BAR;
+    const to = beatPerOf(b);
+    if (!b || !Array.isArray(b.lanes) || from === to) return false;
+    b.lanes.forEach((e) => {
+      if (!e || !(e.p > 0)) return;
+      e.p = clamp(Math.max(1, Math.round(e.p * to / from)), 1, to);
+      e.r = clamp(Math.round((e.r | 0) * to / from), 0, Math.max(0, to - 1));
+    });
+    return true;
+  }
   function beatLanes(p, steps, seed, perBar) {
     const b = p && p.rhythm && p.rhythm.beat;
     if (!b || !Array.isArray(b.lanes)) return null;
@@ -3184,6 +3209,50 @@
     }
     if (t.kind === 'fixed') {
       let d = clamp((t.degree | 0) - 1, 0, N - 1);
+      let oct = 0;
+      // ── ◢ PITCH SHAPE — WHICH NOTE, CHANGE BY CHANGE ──────────────
+      // (2026-09-27, user: "we need a Pitch shape as well for Bass in Generate — so play
+      // the same note for the whole chord, or play all different notes".)
+      // ◢ Bass was the ONE material with no pitch rule at all: its four Characters are
+      // the same recipe (root degree, low) with a different RHYTHM, which this file's own
+      // comment says out loud. So the note never moved, whatever you set.
+      // ABSENT IS THE ROOT, and draws nothing — every project written before this plays
+      // exactly as it did, which is what keeps golden honest.
+      // ON BEATS, NOT ONSETS. `idx` is the STEP index and the onset ordinal is not passed
+      // down here — but a root-and-fifth bass alternates on BEATS anyway (root on 1,
+      // fifth on 3), never on however many notes happened to fire, so the beat is the
+      // musically right clock as well as the one that is available.
+      const mv = (typeof t.move === 'string') ? t.move : '';
+      if (mv && mv !== 'root' && N > 1) {
+        const stepsPer = Math.max(1, ((part.rhythm && part.rhythm.steps) | 0) || 16);
+        const barsN = Math.max(0.125, +part.bars || 1);
+        const perBeat = Math.max(1, Math.round(stepsPer / Math.max(1, barsN * 4)));
+        const beat = Math.floor(Math.max(0, idx | 0) / perBeat);
+        // NEAREST BY SEMITONE, never by index: over a CHORD source the fifth is entry 2
+        // and over a SCALE source it is entry 4, and a shape that meant different
+        // intervals depending on the note source would be the same control twice.
+        const near = (semis) => {
+          let best = d, bd = 99;
+          for (let i = 0; i < N; i++) {
+            const rel = ((((set.ivs[i] - set.ivs[d]) % 12) + 12) % 12);
+            const dd = Math.min(Math.abs(rel - semis), Math.abs(rel + 12 - semis));
+            if (dd < bd) { bd = dd; best = i; }
+          }
+          return best;
+        };
+        if (mv === 'fifth') { if (beat % 2) d = near(7); }
+        else if (mv === 'octave') { if (beat % 2) oct = 12; }
+        else if (mv === 'up') d = (d + beat) % N;
+        else if (mv === 'down') d = ((((d - beat) % N) + N) % N);
+        else if (mv === 'updown') {
+          const per = Math.max(1, 2 * N - 2), w = beat % per;
+          d = (d + (w < N ? w : per - w)) % N;
+        } else if (mv === 'any') {
+          // SEEDED ON THE ONSET like every other draw here, so a take replays and the
+          // drawing, the outlines and the audio agree.
+          d = Math.floor(vRnd(ctxSeed ^ 0x9e3779b9, 73) * N) % N;
+        }
+      }
       // ROAM — v1's `vary` ("how often the Note wanders", Stack / Fixed): with
       // that chance the degree steps to a neighbouring source tone, wrapping
       // the set. Seeded on the onset so a take replays; 0 draws nothing.
@@ -3193,7 +3262,7 @@
         d = (((d + mag * (vRnd(ctxSeed ^ 0xcc9e2d51, 69) < 0.5 ? -1 : 1)) % N) + N) % N;
       }
       part._deg = d;
-      out.push(base + set.ivs[d]);
+      out.push(base + set.ivs[d] + oct);
       return out;
     }
     // ── \u266b ConFUGUED: N NOTES, STATED INTERVALS, RE-ORDERED PER ONSET ──
@@ -6789,7 +6858,7 @@
         let ty = toneOf(L);
         if (L.toneSeq && L.toneSeq.on && typeof _ambToneAt === 'function') {
           try {
-            const t2 = _ambToneAt({ toneSeq: L.toneSeq, tone: L.instrument.tone }, at);
+            const t2 = _ambToneAt({ toneSeq: L.toneSeq, tone: L.instrument.tone, id: 'v2:' + (L.id | 0) }, at);
             if (typeof t2 === 'string' && t2) ty = t2;
             else if (t2 === '') ty = toneOf(L);
           } catch (e) {}
@@ -6858,8 +6927,43 @@
         // set LAST — `_ambApplyAdsr` may hand back a fresh params object
         if (n.antic > 0) params._chokeLead = n.antic;     // see the chord choke (17-ambient)
         if (n.line) params._chokeSkip = 1;                 // ⚇ Mix's line is a LINE, never choked
+        // \u25c7 DOUBLING \u2014 the SAME note, at the SAME time, through more of the Tone
+        // set (user, 2026-09-26: "one param for how many to play at once"). The extra
+        // voices are emitted HERE, beside the lead, because this is the one place a v2
+        // layer turns a note into sound \u2014 one seam, so every layer kind that reaches it
+        // stacks, and there is no second copy of the rule to drift.
+        // ABSENT OR 0 RETURNS EMPTY, and then nothing below runs and nothing about the
+        // lead changes: `_toneX.length` is the whole gate, so the default path is
+        // byte-identical (which is what keeps golden-render honest).
+        // HEADROOM IS THE CALLER'S JOB, because only the caller knows what a voice
+        // costs on its own path. Three voices on one pitch sum close to coherently, so
+        // the stack is scaled by 1/\u221an \u2014 and the extras sit slightly under the lead,
+        // because a doubling reinforces a line rather than replacing it.
+        let _toneX = [];
+        try { if (L.toneSeq && L.toneSeq.on && typeof _ambToneStackAt === 'function') {
+          _toneX = _ambToneStackAt({ toneSeq: L.toneSeq, tone: L.instrument.tone, id: 'v2:' + (L.id | 0) }, at) || [];
+        } } catch (e) { _toneX = []; }
+        let _vx = 0;
+        if (_toneX.length) {
+          const _v0 = Number.isFinite(params.volume) ? params.volume : 100;
+          const _vLead = Math.max(1, Math.round(_v0 / Math.sqrt(1 + _toneX.length)));
+          params.volume = _vLead;
+          _vx = Math.max(1, Math.round(_vLead * 0.8));   // the doubling sits under the lead
+        }
         try { playNote(n.freq, params, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
         catch (e) {}
+        if (_toneX.length) {
+          _toneX.forEach((t9) => {
+            const p9 = {}; for (const k9 in params) p9[k9] = params[k9];
+            p9.type = t9 || toneOf(L);
+            // ONLY THE LEAD LEADS A CHOKE. `_chokeLead` on a doubling would make the
+            // extra voice cut the chord as well, which is the lead's job and only its.
+            delete p9._chokeLead;
+            p9.volume = _vx;
+            try { playNote(n.freq, p9, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
+            catch (e) {}
+          });
+        }
       }
       next();   // …to the window after this one
     }
@@ -8572,18 +8676,75 @@
       }
       return true;
     },
-    beatScalePer: (L, prevPer) => {
-      const b = L && L.part && L.part.rhythm && L.part.rhythm.beat;
+    // ⊞ RESOLUTION RE-DERIVES THE PATTERN, in every form (2026-09-27, reported as
+    // "it doesn't generate a new rhythm or structure when changing params like
+    // Resolution"). `beatScalePer` below only ever moved the EUCLID's pulse counts, and
+    // there are two states where nothing reads them:
+    //   • no lane carries pulses — `beatLanes` returns null by design ("a beat that
+    //     rolled itself silent hands back to whatever was drawn"), and that same
+    //     fallback swallows the case where there were never any pulses to begin with;
+    //   • ▦ Steps form — the euclid is bypassed outright (`bt = null`).
+    // In both the DRAWN cells are the material, so the grid has to move THEM. Measured
+    // before the fix: ⊞ 16 → 32 changed the stored number, `beatScalePer` returned
+    // false, and the emitted pattern was identical.
+    // HITS KEEP THEIR PLACE IN TIME rather than being re-rolled — the knob is a grid,
+    // not a dice. Going finer spaces the same figure out and opens cells between it;
+    // going coarser can land two hits in one cell, which is what a coarser grid MEANS
+    // (and is the one lossy direction, so it is the one the caller warns about).
+    // IN ▦ STEPS THE LENGTH IS NOT OURS TO SET: normalize forces
+    // `r.steps = bars × gridPerBar(L)` there, so writing `r.steps` alone would be
+    // overwritten on the next getCfg and the resample stranded at the wrong length.
+    // `part.grid` is that form's own ruler, so ⊞ Resolution moves it — one question,
+    // one control — snapping to the nearest legal division (48 has no grid of its own).
+    beatRederive: (L, prevPer) => {
+      const p = L && L.part; if (!p || !p.rhythm) return false;
+      const r = p.rhythm;
       const from = BEAT_PERS.indexOf(prevPer | 0) >= 0 ? (prevPer | 0) : BEAT_PER_BAR;
-      const to = beatPerOf(b);
-      if (!b || !Array.isArray(b.lanes) || from === to) return false;
-      b.lanes.forEach((e) => {
-        if (!e || !(e.p > 0)) return;
-        e.p = clamp(Math.max(1, Math.round(e.p * to / from)), 1, to);
-        e.r = clamp(Math.round((e.r | 0) * to / from), 0, Math.max(0, to - 1));
-      });
-      return true;
+      const to = beatPerOf(r.beat);
+      if (from === to) return false;
+      const inSteps = p.form === 'steps';
+      const euclidLive = !!(r.beat && Array.isArray(r.beat.lanes) &&
+        r.beat.lanes.some((e) => e && (e.p | 0) > 0));
+      // 1. THE EUCLID IS THE MATERIAL — scale the counts and let it re-solve.
+      if (euclidLive && !inSteps) return beatScalePerFn(L, prevPer);
+      // 2. THE DRAWN CELLS ARE. Resample them onto the grid the new Resolution names.
+      const bars = Math.max(0.125, +p.bars || 1);
+      let perEff = to;
+      if (inSteps) {
+        if (!GRID_DIVS.has(to)) {
+          // nearest legal division, ties to the FINER one (you asked for more grid)
+          perEff = GRIDS.map((g) => g[0]).reduce((best, g) =>
+            (Math.abs(g - to) < Math.abs(best - to) || (Math.abs(g - to) === Math.abs(best - to) && g > best)) ? g : best, 16);
+        }
+        p.grid = perEff;
+      }
+      const toSteps = clamp(Math.max(1, Math.round(perEff * bars)), 1, 256);
+      const fromSteps = Math.max(1, r.steps | 0);
+      if (toSteps === fromSteps) return inSteps;      // the grid did not actually move
+      const rows = Array.isArray(r.lanes) ? r.lanes : [];
+      const out = [];
+      let hitsIn = 0, hitsOut = 0;
+      for (let li = 0; li < _V2_LANES; li++) {
+        const src = rows[li] || [];
+        const dst = new Array(toSteps).fill(0);
+        for (let i = 0; i < fromSteps; i++) {
+          if (!src[i]) continue;
+          hitsIn++;
+          const j = Math.min(toSteps - 1, Math.round(i * toSteps / fromSteps));
+          if (!dst[j]) hitsOut++;
+          dst[j] = 1;
+        }
+        out.push(dst);
+      }
+      r.lanes = out;
+      r.steps = toSteps;
+      // A RESAMPLED GRID IS STILL DRAWN, not a formula — `kind` must not become
+      // 'euclid' here or the cells we just placed would be thrown away by the next
+      // `seedCells`. (That is the knobs' contract for pulses/rotate, not for a grid.)
+      if (r.kind !== 'drawn' && hitsOut > 0) r.kind = 'drawn';
+      return { steps: toSteps, lost: Math.max(0, hitsIn - hitsOut) };
     },
+    beatScalePer: beatScalePerFn,
     // ── PER-PART SELECT — file the edited record and take up the target's ──
     // Choosing a part ADOPTS the current content when that part has none of
     // its own, so switching is never destructive and syncing/editing is what
@@ -8932,6 +9093,14 @@
 (function () {
   'use strict';
   const V2 = window._v2; if (!V2) return;
+  // ATTACHED HERE, NOT IN THE EXPORT LITERAL. `window._v2 = { … }` is built in the
+  // FIRST IIFE and `paintPartHue` lives in this one, so a `paintPart:` entry up there is
+  // a ReferenceError the caller's try/catch swallows — a silent no-op, which is the
+  // fourth time this file's two-IIFE split has cost a round. THE RULE: an export whose
+  // implementation is in this half must be attached FROM this half.
+  // The viz frame calls it whenever the SOUNDING part changes, so the cards follow what
+  // you are hearing while it plays and what you are editing when stopped.
+  try { V2.paintPart = (E, pi) => { try { paintPartHue(E, pi); } catch (e) {} }; } catch (e) {}
   const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   // THE REGION VOCABULARY, across the IIFE boundary. It is declared in the
   // ENGINE half (normalize needs it) and every surface that draws or selects a
@@ -15104,6 +15273,23 @@
   // material, warning on drift, offering \u21ba Back and opening itself when the
   // recipe has drifted. Two sentences for one fact is the duplication this
   // pass removed, so the thinner one went with its row.)
+  // ◢ PITCH SHAPE — HERE, not beside the normalizer, because this file is TWO IIFEs and
+  // `cardHtml` is in this one: a list declared in the other half is a ReferenceError
+  // that `V2.render`'s caller swallows, and the whole panel renders NO CARDS. Measured
+  // exactly that way ("PITCH_MOVE_OPTS is not defined", 0 cards). The validator set the
+  // normalizer reads is DERIVED from this list below, so one edit changes both.
+  // The labels are the user's own question — "play the same note for the whole chord, or
+  // play all different notes" — so they say what you HEAR, not what interval it is.
+  const PITCH_MOVE_OPTS = [
+    ['root',   'Same note — the root under the whole change'],
+    ['fifth',  'Root and fifth — alternating by beat'],
+    ['octave', 'Root and octave — alternating by beat'],
+    ['up',     'Up the chord — a new tone each beat'],
+    ['down',   'Down the chord'],
+    ['updown', 'Up and back down'],
+    ['any',    'Any chord tone — a different one each beat'],
+  ];
+  try { V2_PITCH_MOVES = new Set(PITCH_MOVE_OPTS.map((o) => o[0])); } catch (e) {}
   const PITCH_OPTS = [['drawn', 'Drawn — a note per step'], ['chord', 'Chord — the harmony'], ['stack', 'Stack — from a note'],
                       ['fixed', 'One note — the same degree every time'], ['series', 'Series — sweep the chord'],
                       ['anchor', 'Anchor — a pedal point'], ['walk', 'Walk — a line'],
@@ -15694,8 +15880,8 @@
   // (Verse/Chorus: the ⇶ Parts view, the part tabs, and the ⟲ N × part badge
   // on this very card), and one word for two mechanisms is how a control gets
   // misread. The DATA keys stay `part.*` for save-compat (the naming rule).
-  // ⇗ Ramps is a TAB OF MIX (2026-09-20), not a group — it sits beside Mod,
-  // which is the other surface on this card that moves a value over time.
+  // ⇗ Ramps is a TAB OF MIX (2026-09-20), not a group. ♫ Mod was its
+  // neighbour until 2026-09-26, when it moved into FX at the user's request.
   const GRPS = ['Instrument', 'Content', 'Shape', 'Mix', 'FX'];   // ✦ Pitch lives in Generate (2026-09-18)
   // ✺ LIVE (2026-09-16, user: "consolidate them all into a single menu behind a
   // new button 'Live' next to 'Generate'"). Everything that makes a pass differ
@@ -15833,6 +16019,30 @@
         '<span class="ambient-hint v2-grpsum" data-grp="' + esc(title) + '"></span></div>' +
       '<div class="ambient-grp-body">' + body + '</div></div>';
 
+  // ── THE LAYER CARDS WEAR A PART'S COLOUR ──────────────────────
+  // (2026-09-27.) `data-part` already means "this belongs to part N" on the ordinal
+  // rail, the overview cards, the part chips and the roll's note events, and
+  // `[data-part]` resolves `--pt` from the shared palette — so the card JOINS that axis
+  // rather than inventing a scheme.
+  // HOST-LEVEL, AND CALLED FROM THREE PLACES, because there are three ways the answer
+  // changes: both of `V2.render`'s paths (it first lived only in the REBUILD half, so a
+  // part change with an unchanged card set never repainted — reported as "sometimes the
+  // colour does change", which is what a repaint that needs a structural edit looks
+  // like), and the viz frame while playing.
+  // ONLY WITH PARTS TO TELL APART: with one part or none the colour distinguishes
+  // nothing, and recolouring every card for that is decoration.
+  function paintPartHue(E, pi) {
+    const h = document.getElementById('bloom-v2-layers'); if (!h) return;
+    let nP = 0;
+    try { const c = E && E.getCfg && E.getCfg();
+      nP = (c && c.prog && Array.isArray(c.prog.parts)) ? c.prog.parts.length : 0; } catch (e) {}
+    const ord = (nP > 1 && (pi | 0) >= 0 && typeof _ambPartOrd === 'function')
+      ? String(_ambPartOrd(pi | 0)) : '';
+    h.querySelectorAll('.v2-layer').forEach((card) => {
+      if (ord) { if (card.getAttribute('data-part') !== ord) card.setAttribute('data-part', ord); }
+      else if (card.hasAttribute('data-part')) card.removeAttribute('data-part');
+    });
+  }
   function cardHtml(L) {
     const i = L.instrument, p = L.part, r = p.rhythm || {}, t = p.pitch || {}, sh = p.shape || {};
     // HEAD = v1's shape exactly: the name lives inside the on/off toggle, a
@@ -16884,7 +17094,15 @@
                 gsel(L, 'part.rhythm.kind', 'Rhythm', rhythmShown(r.kind), RHYTHM_OPTS,
                      'where the notes land', 'kind:live;voice:synth') +
                 gsel(L, 'part.pitch.kind', 'Pitch', t.kind, PITCH_OPTS,
-                     'which notes they are', 'kind:live;voice:synth')) +
+                     'which notes they are', 'kind:live;voice:synth') +
+                // ◢ PITCH SHAPE — directly under Pitch, because it is the SECOND half of
+                // the same question: Pitch says which notes are available, this says which
+                // of them it plays as the change goes by. Gated `pitch:fixed`, the kind
+                // ◢ Bass and ▪ One note both use — every other kind already has a rule for
+                // moving (a series has a direction, a walk has a span), so offering this
+                // there would be a second answer to a question already asked.
+                gsel(L, 'part.pitch.move', 'Pitch shape', (t.move || 'root'), PITCH_MOVE_OPTS,
+                     'which note it plays over the change', 'kind:live;voice:synth;pitch:fixed')) +
             '</div></div>' +
             '<div class="v2-genacts">' +
               // DISTINCT CLASSES. Reusing `.v2-newtake` put a SECOND element with
@@ -17071,8 +17289,14 @@
           // slice 5, so this works with no wiring here either.
           ((typeof _ambToneSeqBoxHtml === 'function')
             ? ('<div class="ambient-ctrl ambient-toneseq-ctrl" data-v2when="voice:synth"><label>Tone set</label>' +
-                 '<div class="ambient-toneseq-box">' + _ambToneSeqBoxHtml(L) + '</div>' +
-                 '<span class="ambient-hint">bar-clocked voice changes</span></div>')
+                 // ◇ Doubling is LIVE here: a v2 layer reaches the fan-out at its own
+                 // playNote. The builder works that out from the layer itself (nested
+                 // `instrument`), because the box re-renders itself from three other
+                 // places that would never have carried a flag.
+                 // NO TRAILING HINT: the box's own header line says what it is doing
+                 // ("3 voices · cycling in turn, on the bar clock"), live, and a static
+                 // hint under it was the same sentence twice — one of them always stale.
+                 '<div class="ambient-toneseq-box">' + _ambToneSeqBoxHtml(L) + '</div></div>')
             : '') +
           // THE ENVELOPE IS PART OF THE INSTRUMENT — how the voice responds
           // is not a peer of the voice itself. It was 4 rows pretending to be
@@ -17778,23 +18002,11 @@
           // sequence moves on. Read by `_ambAreaFadeMap`; carried by the v1
           // import since slice 12 and, until now, unreachable.
           st(L, 'areaFadeMs', 'Area fade', num(L.areaFadeMs, 250), 0, 4000, 'ms leaving an area')) +
-          // MOD IS ITS OWN QUESTION — what MOVES. Inside the Space cluster it
-          // read as placement, which it is not.
-          tb('Mod',
-            ((typeof _ambModTarget === 'function')
-            ? ('<div class="ambient-ctrl"><label for="ambient-v2-' + L.id + '-mod-sync">Rate timing</label>' +
-                 '<select id="ambient-v2-' + L.id + '-mod-sync" class="ambient-select">' +
-                   '<option value="free"' + (((L.mod || {}).sync !== 'sync') ? ' selected' : '') + '>Free (Hz)</option>' +
-                   '<option value="sync"' + (((L.mod || {}).sync === 'sync') ? ' selected' : '') + '>Sync (tempo)</option>' +
-                 '</select><span class="ambient-hint">free / sync</span></div>' +
-               _ambModTarget('v2-' + L.id, 'vca', 'VCA \u00b7 amplitude', 'tremolo', 30) +
-               _ambModTarget('v2-' + L.id, 'vco', 'VCO \u00b7 pitch', 'vibrato', 20) +
-               _ambModTarget('v2-' + L.id, 'vcf', 'VCF \u00b7 cutoff', 'sweep', 15))
-            : '')) +
           // \u2500\u2500 \u21d7 RAMPS \u2014 a TAB of Mix, not a section of its own \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-          // It was briefly its own section chip; it belongs with Mod, which is
-          // the other thing on this card that moves a value over time. One less
-          // chip in the navigator, and the two automation surfaces sit together.
+          // It was briefly its own section chip; a tab costs no navigator chip.
+          // Mod sat beside it here until 2026-09-26, when the user asked for Mod
+          // in FX \u2014 so the two automation surfaces are one door apart now, and
+          // this comment says so rather than going on claiming otherwise.
           // STAMPED ON THE OUTER DIV ONLY, not through `tb()`: that helper adds
           // the attribute to EVERY `<div ` it is given, and this block is nested
           // markup (`_ambLayerRampsHtml` owns it, and `_ambRenderRamps` writes
@@ -17802,8 +18014,8 @@
           // filter on nodes that are not rows.
           // IT HAS TO BE A ROW TO BE A TAB. `syncSheet` builds the sheet's tabs
           // from `.ambient-ctrl` rows, so a bare block gets no tab at all —
-          // measured: the Mix sheet came up Level · EQ · Space · Mod with the
-          // ramps nowhere. So it IS a row, and `.v2-rampctl` turns that row
+          // measured (2026-09-20, when ♫ Mod was still here): the Mix sheet came
+          // up Level · EQ · Space · Mod with the ramps nowhere. So it IS a row, and `.v2-rampctl` turns that row
           // back into a block: `.ambient-ctrl` is a GRID, and inside one the
           // ramp's target picker was handed an 18px column (the same squeeze
           // the ⏱ Odds lane takes `grid-column: 1 / -1` to escape).
@@ -17941,6 +18153,33 @@
                 'before: the FX hear the chopped signal and smear it; after: the whole layer is chopped, FX tails included. The reverb send is tapped before either, so reverb rings through', 'tg:on') +
           '<div class="ambient-ctrl v2-cellrow" data-v2when="tg:on"><label>Chop pattern</label>' +
             tgCellsHtml(L) + '<span class="ambient-hint v2-tghint"></span></div>') +
+          // ── ♫ MOD — THE PER-LAYER LFO MATRIX, IN FX (2026-09-26, user:
+          // "move Mod to Fx") ───────────────────────────────────────────
+          // It was a tab of Mix, where it read as one more thing about placement.
+          // FX is the right home: everything here is a STAGE the layer's signal
+          // passes through, and VCA · VCO · VCF are three more of them — the ones
+          // that move rather than colour. It lands LAST in the group, so `dflt`
+          // in `syncSheet` (first non-Chain tab) still opens FX on Delay.
+          // MOVING IS A DELETE PLUS AN ADD: the Mix summary gave its `mod:` bit
+          // to the FX summary in the same change, or the folded Mix head would go
+          // on claiming a control it no longer holds.
+          tb('Mod',
+            ((typeof _ambModTarget === 'function')
+            ? ('<div class="ambient-ctrl"><label for="ambient-v2-' + L.id + '-mod-sync">Rate timing</label>' +
+                 '<select id="ambient-v2-' + L.id + '-mod-sync" class="ambient-select">' +
+                   '<option value="free"' + (((L.mod || {}).sync !== 'sync') ? ' selected' : '') + '>Free (Hz)</option>' +
+                   '<option value="sync"' + (((L.mod || {}).sync === 'sync') ? ' selected' : '') + '>Sync (tempo)</option>' +
+                 '</select><span class="ambient-hint">free / sync</span></div>' +
+               // THE STORE IS THE 6TH ARGUMENT — these rows are v1's builders,
+               // and without it they paint their DEFAULTS on every build (a knob
+               // at 0 over a layer that is audibly modulating) until the gate's
+               // mirror catches up. The markup stating its own values is the
+               // v2 rule everywhere else on this card; it also means the FIRST
+               // paint is right rather than right-one-frame-later.
+               _ambModTarget('v2-' + L.id, 'vca', 'VCA · amplitude', 'tremolo', 30, (L.mod || {}).vca) +
+               _ambModTarget('v2-' + L.id, 'vco', 'VCO · pitch', 'vibrato', 20, (L.mod || {}).vco) +
+               _ambModTarget('v2-' + L.id, 'vcf', 'VCF · cutoff', 'sweep', 15, (L.mod || {}).vcf))
+            : '')) +
           // DRY KILL HAS NO ROW. It was a tab opening a pane that held one Off/On
           // button — two surfaces and two presses for a switch. The strip's own
           // button IS the control now (see the FX branch in `syncSheet`), which
@@ -18564,9 +18803,7 @@
         if (L.bus && L.bus !== 'a') bits.push('bus: ' + String(L.bus).toUpperCase());
         if (num(L.space, 0) !== 0) bits.push('width: ' + num(L.space, 0));
         if (now.spat === 'on') bits.push('moving');
-        const m = L.mod || {};
-        const mods = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
-        if (mods.length) bits.push('mod: ' + mods.join('+'));
+        // (♫ Mod's `mod: vca+…` bit went to the FX summary with the rows, 2026-09-26)
         // \u21d7 \u2026and the ramps, which are a tab of this group now. A folded group
         // that omits a control behind its own door is the one lying about what
         // is set \u2014 the same rule \u23f1 Timing follows in Shape.
@@ -18579,10 +18816,20 @@
       })(),
       // EVERY WORD HERE NAMES A CONTROL YOU CAN FIND — the stage's own tab name,
       // never its storage key, and Chop / Wet only spelled as their buttons are.
-      FX: (eng.length ? eng.map(fxLabel).join(' · ') : '') +
-          (now.tg === 'on' ? (eng.length ? ' · ' : '') + 'Chop' + ((L.tg || {}).pos === 'post' ? ' (after FX)' : '') : '') +
-          (L.wetOnly ? ((eng.length || now.tg === 'on') ? ' · ' : '') + 'Wet only' : '') ||
-          'none',
+      // ♫ MOD IS IN THIS GROUP NOW, so its bit is in this line — a folded head
+      // that omits a control behind its own door is the group lying about what
+      // is set. A target counts when its DEPTH is up, which is the same test the
+      // Mix head used when Mod lived there.
+      FX: (() => {
+        const bits = [];
+        if (eng.length) bits.push(eng.map(fxLabel).join(' · '));
+        if (now.tg === 'on') bits.push('Chop' + ((L.tg || {}).pos === 'post' ? ' (after FX)' : ''));
+        if (L.wetOnly) bits.push('Wet only');
+        const m = L.mod || {};
+        const mods = ['vca', 'vco', 'vcf'].filter(t => ((m[t] || {}).depth | 0) > 0);
+        if (mods.length) bits.push('mod: ' + mods.join('+'));
+        return bits.length ? bits.join(' · ') : 'none';
+      })(),
     };
     card.querySelectorAll('.v2-grpsum').forEach(el => {
       const g = el.getAttribute('data-grp');
@@ -18612,25 +18859,44 @@
     // The mod sliders are v1's, built by id and NOT `.v2-f`, so the gate has to
     // put stored values back into them — otherwise a rebuild shows a matrix at
     // zero while the engine is modulating.
+    // ONE WRITER FOR THE SHAPE SELECT, AND IT IS `_ambSyncModShapeEl` (2026-09-26).
+    // This block used to keep its own copy, `sh.value = mt.shape`, and both of
+    // that copy's differences from the real one were bugs:
+    //   • `mt.shape` IS NOT THE DROPDOWN VALUE for a sequence. The store says
+    //     `shape: 'seq'` + `seqRef: n`; the option's value is `seq:<n>`. So the
+    //     raw compare was always unequal and the assignment set `'seq'`, which
+    //     matches NO option — the select went to value "" and rendered option 0.
+    //     Measured: pick a saved sequence as the VCA wave and the dropdown snaps
+    //     straight back to `sine` with `seq` in the store. That is the reported
+    //     "I select something and it doesn't take, it stays what it was".
+    //   • NO FOCUS GUARD. `_ambSyncModShapeEl` grew one the day before precisely
+    //     because writing this select on a gate pass lands inside an open native
+    //     picker — and this second writer, in the function that runs on EVERY
+    //     gate pass, was the one nobody found. A guard on one of two writers is
+    //     not a guard.
+    // The real one also carries the dependent rows (seq sub-row, Harmonics) and
+    // the partials, which this copy never touched.
     {
       const m = L.mod || {};
+      const mel = (suf) => document.getElementById('ambient-v2-' + L.id + '-' + suf);
       ['vca', 'vco', 'vcf'].forEach((t) => {
         const mt = m[t] || {};
         ['depth', 'rate'].forEach((k) => {
-          const e2 = document.getElementById('ambient-v2-' + L.id + '-mod-' + t + '-' + k);
-          if (!e2) return;
+          const e2 = mel('mod-' + t + '-' + k);
+          if (!e2 || document.activeElement === e2) return;   // never write what is being held
           const v = (k === 'depth') ? (mt.depth | 0) : (Number.isFinite(mt.rate) ? mt.rate : e2.value);
           if (String(e2.value) !== String(v)) {
             e2.value = v;
             const rd = e2.parentElement && e2.parentElement.querySelector('.ambient-sl-v');
             if (rd) rd.textContent = v;
+            try { const kb = e2.parentElement && e2.parentElement.querySelector('.v2-knob'); if (kb) knobFace(kb); } catch (e) {}
           }
         });
-        const sh = document.getElementById('ambient-v2-' + L.id + '-mod-' + t + '-shape');
-        if (sh && mt.shape && sh.value !== mt.shape) sh.value = mt.shape;
+        try { if (m[t] && typeof _ambSyncModShapeEl === 'function') _ambSyncModShapeEl(mel, m[t], t); } catch (e) {}
       });
-      const sy2 = document.getElementById('ambient-v2-' + L.id + '-mod-sync');
-      if (sy2) sy2.value = (m.sync === 'sync') ? 'sync' : 'free';
+      const sy2 = mel('mod-sync');
+      const syWant = (m.sync === 'sync') ? 'sync' : 'free';
+      if (sy2 && document.activeElement !== sy2 && sy2.value !== syWant) sy2.value = syWant;
     }
     const nb = card.querySelector('.ambient-notes-btn');
     if (nb) {
@@ -20848,7 +21114,7 @@
         const on = (t) => (act && act.name === t.name) ? ' on' : '';
         tabsEl.innerHTML =
           (rest.length
-            ? '<select class="ambient-select v2-fxpick" title="Which effect\u2019s controls to show">' +
+            ? '<select class="ambient-select v2-fxpick" title="Which stage\u2019s controls to show \u2014 the effects, Chop, and \u266b Mod">' +
                 rest.map(t => '<option value="' + esc(t.name) + '"' +
                   (act && act.name === t.name ? ' selected' : '') + '>' + esc(t.name) + '</option>').join('') +
               '</select>'
@@ -21116,6 +21382,9 @@
       // these two lines the block only ever reached a layer added after the
       // page loaded.
       try { if (typeof _ambRenderRamps === 'function') _ambRenderRamps(E); } catch (e) {}
+      // …and the part hue, on THIS path too — a part change leaves the card set
+      // untouched, so without it the colour only moved on a structural edit.
+      try { paintPartHue(E, Number.isFinite(E._curPart) ? (E._curPart | 0) : 0); } catch (e) {}
       return;
     }
     h._sig = sig;
@@ -21273,7 +21542,15 @@
       const ensure = () => {
         const L = getL(); if (!L) return null;
         if (!L.mod || typeof L.mod !== 'object') {
-          L.mod = (typeof _ambDefaultMod === 'function') ? _ambDefaultMod() : { sync: 'free' };
+          // THE FALLBACK MUST CARRY THE THREE TARGETS. Every arm below bails on
+          // a missing `L.mod[t]`, so a bare `{ sync: 'free' }` is a matrix whose
+          // controls all read as dead.
+          L.mod = (typeof _ambDefaultMod === 'function') ? _ambDefaultMod() : {
+            sync: 'free',
+            vca: { depth: 0, rate: 30, shape: 'sine' },
+            vco: { depth: 0, rate: 20, shape: 'sine' },
+            vcf: { depth: 0, rate: 15, shape: 'sine' },
+          };
         }
         return L;
       };
@@ -21293,6 +21570,21 @@
       // It is safe to run unconditionally ONLY because _ambSyncModShapeEl now
       // skips the focused element; without that guard this call would itself put
       // the old shape back while the picker was open.
+      // ◇ TONE SET — ITS DROPDOWNS ARE BUILT EMPTY. `_ambToneSeqBoxHtml` emits bare
+      // `<select>`s and two sweeps fill them: `_ambToneSeqPopulate` (from
+      // `_ambSyncControls`) and `_ambRefreshAllToneSelects` (only when the voice bank
+      // changes). NEITHER runs on a plain `V2.render` — which is what every value edit
+      // on this card triggers — so the whole set came up BLANK: three empty dropdowns
+      // under a header cheerfully reporting "3 voices". A new store must join EVERY
+      // sweep, and this is the one that was missing.
+      try {
+        const Lt = getL();
+        if (Lt && typeof _ambToneSeqPopulate === 'function') {
+          card.querySelectorAll('.ambient-toneseq-box').forEach((bx) => {
+            try { _ambToneSeqPopulate(bx, Lt); } catch (e) {}
+          });
+        }
+      } catch (e) {}
       try {
         const L0 = getL();
         if (L0 && L0.mod && typeof _ambSyncModShapeEl === 'function') {
@@ -21314,8 +21606,13 @@
         try { if (typeof _ambWireModTarget === 'function') _ambWireModTarget(E, el, ensure, t, resync); } catch (e) {}
       });
       const sy = el('mod-sync');
-      if (sy) sy.addEventListener('change', () => { const L = ensure(); if (!L) return; L.mod.sync = sy.value; resync(); });
+      if (sy) {
+        // both events, idempotent arm — the documented select rule
+        const syAp = () => { const L = ensure(); if (!L) return; if (L.mod.sync === sy.value) return; L.mod.sync = sy.value; resync(); };
+        sy.addEventListener('change', syAp); sy.addEventListener('input', syAp);
+      }
     });
+    try { paintPartHue(E, Number.isFinite(E._curPart) ? (E._curPart | 0) : 0); } catch (e) {}
     if (!h._wired) {
       h._wired = true;
       const layerOf = (el) => {
@@ -21765,8 +22062,26 @@
         // without this the beat plays at exactly the same speed on a finer
         // grid, which is not what "Resolution" was asked for.
         if (path === 'part.rhythm.beat.per') {
-          try { V2.beatScalePer(ctx.L, prevPer); } catch (e) {}
+          // RE-DERIVE, not just re-scale: whichever of the two is this layer's material
+          // (the euclid's counts, or the drawn cells) moves with the grid. Without this
+          // the knob changed a stored number and nothing else in two of three states.
+          let red = false;
+          try { red = V2.beatRederive(ctx.L, prevPer); } catch (e) { red = false; }
           try { E.getCfg(); } catch (e) {}
+          // A COARSER GRID IS THE LOSSY DIRECTION, and losing hits silently is what
+          // gets reported as data loss — so it says so, once, with the count.
+          try {
+            if (red && red.lost > 0 && typeof showToast === 'function') {
+              showToast('⊞ Resolution — ' + red.lost + ' hit' + (red.lost === 1 ? '' : 's') +
+                ' landed on a cell already taken. A coarser grid has fewer places to put them.',
+                { ms: 4500 });
+            }
+          } catch (e) {}
+          // THE CELL COUNT MOVED, so the drawing has to be rebuilt — a repaint alone
+          // leaves the old number of chips over a store that says another (the
+          // documented two-pictures-of-one-thing bug, and the same rebuild
+          // `part.rhythm.steps` already takes below).
+          if (red && red.steps) { h._sig = ''; V2.render(E); return; }
         }
         // THE SAME RULE FOR EVERY OTHER CONTENT. `pulses` is a count within the
         // grid, so leaving it alone while the grid doubles halves the density —

@@ -284,6 +284,170 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **⊞ RESOLUTION MOVES WHICHEVER PATTERN IS THE MATERIAL, and a kit has two.** The
+  emitter is `lanes = beatLanes(…) || p.rhythm.lanes` — so `beat.per` is read in ONE of
+  three states, and in the other two the drawn cells play and the knob changed a stored
+  number and nothing audible. The two dead states: no lane carries pulses (`beatLanes`
+  returns null by design — "a beat that rolled itself silent hands back to what was
+  drawn" — and that fallback also swallows "there were never any pulses"), and ▦ Steps
+  form (the euclid is bypassed outright). `beatRederive` resamples the drawn cells onto
+  the new grid instead, keeping each hit's place in TIME — the knob is a grid, not a dice.
+  Reported as "changing Resolution doesn't generate a new rhythm"; creating a part was
+  NOT the variable, which cost the first hour of the hunt.
+  **IN ▦ STEPS THE LENGTH IS NOT YOURS TO SET:** normalize forces
+  `r.steps = bars × gridPerBar(L)`, so writing `r.steps` there is overwritten on the next
+  `getCfg` and the resample is stranded. Move `part.grid`, that form's own ruler, and
+  snap a value the grid cannot express (48 has no division) instead of leaving the knob
+  inert.
+  **THE LOSSY DIRECTION SAYS SO.** Coarser can land two hits in one cell; return the
+  count and toast it, because losing drawn hits silently is what gets reported as data
+  loss. (`round(1 × 8/16)` is 1, so ⊞ 16→ 8 does NOT collide adjacent hits — it takes a
+  4× reduction. A probe asserting a collision at 2× is asserting the wrong thing.)
+- **`V2` IS NOT BOUND INSIDE THE FIRST IIFE — AND NEITHER IS THE SECOND HALF'S CODE.**
+  `window._v2 = { … }` is built in the FIRST half of `18-layer-v2.js`; `const V2 =
+  window._v2` is in the SECOND. So `V2.foo()` from inside that export literal is a
+  ReferenceError, and so is an entry like `paintPart: (E, pi) => paintPartHue(E, pi)`
+  when `paintPartHue` lives in the second half. Every caller wraps these in try/catch, so
+  both read as a SILENT NO-OP. **THE RULE:** a shared helper both halves need is a
+  `function` DECLARATION in the half that owns it (`beatScalePerFn`), and an export whose
+  implementation is in the second half is ATTACHED there (`V2.paintPart = …` beside
+  `const V2 = window._v2`), never listed in the literal. Four rounds lost to this in two
+  days — `PITCH_MOVE_OPTS` cost a whole panel (zero cards rendered).
+- **A REPAINT THAT ONLY RUNS ON THE REBUILD PATH FIRES "SOMETIMES".** `V2.render` returns
+  early when the structure signature is unchanged — which is nearly every render — and a
+  part change leaves the card SET untouched, so a stamp placed in the rebuild half moved
+  the colour only when something else happened to change the cards. Reported verbatim as
+  "sometimes color does change with Part change". Anything that repaints from STATE, not
+  from structure, belongs on both paths; the ⇗ Ramps block records the same lesson from
+  the other direction.
+  **AND A BUILD-TIME STAMP IS NOT A READOUT.** `_ambPartAttr` writes `data-part` into the
+  markup ONCE; the part strip's per-frame playhead sync then moves the select's VALUE with
+  nothing moving the colour, so the control named part 2 in part 3's hue ("the middle Part
+  selector isn't keeping in sync with selected part color"). `_ambPartHueEl(el, pi)` is the
+  DOM half of `paintPartHue`: whoever moves the value moves the swatch, in the same line.
+- **TWO DOORS TO ONE CHOICE, AND ONLY ONE OPEN AT A TIME.** ▤ Parts draws every part as a
+  pressable card, so with it open the ＋ Part strip below was the same picker again a few
+  pixels down — it now hides while that group is open (`.open` AND an `offsetParent`: a
+  group in a CLOSED tab pane still carries `.open`). Hiding a row hides everything RIDING
+  in it, so ↻ Loop moved into the part's ⋯ menu in the same change — a control that
+  vanishes cannot be found. Both doors run `_ambCurPartChoose`, because switching out of
+  👁 View is half of what choosing a part MEANS and a second copy of that is how one door
+  forgets it. The card's selected/looping marks are painted by `_ambPovMarkSel` from
+  TRANSIENT state, never folded into the overview `_sig` — that is a structure signature,
+  and rebuilding the strip on every pick drops its scroll and any open menu.
+- **`E._curPart` IS THE PART BEING EDITED, NOT THE ONE PLAYING.** Its own comment says
+  playback never moves it. The part you are HEARING comes from `_ambCurPartPlayhead`
+  (`_passLock.pi`, else `_ambPartChordAt` at the audible now), which already runs per
+  frame behind a change-gate — so following the sounding part costs one attribute write
+  per part boundary, and anything that wants "the active part" has to say which of the
+  two it means.
+
+- **`V2` IS NOT BOUND INSIDE THE FIRST IIFE.** `window._v2 = { … }` is built in the first
+  half of `18-layer-v2.js`; `const V2 = window._v2` is in the SECOND. So `V2.foo()` from
+  inside that export literal is a ReferenceError, and every caller wraps these in
+  try/catch — so it measures as a silent no-op, which is exactly how the documented
+  two-IIFE trap reads from the outside. One export calling another needs the shared piece
+  hoisted to a `function` DECLARATION in that half (`beatScalePerFn`), not a `V2.` hop.
+- **AN UNDO SNAPSHOT OVER LAYERS MUST BE KEYED BY LAYER, NOT BY POSITION.** ✺ Novelty's
+  per-PART arrays are positional and that is fine — a part list only changes when you split
+  or merge one. Layers are added and deleted freely, so the same shape restores layer 3's
+  settings onto layer 2 the moment one goes. Key by the engine's own layer key
+  (`v2:<id>` / `bed` / `seq:<id>`), resolve it back through `_ambLayerByKey`, and SKIP a
+  key that no longer resolves rather than abandoning the whole undo. Poison-verified:
+  keying by index fails two named checks.
+- **A v2 LAYER HAS ITS OWN NORMALIZER, AND IT CARRIED A COPY OF v1's.** The tone-set
+  coercion sat in BOTH (`18-layer-v2.js`, introduced "verbatim"), so the day a step
+  gained a `unit` the v2 copy dropped it on every `getCfg` — the store said `chg`, the
+  card drew `bar`, and both were reading honestly. `_ambToneSeqCoerce` is now the one
+  definition and both normalizers call it. **Before adding a field to anything a v2 layer
+  stores, grep 18-layer-v2 for a second coercion of that key** — "verbatim" copies do not
+  stay verbatim. Poison-verified: restoring the copy fails 8 named checks.
+- **A CACHED CURSOR DESCRIBES THE WINDOW IT IS IN, so a resumed walk advances FIRST.**
+  The tone set's mixed-unit cycle caches `{t0, t1, i}` because notes are scheduled in
+  order (without it, a note ten minutes in re-walks every lap since the anchor). Measuring
+  the next extent before advancing `i` re-measured the step it was already in, and the
+  cycle never left voice 1 — every bar came back "sine". `i: -1` is the "no window yet"
+  state that makes the advance-first loop correct from the anchor too.
+- **AN EXTRA `_ambProgStepAt` INSIDE AN EMIT IS A SIDE EFFECT.** It stashes the salt
+  position, the chord span and the hang flag; the tone set's change-unit walk asks it
+  dozens of times per lap, mid-emit. Every extra walk goes through `_ambTsqWalk`, which
+  saves and restores all three — the same save/restore `_ambHangAt` does, for the same
+  reason.
+- **A MACRO MUST NOT WRITE THE LIMIT THE USER SET.** 🎲 Repeats leaves `plays` alone and
+  writes only the ceiling; ◇ Instrument leaves `maxV` alone and writes only the two dials;
+  neither touches `toneSeq.steps`, because the voices are hand-picked. The test is whether
+  the field answers "how far may this go" or "how far does it go" — a macro owns the
+  second and never the first, or it is not something you can leave switched on.
+- **A ROW IS LIVE OR DEAD AS A WHOLE, so a per-item exception belongs INSIDE the write.**
+  ◇ Doubling only works on layers that reach the play-path fan-out, and `live: false` can
+  only say "this row cannot act at all" — it cannot say "these layers but not those". The
+  skip goes in the write, against the same one-definition test the control itself asks
+  (`_ambToneStacks`), or the macro stores a key nothing reads.
+- **A NEW BALANCE AXIS MUST DEFAULT TO EVEN, not to zero.** `_ambNovEff` read a missing
+  balance as `0 | 0` → 0, so every caller written before an axis existed (a saved fixture,
+  a stale seam call) would have silently switched the new axis OFF rather than leaving it
+  alone. Absent means "no opinion", which on a lean control is the middle.
+- **A CAPABILITY FLAG PASSED BY THE CALLER IS A FLAG SOMETHING WILL FORGET.** ◇ Doubling
+  is live on a v2 layer and not on v1's, so `_ambToneSeqBoxHtml` took `{ stack: true }`
+  from the v2 card — and the Tone set box REBUILDS ITSELF from that same function in
+  three other places (the ＋ / ✕ / On handler, and the gate's sync sweep), none of which
+  carried the argument. Measured: the dial was live until you added a step, then came
+  back disabled for ever. DERIVE the capability from the thing itself (a v2 layer keeps
+  its voice fields nested, `inst.instrument`), so no re-render can lose it.
+- **A DIE OVER A LIST MAKES THE LIST ORDERED.** ◇ Palette is ONE number over the Tone
+  set because it opens the list from the top (N eligible entries), which only reads
+  right if first means most wanted — say so in the control's own title. The alternative,
+  a per-entry weight, is N controls for what one dial and a drag-to-reorder already say.
+- **PER-ONSET AND PER-WINDOW ARE DIFFERENT CLOCKS, and one control may want both.**
+  ◇ Palette re-draws the lead per CYCLE LAP (so a voice holds for its `bars` and the
+  dwell keeps meaning what it always did), while ◇ Doubling rolls per NOTE ONSET (which
+  is what makes it read as "some notes are reinforced" rather than "this stretch is
+  thick"). Quantize an onset key to a musical tick — 960 per bar — never to the
+  millisecond, or two notes a float ULP apart draw differently (the rounding-tie rule).
+- **THE VIEW TRANSPOSE IS A SPACE, AND EVERYTHING ON A ROW MUST BE IN THE SAME ONE.**
+  The overview draws `_ambChordShift(chords[i], _ambProgViewShift(…))` — that is what puts
+  the progression in the area key — but a PART KEY is stored in the progression's own
+  space, so it has to travel with them. It did not: the key chip named the unshifted key
+  while the chips beside it showed shifted chords, and the chip numerals measured a
+  SHIFTED chord against the UNSHIFTED root. Reported as "why is F# the I chord in the key
+  of E major". Measured at a shift of 10: chip "♪ E Major" · root "⌂ D" · chords D7·G7·A7.
+  `_ambPartKeyShifted` moves it; the AREA key is NOT shifted, because in transpose mode
+  the shift is defined as "move the progression onto the area root" — it is already the
+  destination.
+  **DEGREES HIDE THIS CLASS OF BUG:** shifting the chord and the key by the same amount
+  cancels, so the numerals read correctly either way. Only the NAMES disagree, which is
+  why it surfaced as a music-theory question rather than a rendering one.
+  **EVERY SURFACE THAT NAMES A KEY CONVERTS, AND A WRITER CONVERTS BOTH WAYS.** Three
+  reports in one day, each one surface further back: the chip ("why is F# the I chord"),
+  then `_ambPartKeyMenu` ("I chose F major and it made a part in G major"), then
+  `_ambAddPartModal` ("I chose A# major but it created the part in C major"). A picker
+  `unshift`s what it stores; ＋ Add part ALSO has to shift what it OFFERS, because its
+  default is inherited from the last part's STORED key — it advertised "the area stays in
+  A♯ bebop" while every chip read C, so the key copied off the note was already two
+  semitones out before anything was picked. **A DEFAULT IS A READOUT.** The ＋ Add part
+  OPEN branch is the exception that proves it: `keyOff` is a DIFFERENCE (root − areaRoot)
+  and a difference is the same in both spaces, so it converts nothing — which only holds
+  while BOTH ends of it come from the same space.
+- **`_ambProgViewShift(E, cfg, chords, atSec)` TAKES E FIRST**, and `_ambPartNumerals`
+  called it `(cfg, chords)` — reading the chord array as `cfg` and `undefined` as the
+  chords, so it returned 0 and those numerals silently described the chords BEFORE the
+  transpose. It survived because the degrees cancel (above). A JS call with no arity
+  check will take the wrong arguments in silence; when a helper's first parameter is the
+  engine, check every call site, not just the one you are editing.
+- **`prog.parts` IS PRUNED AT ONE PART, so a per-part store does not exist until there are two.**
+  Measured: set `prog.parts = [{…}]`, and the next `getCfg` hands back no `parts` at all while
+  `_ambGridRanges` still answers 1. So any macro row that writes `parts[i].<key>` (✺ Novelty's
+  🎲 Chance and 🎲 Repeats … to) can only be offered where two parts exist, however sensible the
+  one-part case sounds musically — write it anyway and the key lands nowhere. Gate the row on the same
+  `nParts > 1` the ↻ Parts row uses, and let that row's inert branch name the way forward for the
+  whole axis rather than adding a second dead row.
+- **A CEILING PRUNED ONLY BY THE NORMALIZER LOOKS FINE THROUGH `getCfg`.** `playsTo` not above `plays`
+  is dropped on the next normalize, so a writer that leaves a stale ceiling passes any check that reads
+  the config back. The write must prune too — what is on screen BEFORE the next `getCfg` has to be
+  right (the `partplayshi` edit path says so out loud) — and a probe must therefore read the object the
+  write touched, not a fresh `getCfg`. Poison-verified: without the write's own prune, only the
+  raw-object check fails.
+
 - **PRUNE WHEN A STORE SAYS NOTHING, NOT WHEN IT HAPPENS TO BE SILENT.** The mod matrix pruned on
   "no depth anywhere → `delete L.mod`", which threw away **Rate, Shape and Rate timing** whenever
   depth was 0 — so setting a rate FIRST (the natural order: pick a speed, then dial the amount in)
@@ -294,8 +458,11 @@
   byte-identity for an untouched layer is unchanged (verified: fresh layer and defaults-only both
   still give `null`). `L.mod` is v1's own store read by `_ambSyncTarget`, so this was the control
   surface destroying the engine's input, not the engine.
-  **Where it lives:** Mix ▸ Mod — Rate timing, then VCA · amplitude (tremolo), VCO · pitch (vibrato),
-  VCF · cutoff (sweep), each with Depth · Rate · Shape. Verified reaching the audio: depth 60 builds
+  **Where it lives:** FX ▸ Mod (a stage in the FX picker since 2026-09-26, user: "move Mod to Fx";
+  it was a tab of Mix) — Rate timing, then VCA · amplitude (tremolo), VCO · pitch (vibrato),
+  VCF · cutoff (sweep), each with Depth · Rate · Shape. Its rows are v1's builders (`_ambModTarget`),
+  so they are NOT `.v2-f`: the values are in the markup (pass the stored target as the 6th argument)
+  and `applyGate` mirrors them — see the one-writer rule in `traps-ui.md`. Verified reaching the audio: depth 60 builds
   a live source at `E.mod['v2:<id>']`.
 
 - **A MERGED CONTROL MUST MEAN THE SAME DISTANCE IN EVERY MODE.** ⇢ Spread kept each mode's original
@@ -794,13 +961,13 @@
   the two dead ends are the lesson. (1) APPENDED under `.ambient-layer-body`: v1 chrome under a card
   built from big section buttons \u2014 the bolted-on control this file's own rule forbids, and
   unfindable ("where"). (2) ITS OWN GROUP + SECTION: findable, but a seventh chip for one control.
-  It is now a row in the Mix group carrying `data-v2tab="Ramps"`, beside Mod \u2014 the other surface
-  that moves a value over time. Being in `cardHtml` also removes the two-path problem below outright:
-  there is nothing to append on either path.
+  It is now a row in the Mix group carrying `data-v2tab="Ramps"`. \u266b Mod was beside it here until
+  2026-09-26, when it moved to FX at the user's request. Being in `cardHtml` also removes the
+  two-path problem below outright: there is nothing to append on either path.
   **A TAB IS BUILT FROM A ROW.** `syncSheet` groups `.ambient-ctrl` rows by `data-v2tab`, so a bare
-  block gets NO TAB \u2014 measured, the Mix sheet came up Level \u00b7 EQ \u00b7 Space \u00b7 Mod with the ramps
-  nowhere. It must carry `.ambient-ctrl`. But that class is a GRID, and inside one the ramp's target
-  picker is handed an 18px column (the squeeze the \u23f1 Odds lane escapes with `grid-column: 1 / -1`)
+  block gets NO TAB \u2014 measured back when Mod was still in Mix, the sheet came up
+  Level \u00b7 EQ \u00b7 Space \u00b7 Mod with the ramps nowhere. It must carry `.ambient-ctrl`. But that class
+  is a GRID, and inside one the ramp's target picker is handed an 18px column (the squeeze the \u23f1 Odds lane escapes with `grid-column: 1 / -1`)
   \u2014 so `.v2-rampctl` turns that row back into a block. Row-hood for the tab, block for the layout.
   Stamp the ROW, never the block: `tb()` adds the attribute to EVERY `<div `, and this block is
   nested markup `_ambRenderRamps` writes into.

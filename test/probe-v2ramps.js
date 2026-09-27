@@ -80,6 +80,9 @@ const ok = (name, cond, detail) => {
     ok('…and the row renders inside the card, not somewhere else', false, 'no Ramps block on the card');
     ok('the row has a reachable target picker', false, 'no Ramps block on the card');
     ok('…and this layer’s own parameters are on offer', false, 'no Ramps block on the card');
+    ok('pressing it BUILDS the target menu', false, 'not reached');
+    ok('…above the section sheet it was opened from, not under it', false, 'not reached');
+    ok('…a tap ticks a target and the button face names it', false, 'not reached');
     ok('a ramp on a v2 parameter sweeps it', false, 'not reached');
     console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
     await browser.close();
@@ -138,6 +141,9 @@ const ok = (name, cond, detail) => {
     ok('…and the row renders inside the card, not somewhere else', false, 'block not restored by render');
     ok('the row has a reachable target picker', false, 'block not restored by render');
     ok('…and this layer’s own parameters are on offer', false, 'block not restored by render');
+    ok('pressing it BUILDS the target menu', false, 'not reached');
+    ok('…above the section sheet it was opened from, not under it', false, 'not reached');
+    ok('…a tap ticks a target and the button face names it', false, 'not reached');
     ok('a ramp on a v2 parameter sweeps it', false, 'not reached');
     console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
     await browser.close();
@@ -189,6 +195,74 @@ const ok = (name, cond, detail) => {
     targets.hasBtn && targets.on && targets.w > 40, JSON.stringify(targets));
   ok('…and this layer’s own parameters are on offer',
     targets.v2 > 20, JSON.stringify(targets));
+
+  // ── …AND THE MENU IT OPENS IS ON TOP OF THE SHEET IT OPENED FROM ─────
+  // (2026-09-26, reported as "the Ramp target dropdown does nothing on click".)
+  // A BOX ON THE BUTTON PROVES NOTHING ABOUT THE SURFACE BEHIND IT — which is
+  // how this survived the checks above for six days. `.modal-overlay` is z 1200
+  // and `.v2-secpop-wrap` is 10250, so opened from Mix ▸ Ramps the modal BUILT
+  // COMPLETELY, 390×780 with all 61 targets in it, and painted UNDER the sheet:
+  // the centre of its first item hit-tested to `.ambient-ramps-head-mini`, a row
+  // of the sheet on top of it. A built-but-covered panel and a handler that never
+  // ran look identical from the outside and are opposite bugs, so this measures
+  // the DOM growth AND the hit test, then drives the item and reads the face.
+  const menu = await page.evaluate(async () => {
+    const c = document.querySelector('.v2-layer');
+    document.querySelectorAll('.v2-secpop-close').forEach((b2) => b2.click());
+    // DRIVE THE HEAD. `classList.remove('collapsed')` is not expanding a card —
+    // the head's own handler is what calls `popOpen`, and the section doors live
+    // in the sheet it builds. The checks above leave this card expanded with NO
+    // pop head (they re-render it directly), so cycle it: collapse, then open.
+    const hd = c.querySelector('.ambient-layer-head');
+    for (let i = 0; i < 2 && !c.querySelector('.v2-gototab[data-goto="Mix"]'); i++) {
+      if (hd) hd.click();
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    const c1 = document.querySelector('.v2-layer');
+    const g = c1.querySelector('.v2-gototab[data-goto="Mix"]');
+    if (!g) return { err: 'no Mix door', cls: c1.className,
+      gotos: [...c1.querySelectorAll('.v2-gototab')].map((b3) => b3.getAttribute('data-goto')) };
+    g.click();
+    await new Promise((r) => setTimeout(r, 550));
+    const t = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
+      .find((x) => x.getAttribute('data-tab') === 'Ramps');
+    if (!t) return { err: 'no Ramps tab', chips: [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')].map((x) => x.getAttribute('data-tab')) };
+    t.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const btn = document.querySelector('.v2-layer .ambient-ramp-target');
+    if (!btn) return { err: 'no target button in the sheet' };
+    const wasFace = btn.textContent.trim();
+    const before = document.querySelectorAll('.modal-overlay').length;
+    btn.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const ov = document.querySelector('.modal-overlay.amb-ramptgt-ov');
+    if (!ov) return { err: 'no overlay', before };
+    const it = ov.querySelector('.amb-ramptgt-item');
+    if (!it) return { err: 'no items', before };
+    const r2 = it.getBoundingClientRect();
+    const hit = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2);
+    const out = { before, after: document.querySelectorAll('.modal-overlay').length,
+                  z: getComputedStyle(ov).zIndex, sheetZ: (() => { const w = document.querySelector('.v2-secpop-wrap');
+                    return w ? getComputedStyle(w).zIndex : null; })(),
+                  hit: hit ? (hit.tagName + '.' + hit.className) : null,
+                  hitOk: !!(hit && hit.closest && hit.closest('.amb-ramptgt-item')),
+                  label: it.textContent.trim(), wasFace };
+    it.click();
+    await new Promise((r) => setTimeout(r, 250));
+    out.ticked = !!ov.querySelector('.amb-ramptgt-item.on');
+    const done = ov.querySelector('.amb-ramptgt-ok'); if (done) done.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const face = document.querySelector('.v2-layer .ambient-ramp-target');
+    out.face = face ? face.textContent.trim() : null;
+    out.closed = !document.querySelector('.modal-overlay.amb-ramptgt-ov');
+    return out;
+  });
+  await zz(300);
+  ok('pressing it BUILDS the target menu', menu.after === menu.before + 1, JSON.stringify(menu));
+  ok('…above the section sheet it was opened from, not under it',
+    menu.hitOk && (+menu.z > +menu.sheetZ), JSON.stringify(menu));
+  ok('…a tap ticks a target and the button face names it',
+    menu.ticked && menu.closed && menu.face && menu.face !== '+ Targets…', JSON.stringify(menu));
 
   // ── AND A RAMP ON A v2 PARAM ACTUALLY SWEEPS IT ──────────────────────
   const swept = await page.evaluate(() => {
@@ -249,8 +323,120 @@ const ok = (name, cond, detail) => {
     return { chips, has: !!chip, w: r ? Math.round(r.width) : 0,
              on: !!(chip && chip.offsetParent) };
   });
-  ok('the Mix sheet shows a Ramps tab, beside Mod',
+  // (♫ Mod moved to FX on 2026-09-26 at the user's request, so Ramps is the
+  // only automation tab left in Mix — it is still a TAB, which is what this asks.)
+  ok('the Mix sheet shows a Ramps tab',
     tabInfo.has && tabInfo.on && tabInfo.w > 20, JSON.stringify(tabInfo));
+
+  // —— THE TARGET LIST: SUBSECTIONS, AND THE PARAMS THAT WERE MISSING —————
+  // (2026-09-26, user: "needs to be organized with subsections, also it's missing a lot
+  // of params; add as many as possible, including Mod".) ♫ Mod is the one to assert
+  // hardest: it is THREE levels deep, so the generic nested-FX branch would have written
+  // `obj.mod['vca.depth']` — a field nothing reads, which measures as a ramp that runs
+  // and is silent.
+  console.log('\n  ◇ the target list — sections, and Mod');
+  const tl = await page.evaluate(() => {
+    const cfg = _masterEng.getCfg();
+    const gs = _ambRampTargetGroups(cfg) || [];
+    const mine = gs.find(g => (g.items || []).some(i => /^v2:/.test(i.value)));
+    const items = mine ? mine.items : [];
+    const secs = [];
+    items.forEach(i => { if (secs.indexOf(i.sec) < 0) secs.push(i.sec); });
+    const has = (k) => items.some(i => i.value.indexOf('.' + k) === i.value.indexOf('.') && i.value.slice(i.value.indexOf('.') + 1) === k);
+    // resolve + WRITE each new family, then read the store back through getCfg
+    const L = (cfg.layers || [])[0];
+    // ◇ Tone set is INERT WITHOUT A SET: `toneSeq` with no `steps` is pruned by the
+    // normalizer, so a palette ramp on a layer that has no voices listed writes
+    // nothing — correct, and it means this check has to give it a set first.
+    L.toneSeq = { on: 1, steps: [{ tone: 'sine', bars: 4 }, { tone: 'square', bars: 4 }] };
+    _masterEng.getCfg();
+    const key = 'v2:' + (L.id | 0);
+    const drive = (k, v) => { const r = _ambRampResolve(_masterEng.getCfg(), key + '.' + k);
+      if (!r) return 'no resolve'; if (r.set) r.set(v); else r.obj[r.key] = v;
+      return null; };
+    const errs2 = [];
+    [['mod.vca.depth', 61], ['mod.vco.rate', 42], ['eq.low', -7], ['tg.depth', 33],
+     ['toneSeq.pal', 80], ['portamento', 250], ['instrument.attack', 900],
+     ['part.timing.lean', -20], ['pecho.timeMs', 600]].forEach(pr => {
+      const e = drive(pr[0], pr[1]); if (e) errs2.push(pr[0] + ': ' + e);
+    });
+    const L2 = (_masterEng.getCfg().layers || []).find(x => (x.id | 0) === (L.id | 0));
+    return { n: items.length, secs, errs2,
+             modNested: ((L2.mod || {}).vca || {}).depth,
+             modFlatBug: !!(L2.mod && ('vca.depth' in L2.mod)),
+             modRate: ((L2.mod || {}).vco || {}).rate,
+             eq: (L2.eq || {}).low, tg: (L2.tg || {}).depth, pal: (L2.toneSeq || {}).pal,
+             glide: L2.portamento, atk: (L2.instrument || {}).attack,
+             lean: (((L2.part || {}).timing) || {}).lean, echo: (L2.pecho || {}).timeMs };
+  });
+  console.log('     ' + tl.n + ' targets in ' + tl.secs.length + ' sections: ' + JSON.stringify(tl.secs));
+  ok('every target carries a subsection, and there are several',
+    tl.secs.length >= 8 && tl.secs.every(x => !!x), JSON.stringify(tl.secs));
+  ok('♫ Mod is on offer, and every resolve succeeded',
+    JSON.stringify(tl.errs2) === '[]', JSON.stringify(tl.errs2));
+  ok('…a Mod ramp writes THREE levels down, not a dotted key nothing reads',
+    tl.modNested === 61 && tl.modRate === 42 && tl.modFlatBug === false, JSON.stringify(tl));
+  ok('…and ≡ EQ · ▦ Chop · ◇ Tone set · Glide · Envelope · Lean · Pitch echo all land',
+    tl.eq === -7 && tl.tg === 33 && tl.pal === 80 && tl.glide === 250 &&
+    tl.atk === 900 && tl.lean === -20 && tl.echo === 600, JSON.stringify(tl));
+
+  // …and the picker actually DRAWS the sections, with a find box that narrows
+  const pk = await page.evaluate(async () => {
+    const c = document.querySelector('.v2-layer');
+    document.querySelectorAll('.v2-secpop-close').forEach((b2) => b2.click());
+    const hd = c.querySelector('.ambient-layer-head');
+    for (let i = 0; i < 2 && !c.querySelector('.v2-gototab[data-goto="Mix"]'); i++) {
+      if (hd) hd.click();
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    const g = document.querySelector('.v2-layer .v2-gototab[data-goto="Mix"]');
+    if (!g) return { err: 'no Mix door' };
+    g.click();
+    await new Promise((r) => setTimeout(r, 550));
+    const t9 = [...document.querySelectorAll('.v2-layer .v2-pop-tabs [data-tab]')]
+      .find((x) => x.getAttribute('data-tab') === 'Ramps');
+    if (t9) t9.click();
+    await new Promise((r) => setTimeout(r, 350));
+    // A FRESH RAMP. The sweep check above replaces `cfg.ramps` wholesale, so the row
+    // still on screen names an id the store no longer has — and `_ambShowRampTargetsMenu`
+    // bails on that (`if (!getR()) return`), which measures as a dead button.
+    const add9 = document.querySelector('.v2-layer .ambient-ramp-add');
+    if (add9) { add9.click(); await new Promise((r) => setTimeout(r, 450)); }
+    const rows9 = [...document.querySelectorAll('.v2-layer .ambient-ramp-target')];
+    const btn = rows9[rows9.length - 1];
+    if (!btn) return { err: 'no target button' };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const ov = document.querySelector('.modal-overlay.amb-ramptgt-ov');
+    if (!ov) return { err: 'no overlay' };
+    const secs = [...ov.querySelectorAll('.amb-ramptgt-sec')].map(n => n.textContent.trim());
+    const find = ov.querySelector('.amb-ramptgt-find');
+    const before = [...ov.querySelectorAll('.amb-ramptgt-item')].filter(n => !n.hidden).length;
+    // MEASURE BEFORE FILTERING. Measured after, the first heading is one the filter has
+    // just hidden, so it reads 0×0 and the check calls a working control missing — the
+    // documented 0×0 tell, self-inflicted.
+    const s0 = ov.querySelector('.amb-ramptgt-sec');
+    const r0 = s0 ? s0.getBoundingClientRect() : null;
+    find.value = 'vca'; find.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    const after = [...ov.querySelectorAll('.amb-ramptgt-item')].filter(n => !n.hidden).length;
+    const heads = [...ov.querySelectorAll('.amb-ramptgt-sec')].filter(n => !n.hidden).map(n => n.textContent.trim());
+    find.value = ''; find.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 150));
+    const restored = [...ov.querySelectorAll('.amb-ramptgt-item')].filter(n => !n.hidden).length;
+    const done = ov.querySelector('.amb-ramptgt-ok'); if (done) done.click();
+    await new Promise((r) => setTimeout(r, 300));
+    return { secs, before, after, heads, restored, w: r0 ? Math.round(r0.width) : 0 };
+  });
+  ok('the picker draws the subsection headings, measured', (pk.secs || []).length >= 8 && pk.w > 40,
+    JSON.stringify(pk));
+  ok('…a search narrows the list', pk.after > 0 && pk.after < pk.before,
+    JSON.stringify([pk.before, pk.after]));
+  ok('…and leaves only the headings that still have rows under them',
+    (pk.heads || []).length > 0 && (pk.heads || []).length < (pk.secs || []).length,
+    JSON.stringify(pk.heads));
+  ok('…clearing it puts every row back', pk.restored === pk.before,
+    JSON.stringify([pk.before, pk.restored]));
 
   if (errs.length) console.log('\npage errors:\n  ' + errs.slice(0, 8).join('\n  '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

@@ -17,3 +17,6 @@ _*.html
 # built desktop app — large, and rebuilt on demand
 dist/
 .desktop-stage/
+
+# agent worktrees — a checkout, not source
+.claude/worktrees/

@@ -2105,6 +2105,13 @@
       // Absent = bars, so a project made before free cycles existed is
       // byte-identical and `part.ms` is stored only once it is chosen.
       if (p.clock !== 'free') { delete p.clock; delete p.ms; }
+      // THE `else` BELONGS TO THE CLOCK, and for a while it did not — the lenSync
+      // block below was inserted between the `if` and its `else`, which re-parented
+      // the ms clamp onto "carries no binding": every unbound layer had `part.ms`
+      // deleted one line up and re-created as 2000 right here (so much for
+      // byte-identical), and a free-running layer WITH a binding never had its ms
+      // clamped at all.
+      else p.ms = clamp(Math.round(Number.isFinite(p.ms) ? p.ms : 2000), 200, 60000);
       // absent = 'stretch', which is what v2 has always done. `preserve` is the
       // third answer and only a CADENCE edit can apply it — it needs the old
       // per-change lengths, which no other length change has.
@@ -2115,10 +2122,15 @@
       // came only from `part.bars`. In v2 the CYCLE *is* the loop length, so
       // the binding lands there directly (reconciled in `normalizeAll`, which
       // has the cfg the part length needs). Absent = unbound, as before.
-      if (L.lenSync && Number.isFinite(+L.lenSync.passes)) {
+      // …AND THE COERCION IS v1's ONE DEFINITION, never a copy: the binding also
+      // says WHAT its count counts (`unit: 'chg'` = changes of that part, absent =
+      // passes), and a second definition here dropped that on every `getCfg` — the
+      // store said `chg` and the card drew passes, both reading honestly. 64 is v2's
+      // own cap, passed in because the bound stepper offers it.
+      if (typeof _ambNormalizeLenSync === 'function') _ambNormalizeLenSync(L, 64);
+      else if (L.lenSync && Number.isFinite(+L.lenSync.passes)) {
         L.lenSync = { part: (L.lenSync.part | 0), passes: clamp(+L.lenSync.passes | 0, 1, 64) };
       } else if (L.lenSync != null) delete L.lenSync;
-      else p.ms = clamp(Math.round(Number.isFinite(p.ms) ? p.ms : 2000), 200, 60000);
       // THE UNIT MIRROR. v1 indexes several things by a layer's `unit` — a bar
     // RATIO — and `unitGate` is one of them, so without this a v2 layer's unit
     // schedule was consulted and could never place a note (measured: 16
@@ -8578,9 +8590,23 @@
       for (let i = 0; i < cfg.layers.length; i++) {
         const L = cfg.layers[i]; if (!L || !L.lenSync || !L.part) continue;
         try {
-          const per = (typeof _ambLenPartBars === 'function') ? _ambLenPartBars(cfg, L.lenSync.part | 0) : 0;
-          if (!(per > 0)) continue;
-          let bars = (L.lenSync.passes | 0) * per;
+          // IN CHANGES the count is not a multiple of anything — the cadence is
+          // WALKED (2 changes over a 1·3 cadence is 4 bars, never 2×2) — so the walk
+          // IS the answer and the pass arithmetic is skipped. Same conversion v1's
+          // reconciler uses, so a layer means the same length on either card.
+          let bars = 0;
+          if (L.lenSync.unit === 'chg' && typeof _ambLenChangesFit === 'function') {
+            // the ceiling in WHOLE CHANGES, count written back — v1's branch does the
+            // same, from the same helper, so the two cards cannot disagree.
+            const fit = _ambLenChangesFit(cfg, L.lenSync.part | 0, L.lenSync.passes | 0, 64);
+            bars = fit.bars;
+            if (!(bars > 0)) continue;
+            if (fit.k !== (L.lenSync.passes | 0)) L.lenSync.passes = fit.k;
+          } else {
+            const per = (typeof _ambLenPartBars === 'function') ? _ambLenPartBars(cfg, L.lenSync.part | 0) : 0;
+            if (!(per > 0)) continue;
+            bars = (L.lenSync.passes | 0) * per;
+          }
           try { if (typeof _ambSnapBars === 'function') bars = _ambSnapBars(bars); }
           catch (e) { bars = Math.round(bars * 48) / 48; }
           if (!(bars > 0)) continue;
@@ -15467,9 +15493,13 @@
   // `.ambient-ctrl-step` was missing, sliders with no `.ambient-sl-v` readout).
   // The class names were right; the STRUCTURE they need was not. Reuse the
   // function, and v2 follows v1's chrome forever with no second copy to drift.
-  const tag = (html, cls, field, when) => {
+  const tag = (html, cls, field, when, tab) => {
     let h = html.replace('class="' + cls + '"', 'class="' + cls + ' v2-f" data-f="' + field + '"');
     if (when) h = h.replace('<div class="ambient-ctrl', '<div data-v2when="' + when + '" class="ambient-ctrl');
+    // A TAB NAME, when the row's LABEL is not the name of its home. `popTabName`
+    // reads the label when there is no `data-v2tab`, so a row whose label states
+    // its own unit would otherwise wander off into a tab of its own.
+    if (tab) h = h.replace('<div ', '<div data-v2tab="' + tab + '" ');
     return h;
   };
   const uid = (L, field) => 'v2-' + L.id + '-' + field.replace(/\./g, '-');
@@ -15708,7 +15738,13 @@
     if (!L || !L.lenSync) return 'passes of a part';
     const pn = lockPartName(L);
     const b = (L.part && +L.part.bars) || 0;
-    return 'passes of ' + (pn || 'the part') + (b > 0 ? ' \u2014 ' + b + ' bars' : '');
+    // WHAT THE COUNT COUNTS — passes of that part, or CHANGES of it. The stepper
+    // holds the count and the bars are what it comes to, so the hint says both;
+    // a change walk makes a fractional total ordinary, hence the mixed format.
+    const what = (L.lenSync.unit === 'chg') ? 'changes of ' : 'passes of ';
+    let bt = String(b);
+    try { if (typeof _ambFmtBarsMixed === 'function') bt = _ambFmtBarsMixed(b); } catch (e) {}
+    return what + (pn || 'the part') + (b > 0 ? ' \u2014 ' + bt + ' bars' : '');
   }
   // ── NOTE: A TONE OF THE SET, AND UNDER `STACK` AN INVERSION ─────────────
   // user: "cap it to the available tones, and make it clear this is selecting
@@ -15758,9 +15794,9 @@
     const steps = Math.max(1, (((L.part.rhythm) || {}).steps | 0) || 1);
     return HOLD_BASE + ' \u2014 ' + n + ' of ' + steps + ' per cycle = ' + holdTime(ms) + ' a note';
   }
-  const st = (L, field, label, v, min, max, hint, when) =>
+  const st = (L, field, label, v, min, max, hint, when, tab) =>
     (typeof _ambStep === 'function')
-      ? tag(_ambStep(label, uid(L, field), min, max, v, hint), 'ambient-step-inp', field, when)
+      ? tag(_ambStep(label, uid(L, field), min, max, v, hint), 'ambient-step-inp', field, when, tab)
       : '';
   // Generic on/off over any field path. A BUTTON, never a select — a select
   // writes a STRING and '0' is truthy (the documented trance-gate trap), so an
@@ -17682,12 +17718,16 @@
             return '<div class="ambient-ctrl"><label for="' + cid + '">Cycle</label>' +
               '<select id="' + cid + '" class="ambient-select v2-cycmode">' +
                 opt('every', '\u25ad Everywhere \u2014 its own bar count') +
-                opt('locked', '\u27f2 Locked \u2014 passes of a part') +
+                opt('locked', '\u27f2 Locked \u2014 ' +
+                  ((L.lenSync && L.lenSync.unit === 'chg') ? 'changes of a part' : 'passes of a part')) +
                 opt('free', 'Free \u2014 its own clock') +
               '</select><span class="ambient-hint">' + esc(
                 cur === 'free' ? 'its own clock in milliseconds, off the bar grid'
-                : cur === 'locked' ? ('the loop is a whole number of passes of ' + (pn || 'a part') +
-                                      ' \u2014 it follows if that part is re-cut')
+                : cur === 'locked' ? ((L.lenSync && L.lenSync.unit === 'chg')
+                    ? ('the loop is a whole number of changes of ' + (pn || 'a part') +
+                       ' \u2014 it walks that cadence, so an uneven one still lands on a change')
+                    : ('the loop is a whole number of passes of ' + (pn || 'a part') +
+                       ' \u2014 it follows if that part is re-cut'))
                 : 'one content everywhere, looping every Bars bars') +
               '</span></div>';
           })() +
@@ -17701,8 +17741,14 @@
             // PASSES COUNT it is reconciled FROM — editing the bars would
             // silently lose on the next getCfg, which is what made this a
             // badge in the first place.
-            ? st(L, 'lenSync.passes', 'Bars', L.lenSync.passes | 0, 1, 64,
-                 lockHint(L), 'cyc:locked')
+            // THE LABEL IS THE COUNT'S OWN WORD — the number here is passes, or
+            // CHANGES of the part, and never bars. Labelled 'Bars' it read "Bars 2"
+            // over a 2-change binding of a 4-bar loop, and `_AMB_PARAM_DESC` is keyed
+            // by the label, so the tooltip claimed the number was a bar count too.
+            // THE TAB IS PINNED to Bars so the bound control still lives where the
+            // unbound one does — `popTabName` prefers an explicit `data-v2tab`.
+            ? st(L, 'lenSync.passes', (L.lenSync.unit === 'chg' ? 'Changes' : 'Passes'),
+                 L.lenSync.passes | 0, 1, 64, lockHint(L), 'cyc:locked', 'Bars')
             // …and PER-PART is the same situation: a record filed under a part
             // IS that part's length, reconciled on every normalize, so the
             // stepper would lose to it exactly the same way.
@@ -19140,7 +19186,20 @@
       // has no genwrap skip and still keeps Deep's Note ceiling honest.
       paint('part.shape.holdSteps', holdHint(L));
       paint('part.shape.lenRatio', lenHint(L));
-      if (L.lenSync) paint('lenSync.passes', lockHint(L));
+      if (L.lenSync) {
+        paint('lenSync.passes', lockHint(L));
+        // …AND THE LABEL AND THE COUNT, because the binding is edited in v1's ⟲ Loop
+        // modal, which re-syncs rather than rebuilding: a label or a number with no
+        // second writer is the frozen readout this file has a rule about.
+        const lw = (L.lenSync.unit === 'chg') ? 'Changes' : 'Passes';
+        const nv = String(L.lenSync.passes | 0);
+        card.querySelectorAll('.v2-f[data-f="lenSync.passes"]').forEach((el) => {
+          if (el.value !== nv && document.activeElement !== el) el.value = nv;
+          const row = el.closest('.ambient-ctrl'); if (!row) return;
+          const lab = row.querySelector('label');
+          if (lab && lab.textContent !== lw) lab.textContent = lw;
+        });
+      }
     } catch (e) {}
     // The editor re-syncs its tabs on every gate pass — the gate can hide the
     // active tab's rows from under it (switch Voice with Tone open).
@@ -19651,6 +19710,19 @@
     } catch (e) {}
     return out;
   }
+
+  // WHICH PART IS BEING EDITED — v1's resolver, NEVER a local `?? 0`. This IIFE
+  // had four copies of `Number.isFinite(E._curPart) ? … : 0`, and `_curPart` is
+  // transient (absent after a reload), so two of them FILED CONTENT UNDER PART 1
+  // while the ⇶ strip said Chorus: ◫ Per part and the ⟲ Locked rung both take
+  // the part from here. `_ambCurPartEdit` falls back through a layer's persisted
+  // `partFor`, which is the thing that actually survives a reload.
+  const curPartPi = (E) => {
+    try {
+      if (typeof _ambCurPartEdit === 'function') return _ambCurPartEdit(E) | 0;
+    } catch (e) {}
+    return Number.isFinite(E && E._curPart) ? (E._curPart | 0) : 0;
+  };
   // (`partChoiceOpts` lived here and built the head's part <select>. That
   // chooser is GONE — the ⇶ Part strip above the layers is the one place a
   // part is made current — and the builder went with it rather than being left
@@ -21486,7 +21558,7 @@
       try { if (typeof _ambRenderRamps === 'function') _ambRenderRamps(E); } catch (e) {}
       // …and the part hue, on THIS path too — a part change leaves the card set
       // untouched, so without it the colour only moved on a structural edit.
-      try { paintPartHue(E, Number.isFinite(E._curPart) ? (E._curPart | 0) : 0); } catch (e) {}
+      try { paintPartHue(E, curPartPi(E)); } catch (e) {}
       return;
     }
     h._sig = sig;
@@ -21714,7 +21786,7 @@
         sy.addEventListener('change', syAp); sy.addEventListener('input', syAp);
       }
     });
-    try { paintPartHue(E, Number.isFinite(E._curPart) ? (E._curPart | 0) : 0); } catch (e) {}
+    try { paintPartHue(E, curPartPi(E)); } catch (e) {}
     if (!h._wired) {
       h._wired = true;
       const layerOf = (el) => {
@@ -22130,11 +22202,15 @@
             // normalize writes `part.bars` from this on every getCfg — and it
             // also clears a free clock, since a binding to the changes is the
             // one thing a free-running interval forbids.
-            let pi0 = Number.isFinite(E._curPart) ? (E._curPart | 0) : 0;
+            let pi0 = curPartPi(E);
             const rgs = partRangesOf(E);
             if (!rgs.some(r => r.pi === pi0)) pi0 = rgs.length ? rgs[0].pi : 0;
-            const keep = (L2.lenSync && (L2.lenSync.passes | 0)) || 1;
+            const prev = L2.lenSync || null;
+            const keep = (prev && (prev.passes | 0)) || 1;
             L2.lenSync = { part: pi0, passes: clamp(keep, 1, 64) };
+            // the unit belongs to the COUNT, not to the mode — a trip out to
+            // Everywhere and back must not silently re-read changes as passes.
+            if (prev && prev.unit === 'chg') L2.lenSync.unit = 'chg';
             delete L2.part.clock; delete L2.part.ms;
           } else {
             delete L2.lenSync;
@@ -23369,7 +23445,7 @@
             if (!confirm('Back to one content everywhere?\n\nThe per-part contents will be discarded \u2014 the Everywhere content, kept on ice since Per part went on, comes back.')) return;
             V2.partSelect(E, ctx.L, null);
           } else {
-            let pi0 = Number.isFinite(E._curPart) ? (E._curPart | 0) : 0;
+            let pi0 = curPartPi(E);
             const rgs = partRangesOf(E);
             if (!rgs.some(r => r.pi === pi0)) pi0 = rgs.length ? rgs[0].pi : 0;
             V2.partSelect(E, ctx.L, pi0);

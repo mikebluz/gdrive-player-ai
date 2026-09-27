@@ -133,7 +133,7 @@
   `applyGateCard` — the count moves with the CHORDS and nothing rebuilds the row when they change.
 - **A CONTROL BELONGS WHERE ITS QUESTION LIVES; every other surface STATES THE CONSEQUENCE.**
   Time asks "how long is a cycle" — `cycModeOf` is its ladder: ▭ Everywhere (own bar count) ·
-  ⟲ Locked (N passes of a part, `lenSync`) · Free (own ms clock). Generate asks "what content does
+  ⟲ Locked (N passes — or N CHANGES — of a part, `lenSync`) · Free (own ms clock). Generate asks "what content does
   this layer have" — ▭ Everywhere vs ◫ Per part (`partSelect`). Per part LOOKS like a cycle setting
   because it fixes the length, but it forks the CONTENT and only has a length consequence, so Time
   shows a badge pointing at Generate rather than owning it. Putting it on the cycle ladder first
@@ -232,6 +232,17 @@
   change take the nearest incoming chord tone. ABSENT MEANS ALL THREE (2026-09-17): shipping them
   opt-in meant the part the user was listening to kept the coin flip, and the fix read as no fix at all.
   The old behaviour is the named choice `mixAt:'any'` / `walkMode:'scatter'` / `lineUp:0`.
+- **`E._curPart` IS TRANSIENT, SO `_curPart ?? 0` READS AS "PART 1" AFTER EVERY RELOAD.** It is never
+  persisted (by design), while the ⇶ strip, the card hues and every layer's `partFor` still say
+  Chorus. FIVE sites inlined `Number.isFinite(E._curPart) ? (E._curPart | 0) : 0`, and two of them
+  DECIDE WHERE CONTENT IS FILED — ◫ Per part and the ⟲ Locked rung — so on a fresh load they filed a
+  layer under Verse while the strip said Chorus, and ⚙ Deep then wrote Verse's record (user: "it just
+  switches back to the first part, not affecting the current part at all"). Measured: strip index 1,
+  pill reading "◫ Per part · 1 · Verse". **Ask `_ambCurPartEdit(E)`, never the field** — it falls back
+  through `_ambCurPartNow`, which derives the part from a layer's persisted `partFor`. And
+  `_ambRenderCurPart` LATCHES what it draws into `E._curPart` when the field is absent, never over an
+  explicit pick (`_ambCurPartPick` is the other writer), so the strip and the cards cannot disagree
+  about which part a fork will land in. `test/probe-curpart.js`.
 
 ### Bloom: emit, capture, freeze / Write
 
@@ -361,7 +372,11 @@
   card drew `bar`, and both were reading honestly. `_ambToneSeqCoerce` is now the one
   definition and both normalizers call it. **Before adding a field to anything a v2 layer
   stores, grep 18-layer-v2 for a second coercion of that key** — "verbatim" copies do not
-  stay verbatim. Poison-verified: restoring the copy fails 8 named checks.
+  stay verbatim. Poison-verified: restoring the copy fails 8 named checks. **IT HAPPENED AGAIN**
+  on `lenSync` (2026-09-27): the copy dropped the new `unit` on every `getCfg`, so the store said
+  `chg` and the bound stepper drew passes. `_ambNormalizeLenSync(L, max)` is now the one definition,
+  with the CAP passed in — v1's modal offers 32 and v2's stepper 64, and hard-coding either there
+  would silently rewrite saved projects. Two keys, the same failure: assume the copy exists.
 - **A CACHED CURSOR DESCRIBES THE WINDOW IT IS IN, so a resumed walk advances FIRST.**
   The tone set's mixed-unit cycle caches `{t0, t1, i}` because notes are scheduled in
   order (without it, a note ten minutes in re-walks every lap since the anchor). Measuring
@@ -2086,7 +2101,7 @@ All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/
 | `unitGate{div,period,slots}` | slices of each unit | PLAYBACK filter inside `playNote` — live-editable on a frozen loop. `div` clamps to ≥2 and a slot value is a MASK ARRAY; use `_ambUnitGateSet` |
 | `iterGate{len,steps,ref}` | whole-arrangement iterations | playback filter; `'plot'` cannot advance below 2 areas, `'round'` can |
 | `cycleGate` | iterations of the layer's own pattern | FOLDED into `when` at normalize and deleted — an editing VIEW, not a runtime gate |
-| `lenSync{part,passes}` | loop length bound to N passes of a part | a RECONCILER on every normalize (never a new clock); writes `write.bars` AND, for phrase-driven types, the phrase `bars` + `unit`. Exact under a fractional cadence; the bound stepper is replaced by a badge |
+| `lenSync{part,passes,unit?}` | loop length bound to N passes of a part, or N CHANGES of it (`unit:'chg'`; absent = passes) | a RECONCILER on every normalize (never a new clock); writes `write.bars` AND, for phrase-driven types, the phrase `bars` + `unit`. Exact under a fractional cadence; the bound stepper is replaced by a badge |
 
 **Per-layer content & sound**
 

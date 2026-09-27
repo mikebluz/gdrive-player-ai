@@ -22279,27 +22279,80 @@
       if (!L || L.type !== 'gen') { if (L && L.role !== undefined && L.type !== 'gen') delete L.role; return; }
       L.role = _ambRoleOf(L);   // unknown/absent → 'bed'
     }
-    function _ambNormalizeLenSync(L) {
+    // THE ONE COERCION FOR A `lenSync` BINDING — v1's layer normalizers AND the v2 half
+    // both call it. 18-layer-v2 carried its own copy, and the day the binding grew a
+    // `unit` that copy dropped it on every `getCfg`: the store said `chg` and the card
+    // drew passes, the documented "verbatim copies do not stay verbatim" trap. The KEY
+    // SET lives here; the CAP is the caller's, because the two surfaces offer different
+    // ranges (v1's modal 32, v2's bound stepper 64) and narrowing either would silently
+    // rewrite saved projects.
+    function _ambNormalizeLenSync(L, max) {
       if (!L || L.lenSync == null) return;
       const s = L.lenSync;
       if (typeof s !== 'object') { delete L.lenSync; return; }
       const n = s.passes | 0;
       if (n < 1) { delete L.lenSync; return; }
-      L.lenSync = { part: Math.max(-1, s.part | 0), passes: Math.min(32, n) };
+      // `passes` COUNTS THE BINDING'S OWN UNIT — passes of that part, or CHANGES of it
+      // (2026-09-27, "wherever scheduling is happening"). The key is save-compat and
+      // `unit` is additive, ABSENT = passes, so every binding written before this
+      // resolves to exactly the bars it did.
+      const cap = Math.max(1, (max | 0) || 32);
+      const out = { part: Math.max(-1, s.part | 0), passes: Math.min(cap, n) };
+      if (s.unit === 'chg') out.unit = 'chg';
+      L.lenSync = out;
+    }
+    // N CHANGES OF A PART, IN BARS — the cadence walked, cycling if the count runs
+    // past the part's own changes (4 changes of a 2-chord part is two times round).
+    // Falls back to the part's whole length when there are no changes to count, which
+    // is the same answer "passes" would give.
+    function _ambLenChangesBars(cfg, pi, n) {
+      const k = Math.max(1, Math.min(64, n | 0));
+      let lens = [];
+      try { lens = (pi >= 0 ? _ambCadence(cfg, pi) : null) || []; } catch (e) { lens = []; }
+      if (!lens.length) {
+        try {
+          const chs = (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null;
+          if (chs && chs.length) lens = chs.map((ch) => _ambCadLen(cfg, ch));
+        } catch (e) { lens = []; }
+      }
+      if (!lens.length) return _ambLenPartBars(cfg, pi) * k;
+      let t = 0;
+      for (let i = 0; i < k; i++) t += Math.max(0.05, lens[i % lens.length]);
+      return Math.round(t * 48) / 48;
+    }
+    // THE BAR CEILING, TAKEN IN WHOLE CHANGES — never mid-change. Truncating the
+    // total to 64 bars would end the loop inside a chord, which is the exact
+    // misalignment a binding to the changes exists to prevent (the pass branch has
+    // said so since it shipped: "clamps are in whole passes"). Returns the count it
+    // could keep, so the caller writes it back and the chip stays honest.
+    function _ambLenChangesFit(cfg, pi, n, maxBars) {
+      const cap = (maxBars > 0) ? maxBars : 64;
+      let k = Math.max(1, Math.min(64, n | 0));
+      let bars = _ambLenChangesBars(cfg, pi, k);
+      while (k > 1 && bars > cap) { k--; bars = _ambLenChangesBars(cfg, pi, k); }
+      return { k: k, bars: Math.round(Math.max(0.125, Math.min(cap, bars)) * 48) / 48 };
     }
     function _ambLenSyncLabel(cfg, s) {
       if (!s) return '';
       // part < 0 is the legacy "default part" sentinel (the concept is gone):
       // under a progression it means the changes, so name THOSE; without one
       // it is a plain bar count — never the phantom "Part 1" container.
+      // IN CHANGES it says so in words — one labeller, so the v1 menu row, the card
+      // badge and the v2 layer menu cannot spell the same stored pair three ways.
+      const n = s.passes | 0;
+      const chg = (s.unit === 'chg');
       try {
-        if ((s.part | 0) >= 0) return (s.passes | 0) + ' × ' + _ambPartLabel(cfg, s.part | 0);
+        const pi = (s.part | 0);
+        const named = (p) => chg
+          ? (n + ' change' + (n === 1 ? '' : 's') + ' of ' + _ambPartLabel(cfg, p))
+          : (n + ' × ' + _ambPartLabel(cfg, p));
+        if (pi >= 0) return named(pi);
         if (cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
-          return (s.passes | 0) + ' × ' + _ambPartLabel(cfg, 0);
+          return named(0);
         }
-        const total = (s.passes | 0) * _ambLenPartBars(cfg, -1);
+        const total = chg ? _ambLenChangesBars(cfg, -1, n) : n * _ambLenPartBars(cfg, -1);
         return _ambFmtBarsMixed(total) + ' bars';
-      } catch (e) { return (s.passes | 0) + ' ×'; }
+      } catch (e) { return chg ? (n + ' chg') : (n + ' ×'); }
     }
     // The reconciler — the mirror doctrine: rewritten on every normalize so it
     // can never go stale. write.bars is what loops a layer; a bound layer's
@@ -22311,6 +22364,17 @@
       try {
         _ambPartSeqLayers(cfg).forEach((L) => {
           const s = L && L.lenSync; if (!s) return;
+          // IN CHANGES, the count is not a multiple of anything — the walk IS the
+          // answer — so it resolves here and the pass arithmetic below is skipped.
+          if (s.unit === 'chg') {
+            const fit = _ambLenChangesFit(cfg, s.part | 0, s.passes | 0, 64);
+            const totC = fit.bars;
+            if (!(totC > 0)) return;
+            if (fit.k !== (s.passes | 0)) s.passes = fit.k;   // whole changes, and the chip says so
+            if (!L.write || typeof L.write !== 'object') L.write = { on: true, bars: totC, times: 4 };
+            else { L.write.on = true; L.write.bars = totC; if (L.write.stochastic) L.write.stochastic = false; }
+            return;
+          }
           const per = _ambLenPartBars(cfg, s.part | 0); if (!(per > 0)) return;
           // EXACT, NOT ROUNDED. Cadences make fractional part lengths ordinary
           // (2·½·1·1 = 4½ bars), and rounding the binding to whole bars walks
@@ -45977,6 +46041,27 @@
       } catch (e) {}
       return rgs.length ? rgs[0].pi : -1;
     }
+    // …AND THE SAME ANSWER WITH NO RANGES TO HAND — the one door every surface
+    // asks through. `E._curPart` is TRANSIENT BY DESIGN (never persisted), so
+    // after a reload it is ABSENT while the strip, the card hues and every
+    // layer's `partFor` still say Chorus. Five sites inlined
+    // `Number.isFinite(E._curPart) ? … : 0` and so answered PART 1: pressing
+    // ◫ Per part filed the layer under Verse while the strip said Chorus, and
+    // ⚙ Deep then wrote Verse's record (user, 2026-09-27: "when I go to
+    // generate a content for a part for a layer, it just switches back to the
+    // first part, not affecting the current part at all"). `_ambCurPartNow`
+    // already knew how to derive it; the inlined 0 was a SECOND definition of a
+    // question that has one. Global, so 18-layer-v2 uses this one rather than a
+    // copy of it.
+    function _ambCurPartEdit(E) {
+      if (Number.isFinite(E && E._curPart)) return E._curPart | 0;
+      try {
+        const cfg = E.getCfg();
+        const pi = _ambCurPartNow(E, cfg, _ambGridRanges(cfg) || []) | 0;
+        if (pi >= 0) return pi;
+      } catch (e) {}
+      return 0;
+    }
     // THE STRIP SAYS WHICH PART YOU ARE EDITING; this says which one is
     // PLAYING. They are different questions by design (editing a part never
     // moves playback), and with only the editing one marked there was no way
@@ -46016,7 +46101,7 @@
       // Stopped (`pi` − 1) hands the cards back to the edited part.
       try {
         if (window._v2 && window._v2.paintPart) {
-          window._v2.paintPart(E, (pi >= 0) ? pi : (Number.isFinite(E._curPart) ? (E._curPart | 0) : 0));
+          window._v2.paintPart(E, (pi >= 0) ? pi : _ambCurPartEdit(E));
         }
       } catch (e) {}
       // 👁 VIEW: THE DROPDOWN IS A READOUT and follows what plays, so the strip
@@ -46058,6 +46143,15 @@
         });
       } catch (e) {}
       const cur = cfg ? _ambCurPartNow(E, cfg, rgs) : -1;
+      // …AND WHAT THE STRIP DRAWS *IS* THE AXIS FROM HERE ON. `_curPart` is
+      // transient, so on a reload it is absent while this readout resolves the
+      // part perfectly well (through a layer's persisted `partFor`) — and every
+      // consumer that asked `E._curPart` directly got PART 1 instead. Latched
+      // ONLY when absent, never over an explicit pick: `_ambCurPartPick` is the
+      // other writer and a readout stomping a choice is the trap this file
+      // states. With this, the strip and the cards cannot disagree about which
+      // part ◫ Per part and ⟲ Locked will file a layer under.
+      if (cur >= 0 && !Number.isFinite(E._curPart)) E._curPart = cur;
       // a looped part that has been DELETED can never come round again, so the
       // hold would never arm and the lit button would be a claim about nothing
       if (Number.isFinite(E._partLoop) && !rgs.some(r => r.pi === (E._partLoop | 0))) {
@@ -52907,6 +53001,9 @@
       const list = _ambLenPartsList(cfg);
       const cur = (L0 && L0.lenSync) ? L0.lenSync : null;
       let passes = cur ? Math.max(1, cur.passes | 0) : 4;
+      // WHAT THE COUNT COUNTS — passes of that part, or CHANGES of it. Absent = passes,
+      // which is what every binding written before today means.
+      let lunit = (cur && cur.unit === 'chg') ? 'chg' : 'pass';
       let pi = cur ? (cur.part | 0) : list[0].pi;
       if (!list.some(x => x.pi === pi)) pi = list[0].pi;
       const schType = isAdd ? opts.type : ((L0 && L0.type) || String(opts.key).split(':')[0]);
@@ -52922,9 +53019,15 @@
       // stepper stays but the BAR TOTAL is the headline and lives on the
       // confirm button itself.
       const totalOf = () => {
+        // the SAME fit the reconciler will apply, so the headline on the confirm
+        // button is the length the layer actually gets
+        if (lunit === 'chg') return _ambLenChangesFit(cfg, pi, passes, 64).bars;
         const per = _ambLenPartBars(cfg, pi);
         return Math.min(64, Math.max(1, Math.round(passes * per)));
       };
+      // IN CHANGES ONLY WHERE THERE ARE CHANGES. With no progression the count would
+      // resolve back to the part's own length and the control would say nothing.
+      const canChg = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
       const fmtB = (n) => ((typeof _ambFmtBarsMixed === 'function') ? _ambFmtBarsMixed(n) : String(n));
       const ov = document.createElement('div');
       ov.className = 'sm-overlay';
@@ -52940,6 +53043,11 @@
         +   '<button type="button" class="ambient-step-btn lsm-pm" data-d="-1" style="min-width:40px;min-height:40px">−</button>'
         +   '<b class="lsm-n" style="min-width:5ch;text-align:center"></b>'
         +   '<button type="button" class="ambient-step-btn lsm-pm" data-d="1" style="min-width:40px;min-height:40px">+</button>'
+        +   (!canChg ? '' : ('<span style="flex-basis:100%"></span>'
+        +     '<span class="ambient-seg-row lsm-unit">'
+        +       '<button type="button" class="ambient-seg' + (lunit === 'pass' ? ' active' : '') + '" data-lu="pass">passes</button>'
+        +       '<button type="button" class="ambient-seg' + (lunit === 'chg' ? ' active' : '') + '" data-lu="chg">changes</button>'
+        +     '</span>'))
         +   (hasDefaultPart ? '' : ('<span style="flex-basis:100%"></span><span>= <span class="lsm-pn"></span> of</span>'
         +     '<select class="ambient-select lsm-part" style="width:132px;flex:0 0 auto;font-size:16px">'
         +       list.map(x => '<option value="' + x.pi + '"' + (x.pi === pi ? ' selected' : '') + '>' + escT(x.name) + '</option>').join('')
@@ -52958,7 +53066,10 @@
         const total = totalOf();
         q('.lsm-n').textContent = fmtB(total) + ' bar' + (total === 1 ? '' : 's');
         const pn = q('.lsm-pn');
-        if (pn) pn.textContent = passes + ' pass' + (passes === 1 ? '' : 'es');
+        if (pn) pn.textContent = (lunit === 'chg')
+          ? (passes + ' change' + (passes === 1 ? '' : 's'))
+          : (passes + ' pass' + (passes === 1 ? '' : 'es'));
+        ov.querySelectorAll('.lsm-unit .ambient-seg').forEach((b2) => b2.classList.toggle('active', b2.dataset.lu === lunit));
         const partNm = (list.find(x => x.pi === pi) || list[0]).name;
         q('.lsm-out').textContent = nm + ' will write a ' + fmtB(total) + '-bar phrase and repeat it'
           + (hasDefaultPart ? '' : ', following ' + partNm + '’s chords');
@@ -52970,6 +53081,8 @@
         if (t === ov || t.closest('.lsm-cancel')) { close(); return; }
         const pm = t.closest('.lsm-pm');
         if (pm) { passes = Math.min(32, Math.max(1, passes + (pm.dataset.d | 0))); paint(); return; }
+        const lu = t.closest('.lsm-unit .ambient-seg');
+        if (lu) { lunit = (lu.dataset.lu === 'chg') ? 'chg' : 'pass'; paint(); return; }
         if (t.closest('.lsm-follow')) {
           close();
           if (isAdd) { _ambAddExtra(E, opts.type); }
@@ -52985,7 +53098,9 @@
           close();
           const target = isAdd ? _ambAddExtra(E, opts.type) : L0;
           if (target) {
-            target.lenSync = { part: pi, passes: passes };
+            target.lenSync = (lunit === 'chg')
+              ? { part: pi, passes: passes, unit: 'chg' }
+              : { part: pi, passes: passes };
             try { E.getCfg(); } catch (err) {}   // reconcile write.bars now
             try { persistWorkspace(); } catch (err) {}
             try { _ambSyncControls(E); } catch (err) {}

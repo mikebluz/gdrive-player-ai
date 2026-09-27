@@ -1433,7 +1433,12 @@
     // machine — and it is the INSTRUMENT that brings the multi-lane grid, not
     // the rhythm: v1's drum lanes are 8 lanes of one kit, and v2 had one row
     // only because it had one instrument.
-    ins.voice = (ins.voice === 'kit' || ins.voice === 'speech') ? ins.voice : 'synth';
+    // ◐ LOOP is the fourth voice: the layer's content is a fixed RECORDING rather
+    // than notes its rules make. Additive — an unknown value still falls back to
+    // 'synth', exactly as before.
+    ins.voice = (ins.voice === 'kit' || ins.voice === 'speech' || ins.voice === 'loop') ? ins.voice : 'synth';
+    if (typeof ins.loopId === 'string' && ins.loopId) ins.loopId = String(ins.loopId).slice(0, 300);
+    else delete ins.loopId;
     // SPEECH. `voice` is the INSTRUMENT here, so the TTS voice needs its own
     // field — v1's `_ambVoiceChoices` reads `L.voice` meaning the TTS one, and
     // handing it a v2 layer would offer 'synth'/'kit'/'speech' as if they were
@@ -6734,6 +6739,43 @@
     // notes and could never do that (the documented reason v1 stopped applying
     // level per note). The note carries the layer's staging instead.
     const lvl = _AMB_V2_STAGE;
+    // ── ◐ A LOOP LAYER IS A RECORDING, NOT A PART ───────────────────────
+    // (2026-09-27, §11 groundwork: "it should still be a layer".) Its content is a
+    // fixed file and it is NEVER STRETCHED — it starts on the layer's own anchor and
+    // repeats at its OWN length, so a bed runs underneath the music instead of being
+    // fitted to a chord. It therefore takes NONE of the note machinery below: no
+    // cycle windows, no rhythm, no pitch. (Which is also why every pitched row on the
+    // card is gated to `voice:synth` and simply falls away.)
+    // Played at its RECORDED ROOT so `playbackRate` is 1 — the one thing that must not
+    // happen to a loop is being transposed by the note it is triggered with.
+    if (L.instrument.voice === 'loop') {
+      const lid = String(L.instrument.loopId || '');
+      let secs = 0, f0 = 261.6255653005986;    // C4, the sampler's own fallback root
+      try {
+        const meta = (lid && typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(lid) : null;
+        if (meta && Number.isFinite(meta.seconds) && meta.seconds > 0) secs = meta.seconds;
+        if (typeof _ambSampleRootMidi === 'function' && typeof Tone !== 'undefined') {
+          f0 = Tone.Frequency(_ambSampleRootMidi(lid), 'midi').toFrequency();
+        }
+      } catch (e) {}
+      // NOTHING CHOSEN, OR A FILE THE LIBRARY DOES NOT KNOW: play nothing and say so
+      // by playing nothing — a guessed substitute would be worse than silence.
+      if (!lid || !(secs > 0)) { st.lastAt = to; return; }
+      let k = Math.max(0, Math.ceil((from - st.startAt) / secs - 1e-6));
+      for (let g = 0; g < 32; g++) {
+        const at0 = st.startAt + k * secs;
+        if (at0 >= to) break;
+        if (at0 >= from - 1e-6) {
+          try {
+            playNote(f0, { type: 'sample:' + lid, volume: lvl }, Math.round(secs * 1000), at0,
+                     dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
+          } catch (e) {}
+        }
+        k++;
+      }
+      st.lastAt = to;
+      return;
+    }
     let c = Math.floor((from - st.startAt) / cyc);
     if (!Number.isFinite(c)) return;
     // THE CYCLE GRID. Uniform for an ordinary layer (`startAt + c * cyc`,
@@ -17170,7 +17212,30 @@
           // what the next one would offer.
           tb('Sound',
           sel(L, 'instrument.voice', 'Tone type', i.voice,
-              [['synth', 'Synth — pitched'], ['kit', 'Drum kit — lanes'], ['speech', 'Speech — words']])) +
+              [['synth', 'Synth — pitched'], ['kit', 'Drum kit — lanes'], ['speech', 'Speech — words'],
+               ['loop', '◐ Loop — a recording']])) +
+          // ◐ WHICH RECORDING. Its own row, shown only for the loop voice — the
+          // shipped library's loops were excluded from every other picker in the app
+          // ("carries its own tempo"), so this is the first surface one can be chosen
+          // from. The length is on the face because it IS the layer's cycle: a loop is
+          // never stretched, so what it says here is what you will hear.
+          tb('Sound', (function () {
+            let loops = [];
+            try { if (typeof _ambLoopSamples === 'function') loops = _ambLoopSamples(); } catch (e) {}
+            const lid = uid(L, 'instrument.loopId');
+            const cur = String(i.loopId || '');
+            const fmt = (x) => x.name + (Number.isFinite(x.seconds) ? (' \u00b7 ' + (Math.round(x.seconds * 10) / 10) + 's') : '') +
+              (Number.isFinite(x.bpm) ? (' \u00b7 ' + x.bpm + ' bpm') : '');
+            return '<div class="ambient-ctrl" data-v2when="voice:loop">' +
+              '<label for="' + lid + '">Recording</label>' +
+              '<select id="' + lid + '" class="ambient-select v2-f" data-f="instrument.loopId">' +
+                '<option value=""' + (cur ? '' : ' selected') + '>\u2014 none \u2014</option>' +
+                loops.map((x) => '<option value="' + esc(x.id) + '"' + (cur === x.id ? ' selected' : '') + '>' +
+                  esc(fmt(x)) + '</option>').join('') +
+              '</select>' +
+              (loops.length ? '' : '<span class="ambient-hint">no loops in the library yet \u2014 <code>npm run samples</code> imports a folder</span>') +
+            '</div>';
+          })()) +
           // ONE "Tone" ROW, CONSTRAINED BY THE TYPE ABOVE IT. It used to be
           // three separate rows — Tone (synth), Kit (drums), Spoken by (speech)
           // — one per type, so the list WAS constrained and nothing said so:

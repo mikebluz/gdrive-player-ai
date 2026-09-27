@@ -825,12 +825,14 @@ use, we'll need to take another look at how Samples/Loops work in v2 layers."
 **Look at the second half first, because the first half has nowhere to land yet.**
 Measured 2026-09-26, and the finding is bigger than the request:
 
-- **The shipped loop library is DEPLOYED DEAD WEIGHT.** `samples/manifest.json` holds
-  72 entries (`{id, file, name, kind, bpm, seconds}`) across 8 music-production packs
-  in `samples/sounds/packs/`, `deploy.sh:85` ships the whole `samples` folder — and
-  **nothing under `js/` reads that manifest or any path inside it.** No fetch, no
-  loader, no browser. It is written by `tools/import-samples.mjs` (`npm run samples`)
-  and read by nobody.
+- ~~**The shipped loop library is DEPLOYED DEAD WEIGHT.**~~ **CORRECTED 2026-09-27.**
+  `samples/manifest.json` holds 72 entries (`{id, file, name, kind, bpm, seconds}`) —
+  **5 of them `kind: 'loop'`, 67 `kind: 'tuned'`** — and `loadSampleManifest()`
+  (`04-instruments-samples.js`, called from `15-grid-build.js`) HAS been fetching and
+  registering every one of them as a lazy `Tone.Sampler`, carrying `kind`, `loop`,
+  `bpm` and `seconds`. What was true is the second half: a LOOP was excluded from every
+  picker in the app — "carries its own tempo, a different animal" (`_ambDrumSampleIds`)
+  — so there was no surface one could be chosen from.
 - **"Samples" in the Tone list is a DIFFERENT THING.** That family
   (`15-grid-build.js`, `_SAMPLE_KEYS_IDS`, "Samples — 110") is pitched GM-style
   instrument samples — piano, organ, Rhodes. One word, two mechanisms; per the naming
@@ -872,6 +874,18 @@ step further — a THIRD kit whose seed is a recording rather than a pattern. "A
 tuned sample related params fall out of the menus" is exactly that gating: root note,
 transpose-to-chord and the harmony axis have no meaning on an ocean bed and must not
 be drawn, per the standing rule that a control which cannot act is worse than absent.
+
+**LANDED 2026-09-27 — the groundwork (user: "groundwork only").**
+`L.instrument.voice = 'loop'` is the fourth voice beside synth · kit · speech, with
+`L.instrument.loopId` naming an entry in the library. `_ambLoopSamples()` is that list
+(metadata only — never `.sampler`, which is a lazy getter that would build every sampler
+in the library). The emit takes NONE of the note machinery: a loop starts on the layer's
+own anchor, repeats at its OWN length, is played at its RECORDED ROOT so `playbackRate`
+is 1, and is never stretched to a cycle or a chord. Nothing chosen plays nothing.
+Every pitched row on the card was already gated to `voice:synth`, so they fall away
+without being told. The ONE-WORD COLLISION is resolved label-only: the Tone list's
+family is **Sampled instruments** (pitched — piano, organ, Rhodes), and a recording that
+plays itself is **◐ Loop**. `probe-looplayer` 16/16, golden unmoved.
 
 **Still open:**
 

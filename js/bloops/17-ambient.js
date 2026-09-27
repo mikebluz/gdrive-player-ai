@@ -17444,6 +17444,28 @@
         if (cnt) cnt.textContent = hits.length + ' of ' + ids.length;
       });
     }
+    // ── ◐ THE SHIPPED LOOPS, AS A LIST ──────────────────────────────────
+    // (2026-09-27, §11 groundwork.) `loadSampleManifest` has registered every entry
+    // in `samples/manifest.json` for a while, but a LOOP was excluded from every
+    // picker in the app — "carries its own tempo, a different animal" — so there was
+    // no surface one could be chosen from at all. This is that list.
+    // METADATA ONLY, never `.sampler`: that is a lazy getter and touching it here
+    // would build every sampler in the library (the documented __sampleStats trap).
+    function _ambLoopSamples() {
+      const out = [];
+      try {
+        if (typeof sampleSamplers === 'undefined' || !sampleSamplers.forEach) return out;
+        sampleSamplers.forEach((meta, id) => {
+          if (!meta || meta.kind !== 'loop') return;
+          out.push({ id: String(id), name: meta.name || String(id),
+                     seconds: Number.isFinite(meta.seconds) ? meta.seconds : null,
+                     bpm: Number.isFinite(meta.bpm) ? meta.bpm : null });
+        });
+      } catch (e) {}
+      out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      return out;
+    }
+    try { window._ambLoopSamples = _ambLoopSamples; } catch (e) {}
     function _ambSampleRootMidi(id) {
       try {
         const e = (typeof getSampleEntry === 'function') ? getSampleEntry('sample:' + id) : null;

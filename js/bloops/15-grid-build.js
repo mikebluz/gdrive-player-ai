@@ -1287,7 +1287,7 @@
       pads:    'Pads',
       drums:   'Drums',
       imports: 'Imports',
-      samples: 'Samples',
+      samples: 'Sampled instruments',
       ensembles: 'Ensembles',
       other:   'Other',
     };
@@ -1572,7 +1572,7 @@
         // vs sample voices the workspace knows about.
         [
           { id: 'synths',  label: 'Synths',  count: byBucket.synths.length },
-          { id: 'samples', label: 'Samples', count: byBucket.samples.length },
+          { id: 'samples', label: 'Sampled instruments', count: byBucket.samples.length },
           { id: 'user',    label: 'User',    count: byBucket.user.length },
         ].forEach(b => {
           if (b.count === 0) return;

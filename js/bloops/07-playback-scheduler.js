@@ -610,7 +610,14 @@
       // scheduler's lookahead window so a negative nudge never lands in the
       // past.
       if (grooveHumanizeMs > 0) {
-        offsetSec += (Math.random() * 2 - 1) * (grooveHumanizeMs / 1000);
+        // THE CHARACTER IS ONE RULE, OWNED BY 17-ambient — asked for through its
+        // published door so this subsystem carries no second copy of it. Absent
+        // (Bloom not loaded) falls back to white, which is what this line was.
+        let j;
+        try { j = (typeof window._bloopsHumanPM1 === 'function')
+          ? window._bloopsHumanPM1(audioTime) : (Math.random() * 2 - 1); }
+        catch (e) { j = Math.random() * 2 - 1; }
+        offsetSec += j * (grooveHumanizeMs / 1000);
       }
       let fireTime, durMs;
       if (offsetSec === 0) {

@@ -435,6 +435,7 @@
         grooveHumanizeVel = Number.isFinite(g.humanizeVel) ? g.humanizeVel : 0;
         grooveAccentEvery = Number.isFinite(g.accentEvery) ? g.accentEvery : 0;
         grooveAccentAmt   = Number.isFinite(g.accentAmt)   ? g.accentAmt   : 35;
+        grooveNoise       = (g.noise === 'pink') ? 'pink' : 'white';   // absent = white
         if (typeof refreshGrooveUI === 'function') { try { refreshGrooveUI(); } catch (e) {} }
       }
       gridColumns     = Math.min(8, Math.max(1, (w.gridColumns | 0) || 8));

@@ -1036,6 +1036,7 @@
             humanizeVel: grooveHumanizeVel,
             accentEvery: grooveAccentEvery,
             accentAmt:   grooveAccentAmt,
+            noise:       grooveNoise,   // 'white' (default) | 'pink'
           },
           gridColumns,
           gridRows,

@@ -1703,6 +1703,12 @@
       p.querySelectorAll('.gv-acc-opt').forEach(b => {
         b.classList.toggle('active', (parseInt(b.dataset.acc, 10) || 0) === grooveAccentEvery);
       });
+      // A READOUT WITH NO SECOND WRITER IS FROZEN — repainted here, the one sweep
+      // every other groove control is repainted from.
+      p.querySelectorAll('.gv-noise-opt').forEach(b => {
+        b.classList.toggle('active', b.dataset.noise === grooveNoise);
+      });
+      { const nv = p.querySelector('#gv-noise-v'); if (nv) nv.textContent = grooveNoise; }
     }
     // Build the groove controls into `host` (a section of the combined
     // Tempo/Volume/Groove menu) and wire them to the global groove state.
@@ -1721,6 +1727,15 @@
           '<input type="range" id="gv-hum" min="0" max="50" value="0" /></div>' +
         '<div class="groove-row"><div class="groove-lab">Humanize vel <span class="groove-val" id="gv-vel-v">0%</span></div>' +
           '<input type="range" id="gv-vel" min="0" max="50" value="0" /></div>' +
+        // THE CHARACTER OF BOTH HUMANIZE SLIDERS ABOVE — placed under them because
+        // it governs them, and built from the same chrome as Swing grid / Accent
+        // every rather than inventing a control. Same RMS either way, so this
+        // changes the FEEL of the two knobs, never their amount.
+        '<div class="groove-row"><div class="groove-lab">Jitter <span class="groove-val" id="gv-noise-v">white</span></div>' +
+          '<div class="groove-divs">' +
+            '<button type="button" class="gv-noise-opt" data-noise="white" title="White \u2014 every onset lands independently. The original behaviour.">White</button>' +
+            '<button type="button" class="gv-noise-opt" data-noise="pink" title="Pink (1/f) \u2014 the jitter DRIFTS: slow wander with fine detail on top, at the same depth. Closer to how a player actually sits in the beat.">Pink</button>' +
+          '</div></div>' +
         '<div class="groove-row"><div class="groove-lab">Accent every <span class="groove-val">beats</span></div>' +
           '<div class="groove-divs">' +
             '<button type="button" class="gv-acc-opt" data-acc="0">Off</button>' +
@@ -1758,6 +1773,14 @@
           persist();
         });
       });
+      host.querySelectorAll('.gv-noise-opt').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          grooveNoise = (b.dataset.noise === 'pink') ? 'pink' : 'white';
+          refreshGrooveUI();
+          persist();
+        });
+      });
       host.querySelectorAll('.gv-div-opt').forEach(b => {
         b.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -1773,6 +1796,7 @@
           grooveSwing = 0; grooveSwingDiv = 0.5;
           grooveHumanizeMs = 0; grooveHumanizeVel = 0;
           grooveAccentEvery = 0; grooveAccentAmt = 35;
+          grooveNoise = 'white';
           refreshGrooveUI();
           persist();
         });

@@ -243,6 +243,23 @@
   `_ambRenderCurPart` LATCHES what it draws into `E._curPart` when the field is absent, never over an
   explicit pick (`_ambCurPartPick` is the other writer), so the strip and the cards cannot disagree
   about which part a fork will land in. `test/probe-curpart.js`.
+- **1/f JITTER IS A PARALLEL MODE (`grooveNoise`), AND ITS VOSS DECOMPOSITION IS WHAT KEEPS IT
+  STATELESS.** Pink noise normally needs running state, which would break the
+  reproducible-from-POSITION contract every seeded draw here obeys. The octave form removes it:
+  octave `k` only changes every `2^k` steps, so `pink(n) = Σ_k white(k, n >> k)` is a pure
+  function of the index — `_ambPink01`. Two rules that are easy to get wrong: (a) normalise by
+  **√K, not K** — a sum of K uniforms narrows toward its mean, so ÷K makes every knob quieter and
+  reads as "pink is broken" instead of "pink is different"; ÷√K gives the two modes the SAME RMS so
+  the knob keeps its meaning and only the distribution IN TIME changes (measured r1 = 0.593 pink vs
+  −0.007 white). RMS parity is APPROXIMATE and the reason is worth knowing: white fills its ±0.5 box
+  uniformly, pink is bell-shaped, so matching RMS puts σ ≈ 0.289 in a ±0.5 box and the clamp bites on
+  ~8% of draws — achieved ratio 0.902, inaudible, and not to be "fixed" by dividing by K (that costs
+  55%); (b) the index is a **TIME index** (16ths of a second from the bar-grid
+  anchor), not a note count — two layers on one onset must drift together, and a note count would
+  need the order-dependent counter this design exists to avoid. `grooveNoise` rides the existing
+  groove snapshot/apply/persist path; **absent = 'white'**, which is every save made before it.
+  `_ambHumanPM1` is the one door and the grid scheduler asks through `window._bloopsHumanPM1`
+  rather than carrying a second copy of the rule. `test/probe-pinkjitter.js`.
 
 ### Bloom: emit, capture, freeze / Write
 

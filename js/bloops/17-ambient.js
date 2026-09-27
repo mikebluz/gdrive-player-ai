@@ -1139,6 +1139,8 @@
         humanizeVel: (typeof grooveHumanizeVel !== 'undefined') ? grooveHumanizeVel : 0,
         accentEvery: (typeof grooveAccentEvery !== 'undefined') ? grooveAccentEvery : 0,
         accentAmt:   (typeof grooveAccentAmt !== 'undefined') ? grooveAccentAmt : 35,
+        // ABSENT = 'white', which is what every project saved before this means.
+        noise:       (typeof grooveNoise !== 'undefined') ? grooveNoise : 'white',
       };
     }
     function _ambApplyGroove(g) {
@@ -1150,6 +1152,7 @@
         if (Number.isFinite(g.humanizeVel)) grooveHumanizeVel = g.humanizeVel;
         if (Number.isFinite(g.accentEvery)) grooveAccentEvery = g.accentEvery;
         if (Number.isFinite(g.accentAmt)) grooveAccentAmt = g.accentAmt;
+        grooveNoise = (g.noise === 'pink') ? 'pink' : 'white';   // only value it knows
         if (typeof refreshGrooveUI === 'function') refreshGrooveUI();
       } catch (e) {}
     }
@@ -12759,6 +12762,81 @@
     // (harness-safe, like the unseeded draw it replaces). Emit order is
     // deterministic, so the ordinal is too.
     let _vvLastAt = null, _vvSeq = 0;
+    // ── 1/f (PINK) JITTER — A PARALLEL MODE, NOT A REPLACEMENT ──────────────
+    // Musical expression is empirically 1/f, not white: a player's timing and
+    // dynamics WANDER — slow drift with fine detail on top — rather than landing
+    // independently on every note. White at 60 reads as broken; pink at 60 reads
+    // as intentional, which is why every variance die ships with a CEILING
+    // (`DICE_SETS`) instead of its full range. Those ceilings are a symptom of
+    // i.i.d. noise having no structure of its own; this is the other character,
+    // offered as a switch, with white the default AND the absent value.
+    //
+    // STATELESS VOSS-McCARTNEY. The usual objection to 1/f is that it needs
+    // running state, which would break this file's reproducible-from-POSITION
+    // contract (every seeded draw here is a pure hash of WHERE you are, never of
+    // what happened before). The octave decomposition removes the state: octave
+    // k only changes every 2^k steps, so
+    //     pink(n) = Σ over k of white(k, n >> k)
+    // is a pure function of the index. Same position, same value, for ever — and
+    // Regenerate still repeats exactly.
+    //
+    // MATCH THE RMS, NOT THE RANGE — and you cannot have both. A sum of K uniforms
+    // narrows toward its mean (CLT), so dividing by K would make every knob
+    // quieter and read as "pink is broken" rather than "pink is different".
+    // Dividing by √K targets white's RMS instead, so the knob keeps its meaning
+    // and the switch changes the DISTRIBUTION IN TIME rather than the amount.
+    // THE COST, STATED HONESTLY: white fills its ±0.5 box uniformly while pink is
+    // bell-shaped, so RMS parity puts σ = 1/√12 ≈ 0.289 inside a ±0.5 box — the
+    // clamp then bites at 1.73σ, on ~8% of draws, and the achieved RMS lands
+    // ~10% UNDER white (measured 0.902 at K = 5, `probe-pinkjitter`). That is
+    // well inside the just-noticeable range for jitter depth, so it is accepted
+    // rather than papered over with a compensating fudge factor. Do not "fix" it
+    // by dividing by K: that trades an inaudible 10% for an audible 55%.
+    const _AMB_PINK_OCT = 5;
+    function _ambPink01(n, seed) {
+      const base = (seed | 0) >>> 0;
+      const i0 = n | 0;
+      let acc = 0;
+      for (let k = 0; k < _AMB_PINK_OCT; k++) {
+        const idx = i0 >> k;
+        acc += _ambSeededRand((((idx + 1) * 2654435761) ^ ((k + 1) * 2246822519) ^ base) >>> 0)() - 0.5;
+      }
+      return Math.max(0, Math.min(1, 0.5 + acc / Math.sqrt(_AMB_PINK_OCT)));
+    }
+    // A TIME INDEX, NOT A NOTE COUNT — 16ths of a second from the bar-grid
+    // anchor. Expressive drift is a function of TIME (two layers landing on the
+    // same onset should drift together, not independently), and a note count
+    // would need an order-dependent counter, which is the state this design
+    // exists to avoid.
+    function _ambPinkIdx(atSec) {
+      let org = 0;
+      try {
+        const E0 = (typeof _E !== 'undefined') ? _E : null;
+        if (E0) org = Number.isFinite(E0._barGridAnchor) ? E0._barGridAnchor
+                    : (Number.isFinite(E0._playStartAt) ? E0._playStartAt : 0);
+      } catch (e) {}
+      const t = (Number.isFinite(atSec) ? atSec : 0) - (Number.isFinite(org) ? org : 0);
+      return Math.round(t * 16);
+    }
+    // THE SWITCH — ONE DEFINITION, and the grid scheduler asks through the
+    // published door rather than growing a second copy of the rule (the
+    // "verbatim copies do not stay verbatim" trap, twice paid for already).
+    function _ambNoiseMode() {
+      try { if (typeof grooveNoise !== 'undefined' && grooveNoise === 'pink') return 'pink'; } catch (e) {}
+      return 'white';
+    }
+    // ±1 OF ONSET JITTER, in whichever character is switched on. White stays
+    // Math.random BY DOCTRINE (see Humanize below: performance feel, never
+    // reproducible, zero engine-RNG draws) — pink is seeded because 1/f without
+    // a position is just white with extra steps.
+    function _ambHumanPM1(atSec) {
+      if (_ambNoiseMode() !== 'pink') return Math.random() * 2 - 1;
+      let sd = 0;
+      try { sd = ((_E && _E._cfg && _E._cfg.seed) | 0) || 1; } catch (e) { sd = 1; }
+      return _ambPink01(_ambPinkIdx(atSec), (sd * 40503) ^ 0x48554D) * 2 - 1;
+    }
+    try { window._bloopsHumanPM1 = (atSec) => _ambHumanPM1(atSec); } catch (e) {}
+    try { window._bloopsNoiseMode = () => _ambNoiseMode(); } catch (e) {}
     function _ambVelJitter01(atSec) {
       // REPRODUCIBLE FROM THE TAKE. This was keyed on the ABSOLUTE audio-clock
       // time, which differs on every press, so Vel var was the one knob in the
@@ -12776,6 +12854,12 @@
       const t = _raw - (Number.isFinite(_org) ? _org : 0);
       if (t !== _vvLastAt) { _vvLastAt = t; _vvSeq = 0; } else _vvSeq++;
       const seed = ((Math.round(t * 8000) | 0) * 2654435761) ^ ((_vvSeq + 1) * 2246822519) ^ ((((typeof _E !== 'undefined' && _E && _E._cfg && _E._cfg.seed) | 0)) * 40503);
+      // PINK TAKES THE SAME POSITION, at the pink index — `t` is already relative
+      // to the anchor here, so it is handed over as-is rather than re-derived.
+      if (_ambNoiseMode() === 'pink') {
+        return _ambPink01(Math.round(t * 16),
+          (seed >>> 0) ^ ((_vvSeq + 1) * 2246822519) ^ 0x56454C);
+      }
       return _ambSeededRand(seed >>> 0)();
     }
     function _ambApplyAdsr(p, inst) {
@@ -12785,7 +12869,7 @@
       // performance jitter, never reproducible, and it never touches the
       // engine RNG stream (zero draws either way → harness-safe). Gated, so
       // the default path carries no extra field. Max ±20 ms at 100.
-      if (Number.isFinite(inst.humanize) && inst.humanize > 0) p._humanSec = (Math.random() * 2 - 1) * Math.min(100, inst.humanize) / 100 * 0.02;
+      if (Number.isFinite(inst.humanize) && inst.humanize > 0) p._humanSec = _ambHumanPM1(_ambKeyTime) * Math.min(100, inst.humanize) / 100 * 0.02;
       // Vel var (Variance, universal): velocity NOISE — per-onset level
       // scatter, distinct from Accent (patterned dynamics). SEEDED since
       // 2026-07-30 (it split from Humanize's unseeded doctrine): the emitter-
@@ -29832,7 +29916,7 @@
                 // already have replaced it, and re-cloning the captured object
                 // would silently discard those values.
                 pp = Object.assign({}, pp);
-                if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = (Math.random() * 2 - 1) * Math.min(100, lyr.humanize) / 100 * 0.02;
+                if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = _ambHumanPM1(_ambKeyTime) * Math.min(100, lyr.humanize) / 100 * 0.02;
                 if (Number.isFinite(lyr.velVar) && lyr.velVar > 0) {
                   // Seeded on the note's REPLAY time, which shifts every loop
                   // pass — so 'live' still re-rolls the dynamics per iteration,

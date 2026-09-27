@@ -127,6 +127,11 @@
     let grooveSwingDiv   = 0.5;  // swing grid in quarter-note beats: 0.5 = 1/8, 0.25 = 1/16
     let grooveHumanizeMs = 0;    // ± timing jitter, milliseconds
     let grooveHumanizeVel = 0;   // ± velocity jitter, percent
+    // JITTER CHARACTER for the Humanize family — 'white' (i.i.d. per onset, the
+    // default and what every save without it means) or 'pink' (1/f: slow drift
+    // with fine detail, at the SAME RMS, so the knobs keep their meaning).
+    // A PARALLEL MODE — a switch to A/B against, never a replacement.
+    let grooveNoise = 'white';
     // Accent: a metric emphasis. Notes on an accent beat (or a step flagged
     // step.accent) play at full velocity; the rest are ducked by
     // grooveAccentAmt — which keeps the accent audible even when voices sit

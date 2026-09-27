@@ -335,8 +335,13 @@ const ok = (name, cond, detail) => {
   // The invariant is the PAIRING in both directions, not a count — pinning 12
   // made a deliberate regroup look like a break. (12 -> 7: Envelope, Voicing,
   // Motion, Mod and Space folded into the group each belongs to.)
+  // THE COUNTS ARE GONE (2026-09-27). This pinned `btns === 8 && grps === 6` while its
+  // own comment argued that a count makes a deliberate regroup look like a break — and
+  // that is exactly what happened: folding groups took it to 6/5 and the gate read as a
+  // failure with all four pairing invariants intact. A FLOOR stays, so an empty card
+  // cannot pass by having nothing to pair.
   ok('every treatment has a section button and every button a group — Content is the body',
-    s.btns === 8 && s.grps === 6 && !s.buttonless.length && !s.groupless.length &&
+    s.btns >= 4 && s.grps >= 4 && !s.buttonless.length && !s.groupless.length &&
     !s.contentHasButton, JSON.stringify(s));
   // THE EDITOR IS THE CARD'S BODY — there is nothing to press. It opens on
   // Content, the section that holds the drawing, and every other section is one
@@ -519,6 +524,17 @@ const ok = (name, cond, detail) => {
   };
   const partKind = () => page.evaluate(() => (_masterEng.getCfg().layers || [])[0].part.kind);
 
+  // STATE THE PREMISE. A new layer comes up as an EMPTY RECORDED part (✎ Start empty),
+  // so "on a live layer" is something this block has to arrange rather than inherit —
+  // it used to be the default, and when that changed the menu offered ⚡ Release and
+  // this read as "Capture is missing".
+  await page.evaluate(() => {
+    const E = _masterEng, L = (E.getCfg().layers || [])[0];
+    L.part.kind = 'live'; delete L.part.made; E.getCfg();
+    const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = '';
+    window._v2.render(E);
+  });
+  await zz(300);
   ok('Capture is offered on a live layer', await menuItem('Capture'));
   ok('Capture makes the part recorded', (await partKind()) === 'recorded');
   const kept = await page.evaluate(() => {
@@ -577,39 +593,56 @@ const ok = (name, cond, detail) => {
   // Lock/Unlock while the state said Written/Generated, i.e. one axis named in
   // two languages. Same contract, the axis's own words — and now BOTH written
   // cases carry ONE face, where `made` used to split them three ways.
+  // RESTATED 2026-09-27: THE STATE AXIS MOVED OFF THIS BAR. This drove `.v2-capture`
+  // — the freeze / ✎ Write it down button — which was retired from the take bar on
+  // 2026-09-17 and never re-baselined here, so the gate DIED on a null instead of
+  // failing a check, taking every check after it with it. What the bar holds now is
+  // 🎲 New take (one button, four sentences), ✨ Transform… and ℹ Why?; the
+  // GENERATED ⟷ STATIC door is the ⋯ menu (pinned above), and "does this change?" is
+  // the `.v2-statesw` row — which had no coverage in this file at all until now.
   const capFaces = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms <= 350 ? Math.round(ms * (window.__WS || 1)) : ms));
     const E = _masterEng, L = () => window.__Lv2(E);
     const card = () => document.querySelector('.v2-layer');
-    const cap = () => card().querySelector('.v2-capture');
-    const face = () => ({ txt: cap().textContent.trim(), title: cap().title });
-    L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
-    await wait(250); card().classList.remove('collapsed');
-    const live = { ...face(), nt: { txt: card().querySelector('.v2-newtake').textContent.trim() } };
-    L().part.kind = 'recorded'; L().part.notes = []; E.getCfg();
-    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
     const nt = () => card().querySelector('.v2-newtake');
     const ntFace = () => ({ txt: nt().textContent.trim(), title: nt().title });
-    const emptyFixed = { cap: face(), nt: ntFace() };
+    const bar = () => ({ tform: !!card().querySelector('.v2-tform'), why: !!card().querySelector('.v2-whybtn') });
+    L().part.kind = 'live'; E.getCfg(); window._v2.render(E);
+    await wait(250); card().classList.remove('collapsed');
+    const live = { nt: ntFace(), bar: bar() };
+    L().part.kind = 'recorded'; L().part.notes = []; E.getCfg();
+    window._v2.render(E); await wait(250); card().classList.remove('collapsed');
+    const emptyFixed = { nt: ntFace(), bar: bar() };
     window.confirm = () => true;
     nt().click(); await wait(350);          // 🎲 fills it, still STATIC
-    const filled = { cap: face(), nt: ntFace(), kind: L().part.kind };
-    cap().click(); await wait(350);         // the SAME button hands it back
-    const released = { cap: face(), kind: L().part.kind };
-    return { live, emptyFixed, filled, released, made: L().part.made, n: (L().part.notes || []).length };
+    const filled = { nt: ntFace(), kind: L().part.kind };
+    // ⏻ FIXED took the "does this change?" question when the freeze button went.
+    // The face says what it IS; pressing flips it and OUTRANKS the Evolve clock
+    // beside it — greyed where it stands, never removed, so it points at its cause.
+    const fx = () => card().querySelector('.v2-statesw .v2-fixtog');
+    const evo = () => card().querySelector('.v2-statesw .v2-evotog');
+    const readSw = () => ({ txt: fx().textContent.trim(), on: fx().classList.contains('on'),
+                            outranked: evo().classList.contains('v2-outranked'), evoThere: !!evo().offsetParent });
+    const swBefore = readSw();
+    fx().click(); await wait(300);
+    const swAfter = readSw();
+    fx().click(); await wait(200);
+    return { live, emptyFixed, filled, swBefore, swAfter, made: L().part.made, n: (L().part.notes || []).length };
   });
   // RENAMED 2026-09-16 with the state's word: the axis is GENERATED ⟷ STATIC.
   // The ACTION on the face is untouched on purpose — ✎ Write it down is
   // transcribing, and the state it produces is what changed its name.
-  ok('the take bar is 🎲 make + a STATIC⟷GENERATED toggle — each face with its own tooltip',
-    /Write it down/.test(capFaces.live.txt) && /drawn above/.test(capFaces.live.title) &&
-    /New take/.test(capFaces.live.nt.txt) &&
-    /Generate instead/.test(capFaces.emptyFixed.cap.txt) && /Roll a take/.test(capFaces.emptyFixed.nt.txt) &&
+  ok('the take bar is 🎲 make — one button, four sentences — beside ✨ Transform and ℹ Why?',
+    /New take/.test(capFaces.live.nt.txt) && capFaces.live.bar.tform && capFaces.live.bar.why &&
+    /Roll a take/.test(capFaces.emptyFixed.nt.txt) && capFaces.emptyFixed.bar.tform &&
     /Replace/.test(capFaces.filled.nt.txt) && /still STATIC/.test(capFaces.filled.nt.title) &&
-    capFaces.filled.kind === 'recorded' &&
-    /Write it down/.test(capFaces.released.cap.txt) && capFaces.released.kind === 'live' &&
-    capFaces.live.title !== capFaces.emptyFixed.cap.title,
+    capFaces.filled.kind === 'recorded',
     JSON.stringify(capFaces).slice(0, 300));
+  ok('⏻ Fixed states what it IS, and outranks the Evolve clock where it stands',
+    /Fixed/.test(capFaces.swBefore.txt) && capFaces.swBefore.on !== capFaces.swAfter.on &&
+    capFaces.swBefore.txt !== capFaces.swAfter.txt &&
+    capFaces.swAfter.outranked === capFaces.swAfter.on && capFaces.swAfter.evoThere,
+    JSON.stringify([capFaces.swBefore, capFaces.swAfter]));
   ok('nothing on the card offers to "re-take live" — the way back is the Source select',
     await page.evaluate(() => !/Re-take live/i.test(document.querySelector('.v2-layer').textContent)), '');
   // ── THE KEEP GATE (2026-09-18) ────────────────────────────────
@@ -629,7 +662,11 @@ const ok = (name, cond, detail) => {
     // A GATE PRESUPPOSES SOMETHING TO LOSE — set up a locked part with notes
     // through the real button rather than inheriting whatever the last check left
     if (L().part.kind !== 'recorded' || !(L().part.notes || []).length) {
-      document.querySelector('.v2-layer .v2-capture').click(); await wait(350);
+      // THE ACTION, NOT THE RETIRED BUTTON. `.v2-capture` left the take bar in
+      // 2026-09-17; its door is the ⋯ menu (pinned by the door checks above), and a
+      // fixture step only needs the action — which is what every other fixture in
+      // this file already calls.
+      window._v2.capture(E, L()); E.getCfg(); window._v2.render(E); await wait(350);
     }
     const plain = window.__gatePeek(cap()); await wait(120);
     L().part.notes[0].vel = 40; E.getCfg();
@@ -1167,7 +1204,7 @@ const ok = (name, cond, detail) => {
     // 3. LOCK freezes the composite exactly as drawn, and consumes the map
     const drawn = (cv()._hits || []).map((h) => Math.round(h.midi)).sort().join(',');
     window.confirm = () => true;
-    card().querySelector('.v2-capture').click(); await wait(350);
+    window._v2.capture(E, L()); E.getCfg(); window._v2.render(E); await wait(350);   // the action; `.v2-capture` retired
     const locked = { kind: L().part.kind, mapGone: !L().part.takeb,
       match: (L().part.notes || []).map((n) => n.midi).sort().join(',') === drawn };
     // cleanup: back to live, selection cleared by a real deselect next render
@@ -1228,7 +1265,8 @@ const ok = (name, cond, detail) => {
     await done();
     const sus = st2();
     window.confirm = () => true;
-    card().querySelector('.v2-capture').click(); await wait(400); card().classList.remove('collapsed');
+    window._v2.capture(E, L()); E.getCfg(); window._v2.render(E);                    // the action; `.v2-capture` retired
+    await wait(400); card().classList.remove('collapsed');
     const locked = st2();
     // back to a plain live state for whoever runs next
     L().part.kind = 'live'; delete L().part.mat; delete L().part.mem; E.getCfg();
@@ -1300,19 +1338,17 @@ const ok = (name, cond, detail) => {
     // and locked/live is said by the hint and the 🔒/🔓 button
     const markOf = () => { const c2 = card().querySelector('.v2-genshapes .ambient-seg.on');
       return c2 ? getComputedStyle(c2, '::before').content : ''; };
-    const capOf = () => { const c3 = card().querySelector('.v2-capture');
-      return c3 ? c3.textContent.trim() : ''; };
-    const lockMark = markOf(), lockCap = capOf();
+    const lockMark = markOf();
     const legacy = st2();
     L().part.kind = 'live'; delete L().part.mat;
     L().part.rhythm = { kind: 'pulse', n: 8, steps: 16 };
     L().part.pitch = { kind: 'series', dir: 'up', octaves: 2, degree: 1 };
     E.getCfg(); window._v2.render(E); await wait(250); card().classList.remove('collapsed');
-    const liveMark = markOf(), liveCap = capOf();
+    const liveMark = markOf();
     const hand = st2();
     // cleanup for the next case
     L().part.kind = 'live'; delete L().part.mat; delete L().part.mem; E.getCfg();
-    return { legacy, hand, lockMark, liveMark, lockCap, liveCap };
+    return { legacy, hand, lockMark, liveMark };
   });
   // THE VARIANCE GAP — v1's Roam / Pitch vary / Rate var exist on a v2 part
   // now (pitch.roam, pitch.drift, rhythm.rateVar). Each must MOVE the notes,
@@ -2221,8 +2257,15 @@ const ok = (name, cond, detail) => {
     await wait(300);
     o.sharedUntouched = !Number.isFinite(L().partFor);
     window._v2.partSelect(E, L(), 0); E.getCfg();     // now per-part → it follows
-    chips()[0].click(); await wait(200); chips()[1].click(); await wait(300);
-    o.tapped = { lit: chips()[1].classList.contains('on'), partFor: L().partFor,
+    // THE PARTS ARE THE SELECT'S OPTIONS — they stopped being chips when one dropdown
+    // replaced the strip (2026-09-18, "a chip per part is a row that grows without
+    // limit"). `chips()` went with them and TWO CALL SITES HERE DID NOT: a bare name
+    // in a page.evaluate is a ReferenceError, and it killed every check after this one
+    // rather than failing this one. Drive the control that exists.
+    (() => { const s3 = psel(); s3.value = s3.options[1].value;
+      s3.dispatchEvent(new Event('change', { bubbles: true })); })();
+    await wait(300);
+    o.tapped = { lit: psel().value === psel().options[1].value, partFor: L().partFor,
       clocks: E._progAnchor === clock0.prog && E._barGridAnchor === clock0.grid && !!E.timer === clock0.timer };
     // cleanup
     delete E._curPart;
@@ -3243,7 +3286,7 @@ const ok = (name, cond, detail) => {
       cardH: Math.round(card().getBoundingClientRect().height),
       canvas: vis('.v2-vizcv'), nav: vis('.v2-vnav'), mode: vis('.v2-modesel'), grid: vis('.v2-gridsel'),
       readout: vis('.v2-vizlab'), tail: ((card().querySelector('.v2-vizlab') || {}).textContent || ''),
-      newtake: hits('.v2-newtake'), capture: hits('.v2-capture'), togHit: hits('.v2-viztog') });
+      newtake: hits('.v2-newtake'), tform: hits('.v2-tform'), togHit: hits('.v2-viztog') });
     if (h) h._sig = ''; window._v2.render(E); await wait(260);
     card().classList.remove('collapsed'); await wait(180);
     const o = { door: !!tog() };
@@ -3345,7 +3388,7 @@ const ok = (name, cond, detail) => {
     // …and NOT the four actions that live nowhere else, nor the one readout
     // that answers LIVE ⟷ SAME EVERY PASS ('Static' until 2026-09-16, when
     // that word went to the STATE and this axis took its own)
-    vizFoldRun.hidden.newtake === 'ok' && vizFoldRun.hidden.capture === 'ok' &&
+    vizFoldRun.hidden.newtake === 'ok' && vizFoldRun.hidden.tform === 'ok' &&
     vizFoldRun.hidden.togHit === 'ok' && vizFoldRun.hidden.readout &&
     /^(FIXED|LIVE)\b/.test(vizFoldRun.hidden.tail) &&
     // a hint may not name a surface that is off screen
@@ -6900,8 +6943,9 @@ const ok = (name, cond, detail) => {
     // and the state's word changed; what it is a take OF is unchanged.
     /Roll/.test(inferRun.legacy.on) && /Roll a line · STATIC/.test(inferRun.legacy.hint) &&
     /Arpeggiate/.test(inferRun.hand.on) && /one note at a time|sweeping the chord/.test(inferRun.hand.hint) &&
-    inferRun.lockMark === 'none' && inferRun.liveMark === 'none' &&
-    /Generate instead/.test(inferRun.lockCap) && /Write it down/.test(inferRun.liveCap),
+    // (the two face clauses went with `.v2-capture` — the axis they read is the
+    // ⋯ menu's door now, and the badge below carries its words)
+    inferRun.lockMark === 'none' && inferRun.liveMark === 'none',
     JSON.stringify(inferRun).slice(0, 240));
 
   // ONE AXIS, ONE PAIR OF WORDS, ONE CONTROL. The card said the same thing
@@ -6939,19 +6983,18 @@ const ok = (name, cond, detail) => {
       if (h) h._sig = ''; window._v2.render(E); await wait(240);
       card().classList.remove('collapsed'); };
     const hint = () => (card().querySelector('.v2-notecount') || {}).textContent || '';
-    const cap = () => (card().querySelector('.v2-capture') || {}).textContent.trim();
     const o = {};
     // GENERATED
     L().part.kind = 'live'; delete L().part.made; E.getCfg(); await show();
-    o.liveHint = hint(); o.liveCap = cap();
+    o.liveHint = hint();
     // STATIC, from a rolled take
     window._v2.capture(E, L()); E.getCfg(); await show();
-    o.lockHint = hint(); o.lockCap = cap();
+    o.lockHint = hint();
     // STATIC, by hand — ONE face for both static cases: `made` used to
     // split them ("Unlock" a rolled take, "Generate instead" notes you drew),
     // which is a distinction the new wording does not need to make.
     L().part.made = 'compose'; E.getCfg(); await show();
-    o.handHint = hint(); o.handCap = cap();
+    o.handHint = hint();
     // ONE CONTROL for the axis: the select is gone
     o.selects = card().querySelectorAll('[data-f="part.kind"]').length;
     // …and no VISIBLE text on the card calls the state "Fixed" any more
@@ -6960,7 +7003,22 @@ const ok = (name, cond, detail) => {
       if (el.children.length || !el.textContent.trim()) return;
       if (el.getBoundingClientRect().height > 0) vis.push(el.textContent);
     });
-    o.saysFixed = vis.filter((t) => /\bFixed\b/.test(t)).length;
+    // ⏻ FIXED IS ALLOWED IN EXACTLY ONE PLACE (2026-09-19): `.v2-statesw`, where it
+    // names the OTHER axis — how often the notes are re-decided — and its own title
+    // says so. Anywhere else the word is the STATE wearing a second vocabulary, which
+    // is the collision this check exists for. So the sweep EXCLUDES that row and then
+    // asserts the row is what it claims to be, rather than dropping the rule.
+    o.saysFixed = vis.filter((t) => /\bFixed\b/.test(t)).length;   // reported, not asserted
+    o.fixedOutside = [];
+    card().querySelectorAll('*').forEach((el) => {
+      if (el.children.length || !el.textContent.trim()) return;
+      if (!(el.getBoundingClientRect().height > 0)) return;
+      if (!/\bFixed\b/.test(el.textContent)) return;
+      if (el.closest('.v2-statesw')) return;
+      o.fixedOutside.push(el.textContent.trim().slice(0, 40));
+    });
+    const swTitle = (card().querySelector('.v2-statesw') || {}).title || '';
+    o.swNamesItsAxis = /re-decided/i.test(swTitle);
     // …nor WRITTEN, which is the by-hand word now and nothing else. Capital W
     // deliberately: the ACTION keeps its verb ("✎ written down" in ℹ Why?,
     // ✎ Write it down on the face) — it is the STATE wearing the word that was
@@ -6980,14 +7038,13 @@ const ok = (name, cond, detail) => {
     try { L().part = JSON.parse(svPart); E.getCfg(); await show(); } catch (e) {}
     return o;
   });
-  ok('a part is GENERATED or STATIC — ONE pair of words, and the take bar is the only door between them',
-    vocab.selects === 0 && vocab.saysFixed === 0 &&
+  ok('a part is GENERATED or STATIC — ONE pair of words, and ⋯ is the only door between them',
+    vocab.selects === 0 &&
+    // "Fixed" may appear ONLY in `.v2-statesw`, naming the re-decide axis
+    vocab.fixedOutside.length === 0 && vocab.swNamesItsAxis === true &&
     vocab.saysWritten === 0 && vocab.writtenTitles.length === 0 &&
     /GENERATED/.test(vocab.liveHint) && /STATIC/.test(vocab.lockHint) &&
     /STATIC/.test(vocab.handHint) &&
-    // the transition names its DESTINATION, in the same two words as the state
-    /Write it down/.test(vocab.liveCap) && /Generate instead/.test(vocab.lockCap) &&
-    vocab.handCap === vocab.lockCap &&
     // …and there is no second vocabulary anywhere on the card, titles included
     vocab.saysLock === 0 && vocab.lockTitles.length === 0,
     JSON.stringify(vocab).slice(0, 360));
@@ -7015,7 +7072,6 @@ const ok = (name, cond, detail) => {
       state: ((card().querySelector('.v2-notecount') || {}).textContent || '').trim(),
       live: ((card().querySelector('.v2-vizlab') || {}).textContent || '').trim(),
       line: ((card().querySelector('.v2-liveline') || {}).textContent || '').trim(),
-      capTitle: ((card().querySelector('.v2-capture') || {}).title || ''),
     });
     const o = {};
     // (1) A STATIC PART WHOSE SETTINGS ARE LIVE — the combination that cannot
@@ -7040,8 +7096,8 @@ const ok = (name, cond, detail) => {
     // in one of them is the one that ships.
     const crosses = (r) => ({
       liveSaysStatic: /static/i.test(r.live) || /static/i.test(r.line),
-      stateSaysCycle: /same every pass|\bFIXED\b/.test(r.state) || /\blive\b/i.test(r.state) ||
-        /same every pass|\bFIXED\b/.test(r.capTitle),
+      // (`.v2-capture`'s title was the fourth surface here until it was retired)
+      stateSaysCycle: /same every pass|\bFIXED\b/.test(r.state) || /\blive\b/i.test(r.state),
     });
     o.crossA = crosses(o.staticLive);
     o.crossB = crosses(o.genSame);

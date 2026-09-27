@@ -607,8 +607,25 @@ const CHROME = process.env.CHROME_PATH
       E._cfg = E.getCfg();
       E.inited = false; _ambientInit(E); _ambSyncControls(E);
 
-      const host = document.getElementById('mix-bloom-passmx');
-      eq('saltcell/the Passes host exists', !!host, true);
+      // ▦ PASSES' HOST LEFT THE PANEL (retired into ▦ Schedule, 2026-09-16) — and
+      // 17-ambient kept its renderer and wiring working on purpose, in those words:
+      // "so a stale DOM or a test that builds the node still works". So this BUILDS
+      // it. What is pinned below is the MODEL and the cell modal — the ladder, the
+      // re-roll, the colour snap — not a surface you can reach: the per-chord re-roll
+      // and the snap toggle currently have NO door in the app, which is a real gap and
+      // not this gate's to close.
+      const passHost = () => {
+        let h = document.getElementById('mix-bloom-passmx');
+        if (!h) {
+          h = document.createElement('div');
+          h.id = 'mix-bloom-passmx';
+          (document.getElementById('mix-bloom-progsec-body') || document.body).appendChild(h);
+        }
+        try { _ambWirePassMatrix(E); } catch (e) {}   // after the node exists — it returns early without one
+        return h;
+      };
+      const host = passHost();
+      eq('saltcell/the Passes host exists (built — the panel retired it)', !!host, true);
       host._sig = ''; host._pmsPart = 0; host._pmsLayer = 'bed'; host._pmsMode = 'phrase';
       _ambRenderPassMatrix(E);
 
@@ -724,7 +741,13 @@ const CHROME = process.env.CHROME_PATH
       cfg.prog.parts[0].plays = 2;
       E._cfg = E.getCfg();
       E.inited = false; _ambientInit(E); _ambSyncControls(E);
-      const host = document.getElementById('mix-bloom-passmx');
+      // the same built host as the salt-cell section above (▦ Passes is retired)
+      let host = document.getElementById('mix-bloom-passmx');
+      if (!host) {
+        host = document.createElement('div'); host.id = 'mix-bloom-passmx';
+        (document.getElementById('mix-bloom-progsec-body') || document.body).appendChild(host);
+        try { _ambWirePassMatrix(E); } catch (e) {}
+      }
       host._sig = ''; host._pmsPart = 0; host._pmsLayer = 'bed'; host._pmsMode = 'phrase';
       _ambRenderPassMatrix(E);
       const layerCols = host.querySelectorAll('.psq-passhdr').length;

@@ -14049,7 +14049,7 @@
             : (empty4
               ? 'Roll a take of this layer’s rules and freeze it here — there is nothing in this part yet.'
               : rec4
-              ? 'Replace these notes with a fresh roll of this layer’s rules, still frozen. Tap a bar in the drawing first to re-roll only that bar.'
+              ? 'Replace these notes with a fresh roll of this layer’s rules, still STATIC. Tap a bar in the drawing first to re-roll only that bar.'
               : 'Roll this part again. Preview never re-rolls on its own, so the take you are hearing stays until you press this. Tap a bar in the drawing first to retake only that bar.');
         }
       }
@@ -24707,7 +24707,7 @@
               try {
                 showToast(selBarsN
                   ? ('Re-rolled ' + bselLabel(selN) + ' \u2014 the other bars kept what they had. Press again for another roll.')
-                  : ('Rolled a new take \u2014 ' + c2.L.part.notes.length + ' notes, still frozen. \u2744 Unfreeze instead lets the rules take over again.'), { ms: 5000 });
+                  : ('Rolled a new take \u2014 ' + c2.L.part.notes.length + ' notes, still STATIC. \u22ef \u25b8 \u26a1 Release hands it back to the rules.'), { ms: 5000 });
               } catch (e) {}
               h._sig = ''; V2.render(E);
               try { v2TakeHeard(E, c2.L); } catch (e) {}

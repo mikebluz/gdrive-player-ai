@@ -6939,29 +6939,66 @@
         // costs on its own path. Three voices on one pitch sum close to coherently, so
         // the stack is scaled by 1/\u221an \u2014 and the extras sit slightly under the lead,
         // because a doubling reinforces a line rather than replacing it.
-        let _toneX = [];
-        try { if (L.toneSeq && L.toneSeq.on && typeof _ambToneStackAt === 'function') {
-          _toneX = _ambToneStackAt({ toneSeq: L.toneSeq, tone: L.instrument.tone, id: 'v2:' + (L.id | 0) }, at) || [];
-        } } catch (e) { _toneX = []; }
-        let _vx = 0;
-        if (_toneX.length) {
-          const _v0 = Number.isFinite(params.volume) ? params.volume : 100;
-          const _vLead = Math.max(1, Math.round(_v0 / Math.sqrt(1 + _toneX.length)));
-          params.volume = _vLead;
-          _vx = Math.max(1, Math.round(_vLead * 0.8));   // the doubling sits under the lead
-        }
-        try { playNote(n.freq, params, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
-        catch (e) {}
-        if (_toneX.length) {
-          _toneX.forEach((t9) => {
-            const p9 = {}; for (const k9 in params) p9[k9] = params[k9];
-            p9.type = t9 || toneOf(L);
-            // ONLY THE LEAD LEADS A CHOKE. `_chokeLead` on a doubling would make the
-            // extra voice cut the chord as well, which is the lead's job and only its.
-            delete p9._chokeLead;
-            p9.volume = _vx;
-            try { playNote(n.freq, p9, n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
-            catch (e) {}
+        // ONE FIRING — the lead and whatever ◇ Doubling adds under it — used once for
+        // an ordinary note and once per SEGMENT when ✂ Cut splits a held one.
+        const _shim = { toneSeq: L.toneSeq, tone: L.instrument.tone, id: 'v2:' + (L.id | 0) };
+        const fire = (sAt, sDurMs, pIn) => {
+          const p0 = {}; for (const k0 in pIn) p0[k0] = pIn[k0];
+          let _toneX = [];
+          try { if (L.toneSeq && L.toneSeq.on && typeof _ambToneStackAt === 'function') {
+            _toneX = _ambToneStackAt(_shim, sAt) || [];
+          } } catch (e) { _toneX = []; }
+          let _vx = 0;
+          if (_toneX.length) {
+            const _v0 = Number.isFinite(p0.volume) ? p0.volume : 100;
+            const _vLead = Math.max(1, Math.round(_v0 / Math.sqrt(1 + _toneX.length)));
+            p0.volume = _vLead;
+            _vx = Math.max(1, Math.round(_vLead * 0.8));   // the doubling sits under the lead
+          }
+          try { playNote(n.freq, p0, sDurMs, sAt, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
+          catch (e) {}
+          if (_toneX.length) {
+            _toneX.forEach((t9) => {
+              const p9 = {}; for (const k9 in p0) p9[k9] = p0[k9];
+              p9.type = t9 || toneOf(L);
+              // ONLY THE LEAD LEADS A CHOKE. `_chokeLead` on a doubling would make the
+              // extra voice cut the chord as well, which is the lead's job and only its.
+              delete p9._chokeLead;
+              p9.volume = _vx;
+              try { playNote(n.freq, p9, sDurMs, sAt, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); }
+              catch (e) {}
+            });
+          }
+        };
+        // ✂ CUT AT THE STEP. A voice is chosen at a note's ONSET and holds for that
+        // note, so a layer that starts one long note per part plays ONE voice per part
+        // however the set is written — reported exactly so. With ✂ on, a note that
+        // crosses a step edge ENDS there and the next voice starts at the edge, which
+        // is what makes a Tone set audible on held material. ABSENT = off, and the
+        // `_cuts` call is skipped outright, so nothing about the old path changes.
+        let _cuts = [];
+        try {
+          if (L.toneSeq && L.toneSeq.on && L.toneSeq.cut && typeof _ambToneCuts === 'function') {
+            _cuts = _ambToneCuts(_shim, at, (n.durMs || 0) / 1000) || [];
+          }
+        } catch (e) { _cuts = []; }
+        if (!_cuts.length) fire(at, n.durMs, params);
+        else {
+          let s0 = at;
+          const ends = _cuts.concat([at + (n.durMs || 0) / 1000]);
+          ends.forEach((e9, i9) => {
+            const d9 = Math.max(10, Math.round((e9 - s0) * 1000));
+            let p9 = params;
+            if (i9 > 0) {
+              p9 = {}; for (const k9 in params) p9[k9] = params[k9];
+              // EACH SEGMENT IS ITS OWN NOTE: its voice is the one the set names where
+              // it starts, and only the FIRST may lead a choke — the later pieces are
+              // continuations, not new onsets as far as the chord is concerned.
+              try { const t9 = _ambToneAt(_shim, s0); if (typeof t9 === 'string' && t9) p9.type = t9; } catch (e) {}
+              delete p9._chokeLead;
+            }
+            fire(s0, d9, p9);
+            s0 = e9;
           });
         }
       }

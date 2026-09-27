@@ -71,6 +71,13 @@ byte-identical.
 - **Voice**: `synth` (pitched) · `kit` (drum map; unpitched) · `sample` (buffer; pitch = varispeed).
 - A **tone**, or a **set of tones** (a kit; or per-degree/per-lane/per-note tones that
   the material assigns per event — the wrap-ensemble case).
+- **✂ CUT — a held note follows the set (2026-09-27).** `L.toneSeq.cut` (absent = off).
+  A voice is chosen at a note's ONSET and holds for that note, so a layer that starts one
+  long note per part plays one voice per part whatever the set says. With ✂ on, a note
+  crossing a step edge ENDS there and the next voice starts at the edge — the segments
+  tile the original note, only the first may lead a choke. `_ambToneCuts` returns the
+  edges strictly inside a note (capped at 16) and returns none for a set that is off or
+  fixed by a part row.
 - **◇ TONE SET — A ROW STATES ITS OWN UNIT (2026-09-27).** Each voice says how long it
   holds AND in what: `{ tone, bars }` counts BARS (as it always did), `{ tone, unit:'chg',
   bars }` counts CHANGES, and `{ tone, unit:'part', part, at?, len? }` is not a turn in

@@ -6764,15 +6764,21 @@
       const sl = ov.querySelector('.ambient-pm-modal-sl'), val = ov.querySelector('.ambient-pm-modal-val');
       const close = () => { try { ov.remove(); } catch (e) {} };
       let cur = v0;
-      const set = (v) => {
+      // PAINTING THE FACE IS NOT SETTING THE VALUE. `set` used to do both, and it is
+      // called ONCE ON OPEN to draw the slider — so merely LOOKING at a cell wrote its
+      // current value back, and a store that was absent (absent = neutral, the
+      // grammar every mask follows) came into existence saying nothing. Measured:
+      // long-pressing a salt cell created `saltMask: { steps: [100,100,100,100] }`.
+      const paint = (v) => {
         const n = Math.max(0, Math.min(100, v | 0));
         cur = n;
         sl.value = String(n); val.textContent = n + '%';
         ov.querySelectorAll('.ambient-pm-modal-preset').forEach(bt => bt.classList.toggle('active', (bt.dataset.v | 0) === n));
         ov.querySelectorAll('.pm-sp-v').forEach(e2 => { e2.textContent = n + '%'; });
-        try { o.onSet(n); } catch (e) {}
+        return n;
       };
-      set(v0);
+      const set = (v) => { const n = paint(v); try { o.onSet(n); } catch (e) {} };
+      paint(v0);
       sl.addEventListener('input', () => set(sl.value | 0));
       ov.addEventListener('click', (ev) => {
         if (ev.target === ov || (ev.target.closest && ev.target.closest('.ambient-pm-modal-done'))) { close(); return; }
@@ -14291,6 +14297,9 @@
         o.bars = qt(t.bars, 0.25, 32, 4);
         return o;
       });
+      // \u2702 CUT — re-articulate a held note at each step edge. Additive, ABSENT BY
+      // DEFAULT: without it the emit path is untouched and golden stays bit-exact.
+      if (q.cut === true || q.cut === 1) q.cut = 1; else delete q.cut;
       if (Number.isFinite(q.pal) && (q.pal | 0) > 0) q.pal = Math.max(0, Math.min(100, q.pal | 0)); else delete q.pal;
       if (Number.isFinite(q.dub) && (q.dub | 0) > 0) q.dub = Math.max(0, Math.min(100, q.dub | 0)); else delete q.dub;
       // CAPPED AT 3 FOR NOW (user, 2026-09-26). 1 is "never double", which `dub` already
@@ -14413,13 +14422,18 @@
         // so a random pick can change from one lap to the next instead of being fixed
         // for ever. Quantized to the BAR, never to the millisecond (the rounding-tie
         // rule) — every note in a step window draws the same lead.
-        let idx = 0;
+        let idx = 0, bLen = 1;
         for (let i = 0; i < q.steps.length; i++) {
           const b = Math.max(1, q.steps[i].bars | 0);
-          if (bar < b) { idx = i; break; }
+          if (bar < b) { idx = i; bLen = b; break; }
           bar -= b;
         }
-        return { q: q, idx: idx, win: Math.floor(absBar / total), n: q.steps.length, cyc: null };
+        // …and WHERE this window runs. `bar` is now the offset INTO the step, so the
+        // edges fall out of the same walk — ✂ Cut needs them and the arithmetic was
+        // already here, thrown away at the return.
+        const _t0 = anchor + (absBar - bar) * barSec;
+        return { q: q, idx: idx, win: Math.floor(absBar / total), n: q.steps.length, cyc: null,
+                 t0: _t0, t1: _t0 + bLen * barSec };
       }
       const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
       if (q.steps.some(st => _ambTsqUnit(st) === 'part')) {
@@ -14449,7 +14463,8 @@
       });
       if (guard >= 4096) { cur.t0 = atSec; cur.t1 = atSec + barSec; }   // never spin on a bad extent
       _AMB_TSQ_CUR.set(lid, cur);
-      return { q: q, idx: cyc[Math.max(0, cur.i)], win: Math.max(0, cur.lap), n: cyc.length, cyc: cyc };
+      return { q: q, idx: cyc[Math.max(0, cur.i)], win: Math.max(0, cur.lap), n: cyc.length, cyc: cyc,
+               t0: cur.t0, t1: cur.t1 };
     }
     // HOW MANY OF THE SET ARE ELIGIBLE at ◇ Palette `pal`. 0 (or absent) means ONE
     // — no choosing, which is the positional cycle this control has always been.
@@ -14489,6 +14504,31 @@
       const lid = _ambToneLid(inst);
       const pick = Math.floor(_ambChordHash01(w.win * 8 + w.idx + 1, lid) * k) % k;
       return _ambToneOf(q, cyc ? cyc[pick % cyc.length] : pick, inst.tone);
+    }
+    // ── ✂ WHERE A HELD NOTE WOULD CHANGE VOICE ──────────────────────────
+    // (2026-09-27, reported as "I have each Tone in a Tone Set with 3 Tones to 1 bar,
+    // but they play for the full part".) A voice is chosen at a note's ONSET and holds
+    // for that note — so a layer that starts one long note per part plays ONE voice per
+    // part however the set is written. These are the step edges strictly inside a note,
+    // for the caller to cut it at. Bounded: a long drone over a fast set is a note, not
+    // a tremolo, and 16 pieces is already more than anyone meant.
+    // Returns [] for a set that is off, absent, or fixed by a part row (a part row is an
+    // answer for as long as that part runs — there is no edge inside it to cut at).
+    function _ambToneCuts(inst, atSec, durSec) {
+      const q = inst && inst.toneSeq;
+      if (!q || !q.on || !Array.isArray(q.steps) || !(durSec > 0)) return [];
+      const end = atSec + durSec, out = [];
+      let t = atSec;
+      for (let g = 0; g < 16; g++) {
+        let w = null;
+        try { w = _ambToneWin(inst, t); } catch (e) { w = null; }
+        if (!w || w.fixed || !Number.isFinite(w.t1)) break;
+        if (!(w.t1 > t)) break;                    // never advance backwards
+        if (w.t1 >= end - 1e-4) break;             // the note ends first
+        out.push(w.t1);
+        t = w.t1 + 1e-4;
+      }
+      return out;
     }
     // A STABLE PER-LAYER SALT so two layers sharing a Tone set do not pick in
     // lockstep. Derived from the layer's own id/key, never from a counter.
@@ -45433,6 +45473,67 @@
       if (!keepKey) el._phKey = '';
       el.querySelectorAll('.playing, .incol').forEach(n => n.classList.remove('playing', 'incol'));
     }
+    // ── THE SALT CELL'S MODAL, WHEREVER THAT CELL LIVES ─────────────────
+    // (2026-09-27.) PER-CHORD RE-ROLL (`saltNudge`) and COLOUR-CHANGE TIMING
+    // (`saltFree`) ride the salt cell's modal — they modify the salt that cell
+    // governs, and that column IS their scope. They have now been unreachable TWICE:
+    // once when the ⌗ Matrix fold deleted the only callers that supplied these
+    // callbacks, and again when ▦ Passes — the grid that carried the cells — was
+    // retired into ▦ Schedule and its host left the panel. `_ambMaskCellModal` renders
+    // these buttons ONLY when the callbacks are passed, so both times the features went
+    // silent with nothing to notice. One definition now, called by whichever grid draws
+    // the cell; `repaint` is the caller's own refresh.
+    function _ambSaltCellModal(E, L, lk, ci, kind, repaint, where) {
+      const cfg = E.getCfg(); if (!cfg || !L) return;
+      const _lbl = _ambLayerLabel(L, lk) || lk;
+      const _isSalt = (kind === 'salt');
+      const _chLbl = (() => {
+        try {
+          const chs = cfg.prog && cfg.prog.chords;
+          const ch = chs && chs[ci]; if (!ch) return 'this chord';
+          if (_ambIsTransition(ch)) return 'the walk';
+          return _ambChordShort(_ambChordShift(ch, _ambProgViewShift(E, cfg, chs))) || 'this chord';
+        } catch (e) { return 'this chord'; }
+      })();
+      _ambMaskCellModal(E, {
+        value: _ambMaskRead(L, kind, ci), salt: _isSalt, unit: 'chord',
+        // WHERE the cell is, in the caller's own words — it has a title that already
+        // names the layer, the chord and the pass, and re-deriving it here is how two
+        // grids come to describe the same cell differently.
+        label: _lbl + (where ? (' \u00b7 ' + where) : ''),
+        rowLabel: _lbl, colLabel: _chLbl,
+        onSet: (v) => { _ambMaskStore(cfg, L, kind).steps[ci] = Math.max(0, Math.min(100, v | 0));
+          _ambMaskEditPoke(E, lk); if (typeof repaint === 'function') repaint();
+          if (typeof persistWorkspace === 'function') persistWorkspace(); },
+        onReroll: !_isSalt ? null : (() => {
+          if (!L.saltNudge || typeof L.saltNudge !== 'object') L.saltNudge = {};
+          L.saltNudge[ci] = ((L.saltNudge[ci] | 0) + 1);
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          // Heard at the next boundary; a frozen Write loop re-captures.
+          try { if (E.timer) _ambReanchorLayer(E, lk); } catch (e) {}
+          try {
+            if (typeof showToast === 'function') showToast('New roll for ' + _lbl + ' on ' + _chLbl +
+              (_ambAnySaltColors(cfg) ? ' \u2014 lands at the next pass.'
+                : ' \u2014 set a Salt colour amount (the changes, a pass, or the area) to hear it.'));
+          } catch (e) {}
+        }),
+        snapFree: _isSalt && !!(L.saltFree && L.saltFree[ci]),
+        onSnapToggle: !_isSalt ? null : (() => {
+          if (!L.saltFree || typeof L.saltFree !== 'object') L.saltFree = {};
+          const nowFree = !L.saltFree[ci];
+          if (nowFree) L.saltFree[ci] = 1; else delete L.saltFree[ci];
+          if (!Object.keys(L.saltFree).length) delete L.saltFree;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { if (E.timer) _ambReanchorLayer(E, lk); } catch (e) {}
+          return nowFree;
+        }),
+        rerollWhy: (_isSalt && !_ambAnySaltColors(cfg))
+          ? 'Nothing is colouring these chords yet \u2014 the roll is stored, but set a Salt colour amount ' +
+            '(\u25a6 Schedule \u2192 a pass\u2019s label for one pass, the progression editor for these changes, or \ud83e\uddc2 Salt for the area) to hear it.'
+          : '',
+      });
+    }
+    try { window._ambSaltCellModal = _ambSaltCellModal; } catch (e) {}
     // ONE delegated handler on the host — it survives every re-render, and the
     // cells are rebuilt on each edit so a per-element bind would be dead after
     // the first tap.
@@ -45466,58 +45567,10 @@
           });
           return;
         }
-        const _lbl = _ambLayerLabel(L, lk) || lk;
-        // PER-CHORD RE-ROLL (`saltNudge`) and COLOUR-CHANGE TIMING (`saltFree`)
-        // ride the SALT cell's modal \u2014 they modify the salt this cell governs, and
-        // that column IS their scope. Both are engine-read and both were
-        // UNREACHABLE between f410bf3 and now: the \u2317 Matrix fold deleted the only
-        // callers that supplied these callbacks, and `_ambMaskCellModal` renders
-        // the buttons only when they are passed, so the features went silent with
-        // nothing to notice. (The `_ambReconfigSharedQuiet` shape \u2014 code that
-        // exists, reads correctly, and nothing invokes.)
-        const _isSalt = (kind === 'salt');
-        const _chLbl = (() => {
-          try {
-            const chs = cfg2.prog && cfg2.prog.chords;
-            const ch = chs && chs[ci]; if (!ch) return 'this chord';
-            if (_ambIsTransition(ch)) return 'the walk';
-            return _ambChordShort(_ambChordShift(ch, _ambProgViewShift(E, cfg2, chs))) || 'this chord';
-          } catch (e) { return 'this chord'; }
-        })();
-        _ambMaskCellModal(E, {
-          value: _ambMaskRead(L, kind, ci), salt: _isSalt, unit: 'chord',
-          label: _lbl + ' \u00b7 ' + (c.getAttribute('title') || ''),
-          rowLabel: _lbl, colLabel: _chLbl,
-          onSet: (v) => { _ambMaskStore(cfg2, L, kind).steps[ci] = Math.max(0, Math.min(100, v | 0));
-            _ambMaskEditPoke(E, lk); el._sig = ''; _ambRenderPassMatrix(E);
-            if (typeof persistWorkspace === 'function') persistWorkspace(); },
-          onReroll: !_isSalt ? null : (() => {
-            if (!L.saltNudge || typeof L.saltNudge !== 'object') L.saltNudge = {};
-            L.saltNudge[ci] = ((L.saltNudge[ci] | 0) + 1);
-            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-            // Heard at the next boundary; a frozen Write loop re-captures.
-            try { if (E.timer) _ambReanchorLayer(E, lk); } catch (e) {}
-            try {
-              if (typeof showToast === 'function') showToast('New roll for ' + _lbl + ' on ' + _chLbl +
-                (_ambAnySaltColors(cfg2) ? ' \u2014 lands at the next pass.'
-                  : ' \u2014 set a Salt colour amount (the changes, a pass, or the area) to hear it.'));
-            } catch (e) {}
-          }),
-          snapFree: _isSalt && !!(L.saltFree && L.saltFree[ci]),
-          onSnapToggle: !_isSalt ? null : (() => {
-            if (!L.saltFree || typeof L.saltFree !== 'object') L.saltFree = {};
-            const nowFree = !L.saltFree[ci];
-            if (nowFree) L.saltFree[ci] = 1; else delete L.saltFree[ci];
-            if (!Object.keys(L.saltFree).length) delete L.saltFree;
-            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-            try { if (E.timer) _ambReanchorLayer(E, lk); } catch (e) {}
-            return nowFree;
-          }),
-          rerollWhy: (_isSalt && !_ambAnySaltColors(cfg2))
-            ? 'Nothing is colouring these chords yet \u2014 the roll is stored, but set a Salt colour amount ' +
-              '(\u25a6 Schedule \u2192 a pass\u2019s label for one pass, the progression editor for these changes, or \ud83e\uddc2 Salt for the area) to hear it.'
-            : '',
-        });
+        // THE SALT CELL'S MODAL IS SHARED — see `_ambSaltCellModal`, which ▦ Schedule
+        // calls for the same cell in its Salt mode. This host keeps its own repaint.
+        _ambSaltCellModal(E, L, lk, ci, kind,
+          () => { el._sig = ''; _ambRenderPassMatrix(E); }, c.getAttribute('title') || '');
       };
       _ambWireMaskCells(el, _mkOpen);
       // BULK APPLY. `_ambMaskCellModal` already speaks `bulk` — it just needs the
@@ -49920,14 +49973,30 @@
                     : 'cycling in turn') +
            (nChg ? (nChg === nCyc ? ', on the changes' : ', on bars and changes') : ', on the bar clock') +
            (nPart ? ' · ' + nPart + ' mapped to a part' : ''));
+      const cut = !!(q && q.cut);
       const sum = !n ? 'no voices yet'
         : (n + ' voice' + (n === 1 ? '' : 's') + ' · ' +
            (!on ? 'off — the single Tone above plays' : clock) +
-           ((on && dub > 0 && stk) ? ' · doubling' : ''));
+           ((on && dub > 0 && stk) ? ' · doubling' : '') +
+           ((on && cut) ? ' · cutting held notes' : ''));
       let h = '<div class="tsq-head">' +
         '<button type="button" class="ambient-seg ambient-toneseq-onoff' + (on ? ' active' : '') +
           '" title="Play the voices below instead of the single Tone above. Off = the Tone above.">' +
           (on ? 'On' : 'Off') + '</button>' +
+        // ✂ CUT — the answer to "3 voices to 1 bar, but they play for the whole part".
+        // A voice is chosen when a note STARTS and holds for that note, so a layer that
+        // starts one long note per part hears one voice per part whatever the set says.
+        // THE FACE IS THE STATE (✂ Cutting) or the OFFER (✂ Cut) — the ↻ Loop /
+        // ↻ Looping rule, because a one-word face is read as the current state.
+        // Only with a set that is ON and more than one voice: with one voice there is
+        // nothing for a cut to change, and a control that cannot act is worse than absent.
+        ((on && n > 1)
+          ? ('<button type="button" class="ambient-seg ambient-toneseq-cut' + (cut ? ' active' : '') +
+              '" title="' + _ambEscAttr(cut
+                ? '✂ Cutting — a note that crosses a step boundary ends there and the next voice starts at the boundary, so a held note follows the set instead of keeping the voice it began with.'
+                : 'A voice is chosen when a note STARTS and holds for that whole note — so a layer that holds one long note per part plays one voice per part. Press to end a note at each step boundary and start the next voice there.') +
+              '">' + (cut ? '✂ Cutting' : '✂ Cut') + '</button>')
+          : '') +
         '<span class="ambient-hint tsq-sum">' + sum + '</span>' +
       '</div>';
       if (q && n) {
@@ -57695,7 +57764,7 @@
               try { _ambPerfRecToggle(E, rkey); } catch (e) {}
               return;
             }
-            const tq = ev.target && ev.target.closest && ev.target.closest('.ambient-toneseq-onoff, .ambient-toneseq-add, .ambient-toneseq-del');
+            const tq = ev.target && ev.target.closest && ev.target.closest('.ambient-toneseq-onoff, .ambient-toneseq-add, .ambient-toneseq-del, .ambient-toneseq-cut');
             if (tq && hostEl.contains(tq)) {
               const box = tq.closest('.ambient-toneseq-box'); const tkey = _ambCardKey(tq.closest('.ambient-layer'));
               if (!box || !tkey) return;
@@ -57707,6 +57776,8 @@
               } else if (tq.classList.contains('ambient-toneseq-del')) {
                 const ti = tq.getAttribute('data-tsi') | 0;
                 if (Lt.toneSeq && Array.isArray(Lt.toneSeq.steps)) { Lt.toneSeq.steps.splice(ti, 1); if (!Lt.toneSeq.steps.length) delete Lt.toneSeq; }
+              } else if (tq.classList.contains('ambient-toneseq-cut')) {
+                if (Lt.toneSeq) { if (Lt.toneSeq.cut) delete Lt.toneSeq.cut; else Lt.toneSeq.cut = 1; }
               } else if (Lt.toneSeq) { Lt.toneSeq.on = Lt.toneSeq.on ? 0 : 1; }
               box.innerHTML = _ambToneSeqBoxHtml(Lt);
               _ambToneSeqPopulate(box, Lt);

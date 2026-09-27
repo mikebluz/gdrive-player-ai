@@ -404,6 +404,33 @@
   is what makes it read as "some notes are reinforced" rather than "this stretch is
   thick"). Quantize an onset key to a musical tick — 960 per bar — never to the
   millisecond, or two notes a float ULP apart draw differently (the rounding-tie rule).
+- **PAINTING A MODAL'S FACE IS NOT SETTING ITS VALUE.** `_ambMaskCellModal`'s `set()`
+  both drew the slider and called `onSet`, and it is called ONCE ON OPEN to draw itself
+  — so merely LOOKING at a mask cell wrote its current value back and a store that was
+  absent came into existence saying nothing (measured: a long-press on a salt cell left
+  `saltMask: { steps: [100,100,100,100] }`). Absent is neutral in every mask; `paint`
+  and `set` are separate now.
+- **A FEATURE WHOSE ONLY CALLER IS A RETIRED GRID GOES SILENT TWICE.** The per-chord salt
+  re-roll (`saltNudge`) and the colour-snap toggle (`saltFree`) are rendered by
+  `_ambMaskCellModal` ONLY when their callbacks are passed — so when the ⌗ Matrix fold
+  deleted the callers, and again when ▦ Passes was retired into ▦ Schedule and its host
+  left the panel, both features kept being read by the engine with nothing able to set
+  them. `_ambSaltCellModal` is one definition now, called by whichever grid draws the
+  cell; the door is ▦ Schedule ▸ Salt, long-press or right-click. **When you retire a
+  grid, grep for every callback its cells supplied** — a store has a reader that
+  complains, a callback has nothing.
+- **A LONG-PRESS FLAG MUST BE CLEARED BY THE NEXT PRESS, not by the click it waits for.**
+  The hold sets a flag so its trailing click does not also paint; but when the modal
+  opens UNDER the cursor that click lands on the overlay, the flag survives, and the
+  next honest tap is swallowed. Clear it on `pointerdown`, and only set it when a door
+  actually opened.
+- **A VOICE IS CHOSEN AT A NOTE'S ONSET AND HOLDS FOR THAT NOTE.** ◇ Tone set advances
+  correctly on the bar/change clock, but a layer that starts ONE long note per part
+  hears one voice per part however the set is written — reported as "3 Tones to 1 bar,
+  but they play for the full part". ✂ Cut (`toneSeq.cut`, absent = off) ends a note at
+  each step edge and starts the next voice there. Absent, `_ambToneCuts` is never
+  called and the emit path is untouched — golden stayed bit-exact at 82/82 with the
+  control shipped, so there was nothing to re-baseline.
 - **BAR OR CHANGE IS A UNIT ON THE STORE, CONVERTED WHERE THE CHORDS ARE KNOWN.** A
   stored duration keeps its key (`bars`) whatever it counts and `bunit: 'chg'` says the
   number is CHANGES — additive, absent by default, so every saved block keeps the bars

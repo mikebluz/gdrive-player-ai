@@ -715,6 +715,26 @@
     commit(E, key);
   }
 
+  // ── THE SALT CELL, ONE GESTURE DEEPER ──────────────────────────────────
+  // (2026-09-27.) A TAP paints how much of the Salt this layer takes on this chord;
+  // a LONG-PRESS (or right-click) opens the cell's own modal, which is where the
+  // exact 0–100, the per-chord RE-ROLL (`saltNudge`) and the COLOUR-SNAP toggle
+  // (`saltFree`) live. Those last two lost their door when ▦ Passes was retired into
+  // this grid and its host left the panel — the writes stayed live and the engine kept
+  // reading them with nothing able to set them. `_ambSaltCellModal` is 17-ambient's
+  // one definition; this passes its own repaint and its own words for WHERE the cell is.
+  // Returns whether it OPENED — the caller only suppresses the trailing click when a
+  // door actually appeared, or a hold that opened nothing would eat the tap as well.
+  function openSaltCell(E, el, cfg, key, k, where) {
+    const st = stOf(el);
+    const ranges = _ambGridRanges(cfg) || [], r = ranges[st.part]; if (!r) return false;
+    const L = has(_ambLayerByKey) ? _ambLayerByKey(E, key) : null; if (!L) return false;
+    if (typeof window._ambSaltCellModal !== 'function') return false;
+    window._ambSaltCellModal(E, L, key, r.from + k, 'salt',
+      () => { el._sig = ''; render(E); }, where || '');
+    return !!document.querySelector('.ambient-step-modal-ov');
+  }
+
   function toggleChord(E, el, cfg, pass, k) {
     const st = stOf(el);
     const ranges = _ambGridRanges(cfg) || [], r = ranges[st.part]; if (!r) return;
@@ -832,6 +852,7 @@
         return;
       }
       if (a[0] === 'cell') {
+        if (el._lpAte) { el._lpAte = 0; return; }   // a long-press already answered this press
         // key may itself contain ':' (e.g. 'v2:3', 'arp:2') — pass and chord are the last two
         const k = a.pop() | 0, pass = a.pop() | 0, key = a.slice(1).join(':');
         if (st.mode === 'plays') paintPlays(E, el, cfg, key, pass, k);
@@ -839,6 +860,53 @@
         else paintPhrase(E, el, cfg, key, pass, k);
       }
     });
+    // LONG-PRESS / RIGHT-CLICK A SALT CELL — the same grammar the mask cells have
+    // always had (tap steps it, hold sets it exactly). Pointer-based, so one handler
+    // covers touch and mouse; the trailing click is SUPPRESSED, or the hold would also
+    // paint the cell it just opened.
+    {
+      let lp = null;
+      const armed = (ev) => {
+        const c = ev.target && ev.target.closest && ev.target.closest('.sch-cell[data-sch]');
+        if (!c || c.disabled) return null;
+        const st = stOf(el);
+        if (st.mode !== 'salt') return null;
+        return c;
+      };
+      const open = (c) => {
+        const cfg = E.getCfg(); if (!cfg) return;
+        const a = String(c.getAttribute('data-sch')).split(':');
+        const k = a.pop() | 0; a.pop(); const key = a.slice(1).join(':');
+        // The click that follows is not a paint — but only if a door opened. On touch
+        // the modal usually takes that click itself (it covers the grid), so this is
+        // belt-and-braces rather than the thing that makes the hold work.
+        el._lpAte = openSaltCell(E, el, cfg, key, k, c.getAttribute('title') || '') ? 1 : 0;
+      };
+      el.addEventListener('pointerdown', (ev) => {
+        // A NEW PRESS STARTS CLEAN. The flag that eats the long-press's trailing click
+        // has to be cleared by the next press, not by the click it is waiting for —
+        // when the modal opens under the cursor that click lands on the OVERLAY, the
+        // flag survives, and the next honest tap on a cell is swallowed instead.
+        el._lpAte = 0;
+        const c = armed(ev); if (!c) return;
+        if (lp) { clearTimeout(lp.t); lp = null; }
+        const x = ev.clientX, y = ev.clientY;
+        lp = { c, x, y, t: setTimeout(() => { lp = null; open(c); }, 480) };
+      });
+      const cancel = (ev) => {
+        if (!lp) return;
+        if (ev && Number.isFinite(ev.clientX) && Math.hypot(ev.clientX - lp.x, ev.clientY - lp.y) < 8
+            && ev.type === 'pointermove') return;      // a finger never sits perfectly still
+        clearTimeout(lp.t); lp = null;
+      };
+      el.addEventListener('pointermove', cancel);
+      el.addEventListener('pointerup', cancel);
+      el.addEventListener('pointercancel', cancel);
+      el.addEventListener('contextmenu', (ev) => {
+        const c = armed(ev); if (!c) return;
+        ev.preventDefault(); cancel(); open(c);
+      });
+    }
     // TYPING A CHANCE ACTIVATES IT — without a redraw under the caret
     el.addEventListener('input', (ev) => {
       const f = ev.target.closest('.sch-chancein'); if (!f) return;

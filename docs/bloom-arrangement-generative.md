@@ -366,3 +366,27 @@ play-it-twice test it is all **✺ Live**, never ⚙ Deep. And `_AMB_STOCH` has
 control cannot be marked there without teaching `tools/stochastic-matrix.mjs` about
 a second scope. Until that happens, the arrangement dice are invisible to
 `docs/bloom-stochastic-controls.md`, which is worth fixing before the list grows.
+
+## ⏸ A block's length — bars or changes (2026-09-27)
+
+A part with no changes is the one block whose length is STATED rather than derived from
+its chords, so it is the first arrangement surface to take the Bar/Change pair the
+◇ Tone set introduced (user: "wherever scheduling is happening, Bar and Change (whole or
+fractional) should be optional units to express scheduling in").
+
+    prog.parts[i] = { name, open: 1, bars: <count>, bunit?: 'chg', hold?: 1, … }
+
+`bars` keeps its key whatever it counts; `bunit: 'chg'` makes the number CHANGES.
+Absent is bars, so nothing saved before this moved. `_ambBlockBars(cfg, n, bunit, pi)`
+converts at arch derivation by walking the cadence of the nearest part before it that
+carries changes — the progression the block interrupts — so 2 changes over a 1·3 cadence
+is 4 bars and not 2×2. The clock is still handed `{num, den, ref: 'bar'}`; the unit
+system gains no new reference (see `traps-bloom.md` for why).
+
+Set from either door: the ⏸ Length menu on the block's own chip (two groups, ✓ on the
+current one, the changes group offered only where there are changes to count) or the
+Length row in ＋ Add part. `_ambBlockLenLabel` is the one labeller, so the chip, the ⋯
+row and the menu cannot spell the same stored pair three ways.
+
+**Still in bars only:** ▦ Schedule's loop length (`write.bars`), ✎ Written's bar range
+and the groove tap. ⌛ Hangs are deliberately excluded — their lengths are note values.

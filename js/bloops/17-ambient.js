@@ -2892,7 +2892,10 @@
             // running underneath it. Provenance is marked explicitly rather than
             // inferred, or migrating sections would silently freeze the harmony
             // in every project that has one.
-            if (pt.open) { e.len = { num: pt.bars, den: 1, ref: 'bar' }; if (pt.hold) e.hold = 1; }
+            // The block's length reaches the clock in BARS whatever it was stated in
+            // — `_ambBlockBars` is the one conversion, and `ref: 'bar'` stays the only
+            // reference this derivation emits.
+            if (pt.open) { e.len = { num: _ambBlockBars(cfg, pt.bars, pt.bunit, i), den: 1, ref: 'bar' }; if (pt.hold) e.hold = 1; }
             else e.changes = sliceOf(i);
             if (pt.key) e.key = { root: pt.key.root | 0, scale: pt.key.scale };
             if (pt.salt) e.salt = pt.salt;
@@ -3383,6 +3386,8 @@
           const nm = (typeof p.name === 'string' && p.name.trim()) ? p.name.trim().slice(0, 16) : ('Part ' + (out.length + 1));
           const e0 = { name: nm, len: 0, open: 1,
             bars: Math.max(0.25, Math.min(64, Number.isFinite(p.bars) && p.bars > 0 ? p.bars : 4)) };
+          // …and WHAT that number counts. Absent = bars, exactly as it always was.
+          if (p.bunit === 'chg') e0.bunit = 'chg';
           if (p.key && typeof p.key === 'object' && Number.isFinite(p.key.root)) {
             const sc0 = (typeof SCALES !== 'undefined' && SCALES[p.key.scale]) ? p.key.scale : 'major';
             e0.key = { root: (((p.key.root | 0) % 12) + 12) % 12, scale: sc0 };
@@ -42129,7 +42134,12 @@
               '<input type="text" class="ambient-step-inp ap-name" maxlength="16" placeholder="Bridge"></div>' +
             '<div class="ambient-ctrl ambient-step-row"><label>Length</label>' +
               '<input type="number" class="ambient-step-inp ap-bars" min="0.25" max="64" step="0.25" value="4">' +
-              '<span class="ambient-step-val">bars</span></div>' +
+              // BAR OR CHANGE, on the row that states the number — the same pair the
+              // ⏸ Length menu offers, so one block has one vocabulary wherever it is set.
+              '<span class="ambient-seg-row ap-bunit">' +
+                '<button type="button" class="ambient-seg active" data-bunit="bar">bars</button>' +
+                '<button type="button" class="ambient-seg" data-bunit="chg">changes</button>' +
+              '</span></div>' +
             '<div class="ambient-ctrl ambient-step-row"><label>Harmony</label>' +
               '<span class="ambient-seg-row ap-hold">' +
                 '<button type="button" class="ambient-seg active" data-hold="1">Holds</button>' +
@@ -42207,6 +42217,11 @@
         if (kb) { setKind(kb.dataset.kind); return; }
         const hb = ev.target.closest && ev.target.closest('.ap-hold .ambient-seg');
         if (hb) { setHold(hb.dataset.hold | 0); return; }
+        const ub = ev.target.closest && ev.target.closest('.ap-bunit .ambient-seg');
+        if (ub) {
+          ov.querySelectorAll('.ap-bunit .ambient-seg').forEach(b2 => b2.classList.toggle('active', b2 === ub));
+          return;
+        }
         if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
         if (kind === 'open') {
           // An open part stores an OFFSET (keyOff = root - areaRoot), and a difference
@@ -42215,9 +42230,11 @@
           const r0 = rootSel.value | 0, sc0 = scaleSel.value;
           const cfg0 = E.getCfg() || {};
           if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
+          const _bu = ((ov.querySelector('.ap-bunit .ambient-seg.active') || {}).dataset || {}).bunit;
           _ambProgAppendOpenPart(cfg0.prog, ov.querySelector('.ap-name').value,
             parseFloat(ov.querySelector('.ap-bars').value),
-            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold, aRoot);
+            (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold, aRoot,
+            _bu === 'chg' ? 'chg' : null);
           close();
           try { E.getCfg(); } catch (e) {}                      // normalize + re-derive arch
           try { _ambSyncControls(E); } catch (e) {}
@@ -42281,13 +42298,14 @@
     // harmony holds. The subtlety: if the progression's chords have no part of
     // their own yet, one must be materialized FIRST, or appending this would
     // leave every chord unassigned and the chain would hold from bar 1.
-    function _ambProgAppendOpenPart(prog, name, bars, partKey, hold, areaRoot) {
+    function _ambProgAppendOpenPart(prog, name, bars, partKey, hold, areaRoot, bunit) {
       if (!prog) return;
       const chords = Array.isArray(prog.chords) ? prog.chords : [];
       let parts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts.slice() : null;
       if (!parts) parts = chords.length ? [{ name: prog.name || 'Changes', len: chords.length }] : [];
       const e = { name: (name || '').trim().slice(0, 16) || ('Part ' + (parts.length + 1)),
                   open: 1, bars: Math.max(0.25, Math.min(64, Number.isFinite(bars) ? bars : 4)) };
+      if (bunit === 'chg') e.bunit = 'chg';      // …and what that number counts
       // A KEY ON A PART WITH NO CHANGES IS AN OFFSET, NOT AN ABSOLUTE KEY — and
       // this is not a naming preference, it is the only one that works.
       // _ambPartKeyNow finds the current part by counting CHORDS, so a part with
@@ -42648,7 +42666,7 @@
       // empty run of chips.
       if (parts) { let acc = 0; parts.forEach((p, pi) => {
         ranges.push({ name: _ambPartLabel(cfg, pi, _ambPovNamesOn(el) ? 'names' : 'numerals'), from: acc, to: Math.min(N, acc + (p.open ? 0 : (p.len | 0))), pi,
-                      key: p.key || null, open: !!p.open, bars: p.bars, hold: !!p.hold });
+                      key: p.key || null, open: !!p.open, bars: p.bars, bunit: p.bunit, hold: !!p.hold });
         acc += (p.open ? 0 : (p.len | 0)); }); }
       else ranges.push({ name: '', from: 0, to: N, pi: -1 });
       // WHICH ROUND is on screen. Transient view state on the element (the
@@ -42865,7 +42883,7 @@
               _povMenuHtml(card) +
             '</span></div>' +
             '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
-              '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + (r.bars || 4) + ' bars</span></span>';
+              '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + esc(_ambBlockLenLabel(r.bars, r.bunit)) + '</span></span>';
           h += '</div>';
           return;
         }
@@ -43368,7 +43386,7 @@
           }, 0) });
           items.push({ label: '⧖ Cadence…' + (cadTxt ? ('  ' + cadTxt) : ''), fn: () => go('cad:' + pi) });
         } else {
-          items.push({ label: '⏸ Length…  ' + (P.bars || 4) + ' bars', fn: () => go('openlen:' + pi) });
+          items.push({ label: '⏸ Length…  ' + _ambBlockLenLabel(P.bars, P.bunit), fn: () => go('openlen:' + pi) });
         }
         items.push({ label: '♪ Key…  ' + keyTxt, fn: () => go('partkey:' + pi) });
         items.push({ label: '⌛ Hangs…  ' + hangTxt, fn: () => go('hang:' + pi) });
@@ -43571,13 +43589,24 @@
         const r3 = t.getBoundingClientRect();
         setTimeout(() => { try {
           if (typeof showCtxMenu !== 'function') return;
-          const cur = parts2[pi].bars;
+          const cur = parts2[pi].bars, curChg = parts2[pi].bunit === 'chg';
+          // IN CHANGES ONLY WHERE THERE ARE CHANGES TO COUNT. With no other part
+          // carrying any, "2 changes" would silently resolve back to 2 bars — a unit
+          // that cannot act is worse than one that is absent.
+          const canChg = (() => { try { return (_ambCadUnder(cfg, pi) || []).length > 0; } catch (e) { return false; } })();
           showCtxMenu(r3.left, r3.bottom, [
             { label: '“' + (parts2[pi].name || 'Part') + '” length', disabled: true },
+            { label: 'In bars', disabled: true },
             ...[0.5, 1, 2, 4, 8, 12, 16, 32].map(bn => ({
-              label: '  ' + (cur === bn ? '✓ ' : '') + bn + (bn === 1 ? ' bar' : ' bars'),
-              fn: () => { parts2[pi].bars = bn; persist(); refresh(); }
+              label: '  ' + (!curChg && cur === bn ? '✓ ' : '') + bn + (bn === 1 ? ' bar' : ' bars'),
+              fn: () => { parts2[pi].bars = bn; delete parts2[pi].bunit; persist(); refresh(); }
             })),
+            ...(canChg ? ['hr',
+              { label: 'In changes — it follows the cadence', disabled: true },
+              ...[0.5, 1, 2, 3, 4, 8].map(cn => ({
+                label: '  ' + (curChg && cur === cn ? '✓ ' : '') + cn + (cn === 1 ? ' change' : ' changes'),
+                fn: () => { parts2[pi].bars = cn; parts2[pi].bunit = 'chg'; persist(); refresh(); }
+              }))] : []),
           ]);
         } catch (e) {} }, 0);
         return;
@@ -43675,6 +43704,52 @@
       for (let i = 0; i < pi; i++) if (!parts[i].open) from += Math.max(1, parts[i].len | 0);
       if (parts[pi].open) return { from, to: from };          // a block of time, no chords
       return { from, to: Math.min(p.chords.length, from + Math.max(1, parts[pi].len | 0)) };
+    }
+    // ── A BLOCK'S LENGTH: BARS OR CHANGES ───────────────────────────────
+    // (2026-09-27, user: "wherever scheduling is happening, Bar and Change (whole or
+    // fractional) should be optional units to express scheduling in".)
+    // A stored duration keeps its key `bars` whatever it counts, and `bunit: 'chg'`
+    // says the number is CHANGES — additive, absent by default, so every saved block
+    // keeps the bars it had. It is converted to bars HERE, where the chords in force
+    // are known: never by an average (a "2 changes" block would slide off the changes
+    // it is named after on the first uneven cadence), and never by a new `ref` in the
+    // unit system, because that clock resolves a reference with no position to resolve
+    // it AT — and `arch-parity` pins it.
+    // WHICH CHANGES RUN UNDER AN OPEN BLOCK: its own part has none, by definition. The
+    // progression it interrupts is the nearest part BEFORE it that carries changes —
+    // the one still in force — falling back to the first that does.
+    function _ambCadUnder(cfg, pi) {
+      const parts = (cfg && cfg.prog && Array.isArray(cfg.prog.parts)) ? cfg.prog.parts : null;
+      if (!parts) { try { return _ambCadence(cfg, 0) || []; } catch (e) { return []; } }
+      for (let i = (pi | 0) - 1; i >= 0; i--) {
+        if (parts[i] && !parts[i].open) { try { return _ambCadence(cfg, i) || []; } catch (e) { return []; } }
+      }
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i] && !parts[i].open) { try { return _ambCadence(cfg, i) || []; } catch (e) { return []; } }
+      }
+      return [];
+    }
+    function _ambBlockBars(cfg, n, bunit, pi) {
+      const v = Math.max(0.25, Math.min(64, Number.isFinite(n) && n > 0 ? n : 4));
+      if (bunit !== 'chg') return v;
+      const lens = _ambCadUnder(cfg, pi);
+      if (!lens.length) return v;            // nothing to count — the number stays bars
+      let bars = 0, left = v, i = 0;
+      while (left > 0 && i < 256) {
+        const take = Math.min(1, left);
+        bars += Math.max(0.05, lens[i % lens.length]) * take;
+        left -= take; i++;
+      }
+      return Math.max(0.25, Math.min(64, Math.round(bars * 4) / 4));
+    }
+    // What a block's length SAYS — one labeller, so the chip, the ⋯ row and the menu
+    // cannot spell the same stored pair three ways.
+    function _ambBlockLenLabel(n, bunit) {
+      const v = Number.isFinite(n) && n > 0 ? n : 4;
+      const w = (Math.round(v * 4) / 4);
+      return (bunit === 'chg')
+        ? (w + (w === 1 ? ' change' : ' changes'))
+        : (w + (w === 1 ? ' bar' : ' bars'));
     }
     // This part's cadence, as lengths in bars.
     function _ambCadence(cfg, pi) {

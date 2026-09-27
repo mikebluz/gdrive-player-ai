@@ -404,6 +404,18 @@
   is what makes it read as "some notes are reinforced" rather than "this stretch is
   thick"). Quantize an onset key to a musical tick — 960 per bar — never to the
   millisecond, or two notes a float ULP apart draw differently (the rounding-tie rule).
+- **BAR OR CHANGE IS A UNIT ON THE STORE, CONVERTED WHERE THE CHORDS ARE KNOWN.** A
+  stored duration keeps its key (`bars`) whatever it counts and `bunit: 'chg'` says the
+  number is CHANGES — additive, absent by default, so every saved block keeps the bars
+  it had. The conversion is `_ambBlockBars`, called at ARCH DERIVATION: the arrangement
+  clock still receives `ref: 'bar'`, which is what keeps `arch-parity` meaningful (75/75
+  unmoved) and every saved project identical. **DO NOT add a `change` REF to the unit
+  system** — `_ambUnitRefSec` resolves a reference with no position to resolve it AT,
+  and a change's length varies per chord. Walk the real cadence (2 changes over a 1·3
+  cadence is 4 bars, never 2×2), and offer the unit only where there are changes to
+  count — with none, "2 changes" silently resolves back to 2 bars, which is the dead
+  control this file has a rule about. Hangs deliberately do NOT take the pair: their
+  lengths are NOTE VALUES (⅛ … 1 bar), a different idea from a count of blocks.
 - **THE VIEW TRANSPOSE IS A SPACE, AND EVERYTHING ON A ROW MUST BE IN THE SAME ONE.**
   The overview draws `_ambChordShift(chords[i], _ambProgViewShift(…))` — that is what puts
   the progression in the area key — but a PART KEY is stored in the progression's own

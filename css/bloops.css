@@ -10602,12 +10602,16 @@
        groove rows live in the Settings menu, which doesn't carry .groove-panel). */
     .groove-row input[type=range] { width: 100%; accent-color: #9f7aea; }
     .groove-divs { display: flex; gap: 6px; }
-    .gv-div-opt, .gv-acc-opt {
+    /* …and .gv-noise-opt, the Jitter row. Added to the SHARED selector rather than
+       given a block of its own: a segmented row in this panel has one look, and a
+       new class with no CSS inherits nothing (measured 30x19 against its siblings'
+       112x29 — the documented bolted-on-control bug). */
+    .gv-div-opt, .gv-acc-opt, .gv-noise-opt {
       flex: 1; padding: 6px 0; border-radius: 6px;
       background: rgba(159,122,234,0.12); border: 1px solid rgba(159,122,234,0.35);
       color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
     }
-    .gv-div-opt.active, .gv-acc-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+    .gv-div-opt.active, .gv-acc-opt.active, .gv-noise-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
     /* Generate Sequence top controls: label + centered numeric input
        flanked by large −/+ steppers. */
     .euc-nums { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }

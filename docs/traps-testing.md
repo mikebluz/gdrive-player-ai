@@ -7,6 +7,26 @@
 
 ### Measurement & testing discipline
 
+- **A PROBE'S OWN SELECTOR IS THE FIRST SUSPECT WHEN EVERYTHING FAILS AT ONCE.** Three ways this
+  file has now paid for it, all of which read as "the product is broken" while the product was
+  fine: (a) **ids are namespaced per engine** — `ambient-proggrp-groove` is
+  `mix-bloom-proggrp-groove` in the mix view, so a raw `#ambient-…` selector matches NOTHING and
+  every check in the run fails together; match by SUFFIX (`[id$="proggrp-groove"]`) or resolve
+  through `_ambGet`. (b) **`dataset` does not cross `page.evaluate`** — a `DOMStringMap` arrives
+  as `{}`, so read `el.dataset.x` to a STRING inside the page. (c) **a hidden sibling measures 0**
+  — a group whose body is hidden hides its header by design, so "matches its neighbours" must
+  compare against a sibling with a non-zero rect, not simply the next one along.
+  And (d) **a container that starts collapsed** — the ✺ Variation strip's chips measure 0×0 until
+  that group is opened, so the walk must open every door a finger opens BEFORE measuring, the same
+  lesson ⚙ Deep taught by covering the sheet.
+  The tell for (a) is the shape of the failure: a whole section going red at once is almost never
+  a whole section breaking at once.
+- **DON'T PICK A THRESHOLD THE CONTROL CAN ALREADY CLEAR.** A reachability check written as
+  `width > 20 && height > 14` passed a bolted-on button measuring 30×19 beside siblings at 112×29
+  — it asserted "not literally invisible", not the rule, which is that new UI MATCHES ITS
+  NEIGHBOURS. Assert the relation (same height as a visible sibling) rather than a bare number,
+  or the probe grades its own homework.
+
 - **`page.mouse` dispatches at VIEWPORT coordinates, so an element below the fold takes the press
   at a point where nothing is** — and a drag that does nothing is indistinguishable from a broken
   handler. Cost a debugging cycle on the ⌸ grid's elide drag: the listener was fine, the cells were

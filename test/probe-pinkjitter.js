@@ -61,7 +61,14 @@ const ok = (name, cond, detail) => {
     return { n: bs.length, labels: bs.map((b) => b.textContent.trim()),
              lit: ((bs.find((b) => b.classList.contains('active')) || {}).dataset || {}).noise || '',
              readout: (document.querySelector('#gv-noise-v') || {}).textContent,
-             reach: !!(pk && pk.offsetParent && r.width > 20 && r.height > 14),
+             reach: !!(pk && pk.offsetParent && r.width > 40 && r.height > 24),
+             // MATCHES ITS NEIGHBOURS, measured — the first cut of this row shipped a
+             // class with no CSS and came out 30x19 beside its siblings' 112x29, and a
+             // bare "is it big enough" threshold loose enough to pass hid it.
+             sib: (() => { const d = document.querySelector('.gv-div-opt');
+               if (!d || !pk) return null; const a = d.getBoundingClientRect();
+               return { h: Math.round(a.height), mine: Math.round(r.height),
+                        same: Math.abs(a.height - r.height) < 2 }; })(),
              rect: r ? [Math.round(r.width), Math.round(r.height)] : null,
              at: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null,
              titled: !!(pk && (pk.getAttribute('title') || '').length > 20) };
@@ -69,6 +76,8 @@ const ok = (name, cond, detail) => {
   ok('the Groove panel offers White · Pink', JSON.stringify(reach.labels) === '["White","Pink"]',
     JSON.stringify(reach));
   ok('…measurable, not merely present', reach.reach === true, JSON.stringify([reach.rect, reach.reach]));
+  ok('…and built from its neighbours\u2019 chrome, not its own',
+    !!reach.sib && reach.sib.same === true, JSON.stringify(reach.sib));
   ok('…White is lit, and the readout names it',
     reach.lit === 'white' && reach.readout === 'white', JSON.stringify([reach.lit, reach.readout]));
   ok('…and Pink says what it does, in words', reach.titled === true, JSON.stringify(reach.titled));

@@ -42771,6 +42771,26 @@
               + (_amt > 0 ? ('On: ' + _sh + ' over ' + ((_a.bars | 0) || 32) + ' bars, depth ' + _amt + '.') : 'Off — every layer plays wherever its own settings allow.')) + '">' +
             '🌒 Arc' + (_amt > 0 ? ('<b>' + esc(_sh) + '</b>') : '') + '</span>';
         })()) +
+        // \ud83d\udd7a GROOVE — the 6th chip (2026-09-27, user: "move Groove into Arrangement as
+        // the 6th button in the bottom right of the Variation subsection"). It is the same
+        // question as its neighbours asked of the BEAT rather than of the chords, and like
+        // them the chip STATES its answer rather than just naming itself: lit when the
+        // groove is doing something, and saying so when bypassed — a card reading plain
+        // "Groove" while bypassed is a confident wrong answer.
+        ((function () {
+          const _g = cfg && cfg.groove, _byp = !!(_g && _g.bypass);
+          const _sum = _g ? ((_g.swing | 0) + (_g.accent | 0) + (cfg.startVary | 0)
+                           + (_g.density | 0) + (_g.ghost | 0) + (_g.rolls | 0)) : 0;
+          const _pink = (typeof grooveNoise !== 'undefined' && grooveNoise === 'pink');
+          const _on = _sum > 0 && !_byp;
+          return '<span role="button" tabindex="0" class="ambient-pov-grpbtn' + (_on ? ' on' : '') + '" data-pov="grp:groove" ' +
+            'title="' + esc('Groove \u2014 how the beat is played: swing, accent, humanize, sparse, ghost, rolls, '
+              + 'and each layer\u2019s push/pull. '
+              + (_byp ? 'Bypassed right now \u2014 the settings are kept, they are just not applied.'
+                      : (_sum > 0 ? 'On.' : 'Everything at 0 \u2014 played straight.'))) + '">' +
+            '\ud83d\udd7a Groove' +
+            (_byp ? '<b>bypassed</b>' : (_pink ? '<b>pink</b>' : '')) + '</span>';
+        })()) +
         '' +
         // CAPTURE — only offered when something actually varies pass to pass;
         // on a plain written progression it would just clone the chords.
@@ -44609,7 +44629,7 @@
     // exactly how two copies of a control drift apart.
     // Titles for the popover groups, in ONE place — a ternary meant a third group
     // silently took the wrong title (or its own key) instead.
-    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order', arc: '\uD83C\uDF12 Arc', novelty: '\u273a Novelty' };
+    const _AMB_PROG_GRP_TITLES = { salt: '\uD83E\uDDC2 Salt', rubato: '\u2194 Rubato', order: '\u21bb Order', arc: '\uD83C\uDF12 Arc', novelty: '\u273a Novelty', groove: '\uD83D\uDD7A Groove' };
     // ── A SALT DIAL ─────────────────────────────────────────────────────
     // (2026-09-19, "change these inputs to mobile-friendly dials and present
     // in a clean symmetrical way".) Five bare number boxes on one wrapping
@@ -47767,7 +47787,10 @@
         strip.appendChild(ch);
       });
       try { _ambRenderScheduler(E); } catch (e) {}   // the Scheduler mirrors the same layer set
-      try { const gb = _ambGet(E, 'ambient-groove'); if (gb && !gb.classList.contains('collapsed')) _ambRenderGroove(E); } catch (e) {}   // Groove push rows track the layer set
+      // Groove push rows track the layer set. The PANE this asked about is gone
+      // (Groove is a card in Arrangement now), so it asks the card — a stale element
+      // reference here is a repaint that silently stops happening.
+      try { const gb = _ambGet(E, 'ambient-proggrp-groove'); if (gb && gb.classList.contains('open')) _ambRenderGroove(E); } catch (e) {}
     }
     // ================= SCHEDULER (⏱) ==================================
     // The per-layer TIME matrix between Configure and the Mixer: one row per
@@ -49743,6 +49766,32 @@
         macro('ghost', 'Ghost', g.ghost, 'quiet in-between notes') +
         macro('rolls', 'Rolls', g.rolls, 'retrigger / roll chance') +
         '</div>';
+      // \u273a JITTER — the CHARACTER of the Humanize slider above (and of every
+      // layer's Vel var): white = each onset lands independently, pink = 1/f, the
+      // same depth arriving as slow drift with fine detail on top. Placed directly
+      // under the macros because it governs one of them, and built from the same
+      // `.ambient-seg-row` as Push's ms / % unit rather than new chrome.
+      // IT BELONGS HERE, not in the \u2699 Settings menu's legacy groove list: that
+      // list is the GRID sequencer's copy of these controls, and a switch shown
+      // where nobody looks is the same as no switch (measured \u2014 it was reported
+      // missing).
+      {
+        const pinkOn = (typeof grooveNoise !== 'undefined' && grooveNoise === 'pink');
+        html += '<div class="ambient-groove-push ambient-groove-jitter">' +
+          '<div class="ambient-groove-pushhead">' +
+            '<span class="ambient-sched-lbl">jitter \u2014 how Humanize is distributed</span>' +
+            '<span class="ambient-seg-row ambient-groove-noiseseg">' +
+              '<button type="button" class="ambient-seg ambient-groove-noise' + (pinkOn ? '' : ' active') +
+                '" data-gnoise="white" title="White \u2014 every onset lands independently of the last. The original behaviour.">White</button>' +
+              '<button type="button" class="ambient-seg ambient-groove-noise' + (pinkOn ? ' active' : '') +
+                '" data-gnoise="pink" title="Pink (1/f) \u2014 the same amount of jitter, arriving as slow DRIFT with fine detail on top instead of scattering. Closer to how a player sits in the beat.">Pink</button>' +
+            '</span>' +
+          '</div>' +
+          '<div class="ambient-sched-lbl ambient-groove-jitterhint">' +
+            (pinkOn ? 'pink \u2014 the feel wanders; same depth, less scatter'
+                    : 'white \u2014 independent per onset') + '</div>' +
+          '</div>';
+      }
       // Per-layer Push/Pull rows.
       const layers = _ambMixerLayers(cfg);
       html += '<div class="ambient-groove-push"><div class="ambient-groove-pushhead"><span class="ambient-sched-lbl">push / pull — ahead ← beat → behind</span>' +
@@ -55007,9 +55056,11 @@
         // Every body keeps its id so renderers/handlers bind unchanged.
         '<div class="ambient-tabsec" id="ambient-tabsec">' +
           '<div class="ambient-tabsec-bar" role="tablist">' +
-            (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="keysec" role="tab" title="Key — the area key every set of changes inherits from, and how it is applied">♯ Key</button>') +
+            // ♯ Key is GONE as a tab — its controls are the first subsection inside
+            // ⇶ Arrangement now, above the changes that inherit them.
             (E.isLane ? '' : '<button type="button" class="ambient-tabsec-tab" data-tab="progsec" role="tab" title="Arch — the arrangement: parts (with changes or without), salt, order, the matrix">⇶ Arrangement</button>') +
-            '<button type="button" class="ambient-tabsec-tab" data-tab="groove" role="tab" title="Groove — swing / accent / humanize / push">🕺 Groove</button>' +
+            // 🕺 Groove is GONE as a tab — it is the 6th card in Arrangement's
+            // Variation row now. One subject, one home.
             // ⏱ Sched is GONE as a tab — its contents live inside Arrangement
             // now. Two panes were one subject: Arch drew the parts and Sched
             // drew the same parts again as a lane, so "which one owns parts?"
@@ -55018,22 +55069,27 @@
             '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
           '</div>' +
           (E.isLane ? '' :
-          // KEY IS ITS OWN TAB. It is not a property of the progression: it is
-          // the AREA key — what the first set of changes inherits, what every
-          // set without its own key follows, and the only key an area with NO
-          // progression has at all (every scale-source layer resolves through
-          // _ambKeyRootPc). Sitting inside Progression it read as a competing
-          // area-wide key; on its own it reads as the default it is.
-          '<div class="ambient-tabsec-pane ambient-keysec" data-pane="keysec" id="ambient-keysec">' +
+          '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
+            '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+             // ♯ KEY, REHOMED (2026-09-27, user: "Key seems useless, i think we can
+             // remove it; then we just have Arrangement and Mix buttons"). The TAB is
+             // gone; the controls are NOT, because the area key is load-bearing — 53
+             // call sites resolve through `_ambKeyRootPc`, and it is the only key an
+             // area with no progression has at all. Deleting the surface would have
+             // left it unsettable, so it moves to the top of Arrangement, above the
+             // changes that inherit it. A move is a delete plus an add: every id below
+             // is UNCHANGED, so `keyRowHtml`'s wiring, the Chromatic⟷Key toggle and the
+             // key indicator all bind exactly as they did.
+             _ambProgGrpOpen('keysec', '\u266f Key', false) +
+             '<div class="ambient-keysec" id="ambient-keysec">' +
             '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
             '<div class="ambient-sched-body" id="ambient-keysec-body">' +
             '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn amb-keytoggle" id="ambient-key-toggle" ' +
               'title="Chromatic \u27f7 Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
             keyRowHtml +
             '<div class="ambient-hint ambient-keysec-foot">This is the area key: the first set of changes inherits it, and any set without its own key follows it. A set can depart from it in the progression\u2019s Overview.</div>' +
-            '</div></div>' +
-          '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
-            '<div class="ambient-sched-body" id="ambient-progsec-body">' +
+             '</div></div>' +
+             _ambProgGrpClose() +
             // NO CHANGES ON/OFF SWITCH. A part either carries changes or it does
             // not, so an area-wide toggle is the two-concept model showing
             // through: it asked a question the parts already answer. `prog.on`
@@ -55243,6 +55299,20 @@
               'it counts bars, so it works on an area with no progression at all.</span>' +
             '</div>' +
             _ambProgGrpClose() +
+            // \ud83d\udd7a GROOVE — the SIXTH card, and no longer a tab (2026-09-27, user:
+            // "move Groove into Arrangement as the 6th button in the bottom right of
+            // the Variation subsection"). It belongs with its neighbours: Salt,
+            // Novelty, Rubato, Order and Arc are all "how does the written thing vary
+            // as it plays", and swing/accent/humanize/push is the same question asked
+            // of the BEAT. As a tab it was a peer of Arrangement and Mixer, which
+            // claimed it was a third subject.
+            // THE NODE IS MOVED, NOT REBUILT: `#ambient-groove-body` keeps its id, so
+            // `_ambRenderGroove` and the whole delegated input/click block below bind
+            // exactly as they did — the rule this file states every time a surface
+            // moves, and the reason there is no second copy of the groove wiring.
+            _ambProgGrpOpen('groove', '\ud83d\udd7a Groove', false, true) +
+              '<div class="ambient-sched-body" id="ambient-groove-body"></div>' +
+            _ambProgGrpClose() +
             // Overview strip — the whole progression at a glance (chord chips grouped
             // under part labels; alt-bearing chords badged; playing chord glows). Click a
             // chord to edit it there; click a part header to rename/reorder. _ambRenderProgOverview.
@@ -55301,9 +55371,6 @@
         '</div>') +        // end the merged Arrangement pane
         // 🕺 Groove — swing / accent / humanize (cascade) + per-layer push;
         // rendered by _ambRenderGroove into #ambient-groove-body.
-        '<div class="ambient-tabsec-pane ambient-groove" data-pane="groove" id="ambient-groove">' +
-          '<div class="ambient-sched-body" id="ambient-groove-body"></div>' +
-        '</div>' +
 
         // 🎚️ Mixer — layer faders + master fade + global FX. Strip (re)rendered
         // by _ambRenderMixer. Keeps the .ambient-mixer class for its inner styles.
@@ -55523,6 +55590,13 @@
           if (/(^|-)proggrp-overview$/.test(g.id || '')) {
             try { if (typeof window._ambCurPartRefresh === 'function') window._ambCurPartRefresh(E); } catch (e) {}
           }
+          // \ud83d\udd7a GROOVE PAINTS ON OPEN. Its body is rendered by `_ambRenderGroove`,
+          // which used to be called from the TAB handler — and the tab is gone, so the
+          // card opened EMPTY and the Jitter row measured as missing. Same id test as
+          // above, for the same reason: ids are namespaced per engine.
+          if (/(^|-)proggrp-groove$/.test(g.id || '') && g.classList.contains('open')) {
+            try { _ambRenderGroove(E); } catch (e) {}
+          }
           // the button SAYS whether it is open — a caret a screen reader cannot see is
           // not an affordance, and `aria-expanded` is what makes it a disclosure
           try { h.setAttribute('aria-expanded', g.classList.contains('open') ? 'true' : 'false'); } catch (e) {} });
@@ -55546,10 +55620,13 @@
               const pane = tabsec.querySelector('.ambient-tabsec-pane[data-pane="' + name + '"]');
               if (pane) pane.classList.add('active');
               try {
-                if (name === 'groove') _ambRenderGroove(E);
-                // Arrangement now CONTAINS the scheduler, so opening it must
-                // paint that too — there is no 'sched' tab left to do it.
-                else if (name === 'progsec') { try { _ambRenderProgOverview(E); } catch (e) {} _ambRenderScheduler(E); }
+                // Arrangement now CONTAINS the scheduler AND \ud83d\udd7a Groove, so opening
+                // it must paint both — there is no 'sched' or 'groove' tab left to.
+                if (name === 'progsec') {
+                  try { _ambRenderProgOverview(E); } catch (e) {}
+                  _ambRenderScheduler(E);
+                  try { _ambRenderGroove(E); } catch (e) {}
+                }
                 else if (name === 'mixer') _ambRenderMixer(E);
               } catch (e) {}
             }
@@ -55654,6 +55731,16 @@
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const tm = ev.target.closest('.ambient-groove-tapmode');
             if (tm) { const t = _ambTapState(E); t.mode = (tm.getAttribute('data-tapmode') === 'rhythm') ? 'rhythm' : 'tempo'; t.times = []; if (t.timer) { clearTimeout(t.timer); t.timer = null; } _ambRenderGroove(E); return; }
+            const nz = ev.target.closest('.ambient-groove-noise');
+            if (nz) {
+              grooveNoise = (nz.getAttribute('data-gnoise') === 'pink') ? 'pink' : 'white';
+              _ambRenderGroove(E);
+              // the \u2699 Settings menu carries the SAME switch (the grid sequencer's
+              // copy of these rows) \u2014 repainted so the two cannot disagree.
+              try { if (typeof refreshGrooveUI === 'function') refreshGrooveUI(); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const md = ev.target.closest('.ambient-groove-mode');
             if (md) { const c = _grCfg(); if (!c) return; c.groove.pushMode = (md.getAttribute('data-gmode') === 'pct') ? 'pct' : 'ms'; _ambRenderGroove(E); if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const evb = ev.target.closest('.ambient-groove-evolve');

@@ -3563,7 +3563,7 @@
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
       if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
-      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
+      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); if (cfg.groove.streak != null) cfg.groove.streak = Math.max(0, Math.min(100, cfg.groove.streak | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -11413,9 +11413,87 @@
       if (cfg && cfg._secOvGroove) g = _ambSectionGroove(cfg, g);
       return (g && g.bypass) ? null : g;
     }
+    // ── \u273a STREAKS \u2014 RESTS THAT COME IN RUNS (self-exciting onsets) ────
+    // The rest check is an i.i.d. coin flip per slot, so a high Sparse reads as
+    // random dropout rather than as phrasing: every slot decides alone, and a
+    // sequence of independent decisions has no shape. A player's notes and rests
+    // arrive in RUNS \u2014 a handful of notes, then a gap \u2014 which is most of the
+    // difference between "sprinkled" and "played". It is also why every variance
+    // die ships with a ceiling: i.i.d. noise has no structure, so the only safety
+    // was limiting how much of it you could ask for.
+    //
+    // A SELF-EXCITING THRESHOLD, NOT A NEW DRAW. Each layer carries an EXCITATION
+    // that every sounding note raises and time decays (the Hawkes shape). The
+    // threshold moves against it, CENTRED at 0.5 so it cuts BOTH ways: excited →
+    // rest is less likely (notes run on), quiet → rest is more likely (gaps stay
+    // gaps). Centring is what keeps this a change of SHAPE rather than a secret
+    // density control; the probe measures the overall rest rate to hold it to that.
+    //
+    // WHY STATE IS ALLOWED HERE. Everything seeded in this file is a pure hash of
+    // POSITION, but the rest draw is not seeded \u2014 it rides the sequential engine
+    // RNG (`_ambRand`), so the emit ORDER is already what makes a take replay. A
+    // per-layer counter driven by that same order replays with it.
+    //
+    // ABSENT / 0 → the term is never computed and the threshold is exactly what it
+    // was (golden-render pins that, and the harness runs a default groove).
+    const _AMB_STREAK = new Map();      // layer key -> { e, a }  (transient, never stored)
+    // THE CONSTANTS, AND WHAT THEY BUY. One sounding note raises the NEXT slot's
+    // chance of sounding by roughly
+    //     \u0394p \u2248 (amt/100) \u00b7 SPAN \u00b7 2 \u00b7 KICK \u00b7 DECAY / 100
+    // and the lag-1 autocorrelation of the fire sequence tracks that \u0394p almost
+    // exactly \u2014 which is the number to tune against, because it is what "in runs"
+    // actually means. Two measured dead ends worth not repeating: kick 0.55 /
+    // decay 0.72 pinned the excitation at its ceiling on a busy layer (steady state
+    // kick\u00b7p/(1\u2212decay) runs past 1), so its deviation from its own average collapsed;
+    // and kick 0.38 / decay 0.55 / span 46 was unsaturated but simply too gentle
+    // \u2014 \u0394p \u2248 0.135, measured r1 = 0.114, a real effect nobody would hear.
+    // These put the steady state near the middle of 0..1 AND give \u0394p \u2248 0.25.
+    // Raising SPAN further starts clamping the threshold at 0/100, which turns runs
+    // into hard on/off blocks and pulls the rest rate off its mark.
+    const _AMB_STREAK_DECAY = 0.50;     // per SLOT, not per second (see below)
+    const _AMB_STREAK_KICK = 0.50;      // what one sounding note adds
+    const _AMB_STREAK_SPAN = 72;        // max points of rest-probability swing at 100
+    // PER SLOT, NOT PER SECOND. The first cut decayed on the wall clock, which is
+    // wrong here and measurably so: notes are stamped with their SCHEDULED time
+    // while the threshold is read at emit time, so under the lookahead `dt` collapsed
+    // to zero and nothing ever decayed. A slot is the natural unit anyway \u2014 it makes
+    // the memory tempo-relative for free, and `_ambEffRest` is called exactly once
+    // per slot, which is the tick this needs.
+    //
+    // SELF-CENTRING, so it cannot become a secret density control. The threshold
+    // moves with the DEVIATION of the excitation from its own slow average, not
+    // from a fixed midpoint: a fixed midpoint biases a quiet layer toward more
+    // silence (excitation starts at 0, so every early slot reads as "quiet" and
+    // rests harder), which would make Streaks thin the part out instead of shaping
+    // it. Against its own average the long-run adjustment is ~0 whatever the note
+    // density, so this changes the SHAPE of the silence and not how much there is
+    // \u2014 which is what the probe holds it to.
+    function _ambStreakState(key) {
+      let st = _AMB_STREAK.get(key);
+      if (!st) { st = { e: 0, a: 0 }; _AMB_STREAK.set(key, st); }
+      return st;
+    }
+    // A NOTE SOUNDED. Called from the capture-sink tee, which every non-frozen
+    // layer's emit scope installs \u2014 so this needs no threading through the emit path
+    // and no second copy per layer type. A frozen/Write layer does not pass through
+    // it and simply never excites, which is right: its notes are fixed.
+    function _ambStreakNote(key) {
+      try {
+        const g = _ambGroove(); if (!g || !((g.streak | 0) > 0)) return;
+        const st = _ambStreakState(key || '?');
+        st.e = Math.min(1, st.e + _AMB_STREAK_KICK);
+      } catch (e) {}
+    }
     function _ambEffRest(lc) {
       const g = _ambGroove(); const gd = g ? (g.density | 0) : 0;
-      return Math.max(0, Math.min(100, ((lc && lc.restProb) | 0) + gd));
+      const base = Math.max(0, Math.min(100, ((lc && lc.restProb) | 0) + gd));
+      const amt = g ? Math.max(0, Math.min(100, g.streak | 0)) : 0;
+      if (amt <= 0) return base;                      // the old threshold, untouched
+      const st = _ambStreakState(_ambEmitLayerKey || '?');
+      st.e *= _AMB_STREAK_DECAY;                      // one slot of forgetting
+      const dev = st.e - st.a;                        // against its OWN average
+      st.a += 0.03 * (st.e - st.a);                   // slow EMA, so `dev` centres itself
+      return Math.max(0, Math.min(100, base - (amt / 100) * _AMB_STREAK_SPAN * dev * 2));
     }
     // GHOST notes + ROLLS (Area Groove) — extra notes ADDED alongside a rhythmic
     // hit: a roll = 1-2 quick soft retriggers within the note; a ghost = one quiet
@@ -28904,6 +28982,10 @@
         // and by scheduled start time (window._ambEmitAt) for thresholded cancel.
         if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
         if (typeof freq !== 'number' || typeof at !== 'number') return;
+        // \u273a STREAKS watch the notes that actually SOUND. Skipped under a silent
+        // capture, which re-runs a layer's generation off-clock \u2014 counting those
+        // would excite a layer for notes nobody heard.
+        try { if (!(typeof window !== 'undefined' && window._ambSilentCapture)) _ambStreakNote(key); } catch (e) {}
         // SPATIALIZE before the capture copy is taken, so a Write/Hold freeze stores
         // the position this note actually sounded at — and see _ambTagSink, which
         // re-applies it on replay so editing the control is heard on a frozen loop
@@ -49781,6 +49863,7 @@
         macro('density', 'Sparse', g.density, 'full → sparse (drops hits)') +
         macro('ghost', 'Ghost', g.ghost, 'quiet in-between notes') +
         macro('rolls', 'Rolls', g.rolls, 'retrigger / roll chance') +
+        macro('streak', 'Streaks', g.streak, 'scattered \u2192 notes and rests in runs') +
         '</div>';
       // \u273a JITTER — the CHARACTER of the Humanize slider above (and of every
       // layer's Vel var): white = each onset lands independently, pink = 1/f, the

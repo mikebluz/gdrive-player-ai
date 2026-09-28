@@ -260,6 +260,23 @@
   groove snapshot/apply/persist path; **absent = 'white'**, which is every save made before it.
   `_ambHumanPM1` is the one door and the grid scheduler asks through `window._bloopsHumanPM1`
   rather than carrying a second copy of the rule. `test/probe-pinkjitter.js`.
+- **A SELF-EXCITING REST THRESHOLD (`groove.streak`) HAS TWO WAYS TO BE SILENTLY USELESS.** The
+  rest check is an i.i.d. coin flip per slot (`_ambRand() * 100 < _ambEffRest(lc)`, eight call
+  sites, one threshold function), so a high Sparse reads as random dropout rather than phrasing.
+  Streaks makes it Hawkes-shaped: every SOUNDING note raises a per-layer excitation (observed at
+  the capture-sink tee, so no threading through the emit path), it decays **per SLOT, never per
+  second** — notes are stamped with their SCHEDULED time while the threshold is read at emit time,
+  so under the lookahead a wall-clock `dt` collapses to zero and nothing decays — and the threshold
+  moves against the excitation's deviation from its **own slow average**, not from a fixed
+  midpoint. Fixed-midpoint centring biases a quiet layer toward more silence (excitation starts at
+  0, so early slots all read "quiet"), which makes it a density control by the back door; measured
+  against its own average the rest rate moves 0.004 while lag-1 goes −0.024 → 0.284.
+  **TUNE AGAINST Δp, NOT BY FEEL:** one note lifts the next slot's chance of sounding by
+  `(amt/100)·SPAN·2·KICK·DECAY/100`, and the fire sequence's lag-1 autocorrelation tracks that
+  number almost exactly. Two measured dead ends: kick 0.55/decay 0.72 SATURATES (steady state
+  `kick·p/(1−decay)` > 1, deviation collapses), and kick 0.38/decay 0.55/span 46 is unsaturated but
+  gives Δp ≈ 0.135 — a real effect nobody can hear. Absent/0 returns the old threshold before any
+  of it is computed. `test/probe-streaks.js`.
 
 ### Bloom: emit, capture, freeze / Write
 

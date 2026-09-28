@@ -44,8 +44,9 @@ const ok = (name, cond, detail) => {
     c.prog.chords = [CH(0, 1), CH(5, 1), CH(7, 2), CH(2, 2)];
     c.prog.parts = [{ name: 'Verse', len: 2 }, { name: 'Chorus', len: 2 }];
     E.getCfg();
+    try { _ambSyncControls(E); } catch (e) {}   // or the off-hint stays up
   });
-  await zz(600);
+  await zz(900);
 
   // A REAL TOUCH, measured first — a 0×0 rect is the tell.
   const tap = async (sel, nth) => {
@@ -115,43 +116,32 @@ const ok = (name, cond, detail) => {
   ok('…reachable, measured', chips.reach === true, JSON.stringify([chips.rect, chips.reach]));
   ok('…the same size as the chips beside it', chips.sameAsSib === true, JSON.stringify(chips));
 
-  const gr = await page.evaluate(() => {
-    const h = document.querySelector('[id$="proggrp-groove"] .ambient-grp-head');
-    if (!h) return { err: 'no head' };
-    h.scrollIntoView({ block: 'center' });
-    const r = h.getBoundingClientRect();
-    // AGAINST A *VISIBLE* SIBLING. A group whose body is hidden (\ud83c\udf12 Arc while Arc is
-    // off) hides its HEADER too, by design — measuring against that compares to 0 and
-    // reads as "the chrome is wrong" when nothing is.
-    const sibEl = [...document.querySelectorAll('[id$="-progsec"] .ambient-proggrp .ambient-grp-head')]
-      .find((x) => !/proggrp-groove/.test((x.closest('.ambient-proggrp') || {}).id || '')
-                   && x.offsetParent && x.getBoundingClientRect().height > 4);
-    const sib = sibEl ? sibEl.getBoundingClientRect() : { height: 0 };
-    return { txt: h.textContent.trim(), reach: !!(h.offsetParent && r.width > 40 && r.height > 20),
-             rect: [Math.round(r.width), Math.round(r.height)],
-             sibOf: sibEl ? (sibEl.closest('.ambient-proggrp') || {}).id : null,
-             sibH: Math.round(sib.height), myH: Math.round(r.height),
-             matchesSib: !!sibEl && Math.abs(r.height - sib.height) < 3 };
-  });
-  ok('…the card is reachable, measured', gr.reach === true, JSON.stringify(gr));
-  ok('…and wears the same chrome as the visible card beside it', gr.matchesSib === true, JSON.stringify(gr));
-
+  // THE CHIP IS THE DOOR. The group is hidden in place — its head is not a second
+  // door — so the walk goes through the chip, which opens it as a popover by the
+  // `_ambProgGrpPopover` move-the-live-node path its five neighbours use.
   console.log('\n  ✺ …and Jitter is INSIDE it');
-  ok('a real touch opens the Groove card', await tap('[id$="proggrp-groove"] .ambient-grp-head'));
+  ok('a real touch on the 🕺 Groove chip opens it',
+    await tap('[id$="prog-varbar"] [data-pov="grp:groove"]'));
   const jit = await page.evaluate(() => {
-    const bs = [...document.querySelectorAll('.ambient-groove-noise')];
+    const pop = document.querySelector('.ambient-grp-pop');
+    const scope = pop || document;
+    const bs = [...scope.querySelectorAll('.ambient-groove-noise')];
     const pk = bs.find((b) => b.dataset.gnoise === 'pink');
     const r = pk ? pk.getBoundingClientRect() : null;
-    return { n: bs.length, labels: bs.map((b) => b.textContent.trim()),
+    return { popped: !!pop,
+             title: pop ? ((pop.querySelector('.sm-title') || {}).textContent || '') : '',
+             n: bs.length, labels: bs.map((b) => b.textContent.trim()),
              mode: window._bloopsNoiseMode ? window._bloopsNoiseMode() : '?',
              reach: !!(pk && pk.offsetParent && r.width > 30 && r.height > 20),
              rect: r ? [Math.round(r.width), Math.round(r.height)] : null };
   });
+  ok('…it opens as a popover, titled', jit.popped === true && /Groove/.test(jit.title),
+    JSON.stringify([jit.popped, jit.title]));
   ok('the Jitter row is in the Groove panel the user actually opens',
     jit.n === 2 && JSON.stringify(jit.labels) === '["White","Pink"]', JSON.stringify(jit));
   ok('…measurable, not merely present', jit.reach === true, JSON.stringify([jit.rect, jit.reach]));
   ok('…and it starts on white', jit.mode === 'white', JSON.stringify(jit.mode));
-  ok('a real touch lands on Pink', await tap('.ambient-groove-noise', 1));
+  ok('a real touch lands on Pink', await tap('.ambient-grp-pop .ambient-groove-noise', 1));
   const flipped = await page.evaluate(() => ({
     mode: window._bloopsNoiseMode(),
     lit: ((document.querySelector('.ambient-groove-noise.active') || {}).dataset || {}).gnoise || '',
@@ -160,6 +150,35 @@ const ok = (name, cond, detail) => {
   ok('…the switch flips and the panel follows it',
     flipped.mode === 'pink' && flipped.lit === 'pink' && /pink/.test(flipped.hint),
     JSON.stringify(flipped));
+  // …and put it back, or the next section measures through the overlay
+  await page.evaluate(() => { const d = document.querySelector('.ambient-grp-pop .sm-apply'); if (d) d.click(); });
+  await zz(600);
+
+  console.log('\n  ▭ the pane spaces evenly, and nothing shows twice');
+  const lay = await page.evaluate(() => {
+    const grps = [...document.querySelectorAll('[id$="-progsec"] .ambient-proggrp')].map((g) => {
+      const b = g.getBoundingClientRect();
+      return { id: (g.id || '').replace(/^.*proggrp-/, ''), vis: !!g.offsetParent,
+               top: Math.round(b.top), bot: Math.round(b.bottom), h: Math.round(b.height) };
+    });
+    const vis = grps.filter((g) => g.vis && g.h > 4).map((g) => g.id);
+    const rows = grps.filter((g) => g.vis && g.h > 4);
+    const gaps = [];
+    for (let i = 1; i < rows.length; i++) gaps.push(rows[i].top - rows[i - 1].bot);
+    const ar = document.querySelector('[id$="prog-actionrow"]');
+    return { vis, gaps, rowH: ar ? Math.round(ar.getBoundingClientRect().height) : null,
+             grooveHidden: !grps.find((g) => g.id === 'groove').vis };
+  });
+  // \ud83d\udd7a Groove's chip IS its door. Left visible in place as well, the pane grew a
+  // second door to the same thing — `_ambProgGrpSync`'s list is hardcoded and a new
+  // pop group left out of it is not hidden.
+  ok('the 🕺 Groove GROUP is hidden in place — the chip is its only door',
+    lay.grooveHidden === true, JSON.stringify(lay.vis));
+  // The empty actions row (`#ambient-prog-sub` + a hidden hint) is 13px of nothing once
+  // changes are on. Harmless when it was first in the pane; under ♯ Key it read as a gap.
+  ok('…the empty actions row collapses', lay.rowH === 0, JSON.stringify(lay.rowH));
+  ok('…so every group is spaced the same', !!lay.gaps.length &&
+    lay.gaps.every((g) => Math.abs(g - lay.gaps[0]) < 3), JSON.stringify([lay.vis, lay.gaps]));
 
   console.log('\n  ♯ Key moved, it did not die');
   await page.evaluate(() => { const d = document.querySelector('.ambient-grp-pop .sm-apply'); if (d) d.click(); });

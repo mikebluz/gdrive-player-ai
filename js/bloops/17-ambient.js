@@ -44755,7 +44755,9 @@
       // \u25a6 `schedgrid` IS NESTED INSIDE `overview`, so it must be resolved FIRST:
       // the parent's test is "does my body have any visible child", and a child still
       // carrying last pass's display makes that answer one frame stale.
-      ['novelty', 'salt', 'rubato', 'order', 'arc', 'variation', 'schedgrid', 'overview', 'sched'].forEach(k => {
+      // ADD EVERY NEW POP GROUP HERE. The list is hardcoded, so one left out is not
+      // hidden in place and shows as a second door to something its chip already opens.
+      ['novelty', 'salt', 'rubato', 'order', 'arc', 'groove', 'variation', 'schedgrid', 'overview', 'sched'].forEach(k => {
         const g = _ambGet(E, 'ambient-proggrp-' + k); if (!g) return;
         const body = g.querySelector('.ambient-grp-body'); if (!body) return;
         // A popover group shows only while it is inside the popover host; parked
@@ -44767,6 +44769,20 @@
         const any = Array.prototype.some.call(body.children, c => c.style.display !== 'none');
         g.style.display = any ? '' : 'none';
       });
+      // …AND THE ACTIONS ROW, same rule one level down: empty, it is 13px of nothing.
+      // Harmless while it was the first thing in the pane; under \u266f Key it reads as a
+      // gap between Key and \u25a4 Parts. Hidden only when BOTH its children are empty, so
+      // a renderer filling `#ambient-prog-sub` brings it straight back.
+      try {
+        const ar = _ambGet(E, 'ambient-prog-actionrow');
+        if (ar) {
+          const sub = _ambGet(E, 'ambient-prog-sub');
+          const off = _ambGet(E, 'ambient-progsec-off');
+          const subEmpty = !sub || !sub.children.length;
+          const offHidden = !off || off.style.display === 'none';
+          ar.style.display = (subEmpty && offHidden) ? 'none' : '';
+        }
+      } catch (e) {}
     }
     // ===== ▦ PASSES — the part matrix (docs/bloom-part-matrix.md) ===========
     // Rows are the part's chords, columns are its passes. A cell shows the
@@ -55101,7 +55117,7 @@
             // "＋ Add changes" in Overview, beside the chips it affects, and
             // Edit is gone: that editor already opens from any chord chip in
             // Overview, so a second door was a button that only repeated one.
-            '<div class="ambient-row ambient-prog-row">' +
+            '<div class="ambient-row ambient-prog-row" id="ambient-prog-actionrow">' +
               '<span class="ambient-prog-sub ambient-prog-actions" id="ambient-prog-sub"></span>' +
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Changes on to build a chord sequence</span>' +
             '</div>' +

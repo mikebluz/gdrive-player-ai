@@ -3563,7 +3563,7 @@
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
       if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
-      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); if (cfg.groove.streak != null) cfg.groove.streak = Math.max(0, Math.min(100, cfg.groove.streak | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
+      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); if (cfg.groove.streak != null) cfg.groove.streak = Math.max(0, Math.min(100, cfg.groove.streak | 0)); if (cfg.groove.couple != null) cfg.groove.couple = Math.max(0, Math.min(100, cfg.groove.couple | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -11566,6 +11566,102 @@
       const sw = Math.max(0, Math.min(100, ((Number.isFinite(inst && inst.swing) ? inst.swing : 0) | 0) + gsw));
       return (sw > 0) ? sw / 100 * slotSec * 0.5 : 0;
     }
+    // ── \u273a COUPLE \u2014 LAYERS THAT LISTEN TO EACH OTHER ──────────────────
+    // `drift` is a CONSTANT: a fixed phase offset a layer wears for ever. Layers are
+    // otherwise independent generators sharing only the clock and the key, which is
+    // why an arrangement can sound like several loops running near each other rather
+    // than like players in a room. Ensembles do the opposite \u2014 they pull toward each
+    // other, overshoot, and slip apart again.
+    //
+    // KURAMOTO, ON A BOUNDED WOBBLE. Each layer carries a phase; it advances at its
+    // OWN rate (derived from its period, so the layers genuinely differ) and a
+    // coupling term pulls it toward the mean field of the others. The phase is then
+    // spent as a BOUNDED offset \u2014 \u00b1`SPAN` of the layer's own period through a sine \u2014
+    // never as an unbounded slide, so a layer wobbles around where it belongs instead
+    // of walking away from it.
+    //
+    // THE NATURAL-RATE SPREAD IS THE POINT. With identical rates, coupling locks the
+    // layers and then nothing moves \u2014 a static offset, which is the very thing
+    // `drift` already was. Because the rates differ, coupling and detuning compete:
+    // the layers entrain for a while, slip, and re-entrain. "In and out of lock" is
+    // that competition, and it is what the probe measures (the order parameter rises
+    // well above its uncoupled value but stays short of 1).
+    //
+    // PER CALL, NOT PER SECOND \u2014 the same reason as \u273a Streaks: this is read inside
+    // the emit path where the wall clock and the scheduled time disagree under the
+    // lookahead. One call is one tick, which also makes a busy layer adapt faster
+    // than a sparse one, as a player does.
+    //
+    // ABSENT / 0 \u2192 nothing is computed and the offset is exactly what it was.
+    const _AMB_COUPLE = new Map();     // layer key -> phase 0..1 (transient, never stored)
+    const _AMB_COUPLE_RATE = 0.013;    // base phase advance per call
+    // K SITS JUST BELOW CRITICAL, AND THE ARITHMETIC MATTERS. The natural rate is
+    // RATE\u00b7(1 \u00b1 0.6), so the spread is uniform with half-width \u03b3 \u2248 0.0078, and for a
+    // uniform spread Kuramoto's critical coupling is K_c = 4\u03b3/\u03c0 \u2248 0.0099. Past that
+    // it LOCKS \u2014 measured at K_max = 0.018 (\u22481.8\u00b7K_c): r pinned at 0.978 and stopped
+    // moving at all. Lock is the one outcome this must not have, because a locked
+    // ensemble is a constant offset, which is exactly what `drift` already was.
+    // At K_max \u2248 K_c the layers entrain, overshoot and slip instead, which is the
+    // behaviour being modelled \u2014 and what `probe-couple` asserts in both directions.
+    const _AMB_COUPLE_K = 0.010;       // pull toward the mean field, per call (\u2248 K_c)
+    const _AMB_COUPLE_SPAN = 0.085;    // max wobble, as a fraction of the layer's period
+    // A PURE HASH, WRITING NOTHING. It seeds both the starting phase and the natural
+    // rate, and it must not touch `_AMB_COUPLE`: the field below iterates that map,
+    // so a helper that quietly interned a derived key ("<key>\u00b7r") would put phantom
+    // layers into the mean field and dilute it.
+    function _ambCoupleHash01(str) {
+      let h = 0; const k = String(str == null ? '?' : str);
+      for (let i = 0; i < k.length; i++) h = (Math.imul(h, 31) + k.charCodeAt(i)) >>> 0;
+      return (h % 100000) / 100000;
+    }
+    function _ambCouplePhase(key) {
+      let ph = _AMB_COUPLE.get(key);
+      if (!Number.isFinite(ph)) {
+        // spread at the start: all-at-0 is already locked, and a coupling that starts
+        // locked has nothing to show
+        ph = _ambCoupleHash01(key);
+        _AMB_COUPLE.set(key, ph);
+      }
+      return ph;
+    }
+    // The mean field: the resultant of every coupled layer's phase. Returns its
+    // ANGLE (0..1) and its LENGTH r (0 = scattered, 1 = locked) \u2014 r is also the
+    // order parameter the probe reads to say whether they are entraining.
+    function _ambCoupleField() {
+      let sx = 0, sy = 0, n = 0;
+      _AMB_COUPLE.forEach((ph) => {
+        sx += Math.cos(2 * Math.PI * ph); sy += Math.sin(2 * Math.PI * ph); n++;
+      });
+      if (!n) return { a: 0, r: 0, n: 0 };
+      sx /= n; sy /= n;
+      return { a: Math.atan2(sy, sx) / (2 * Math.PI), r: Math.sqrt(sx * sx + sy * sy), n: n };
+    }
+    // One tick for this layer, returning the offset in SECONDS.
+    function _ambCoupleOffset(key, periodSec, amt) {
+      const per = (periodSec > 0) ? periodSec : 0;
+      if (!(amt > 0) || !(per > 0)) return 0;
+      const k = key || '?';
+      let ph = _ambCouplePhase(k);
+      const fld = _ambCoupleField();
+      // its OWN rate: longer periods advance slower, so the spread is real
+      // its OWN rate, from the same pure hash \u2014 a \u00b160% spread, so the layers detune
+      // against each other and coupling has something to fight
+      let d = _AMB_COUPLE_RATE * (1 + 0.6 * (_ambCoupleHash01(k + '~rate') * 2 - 1));
+      if (fld.n > 1) {
+        // \u00d7 fld.r \u2014 THE MEAN FIELD'S MAGNITUDE, NOT JUST ITS ANGLE. Kuramoto is
+        // d\u03b8/dt = \u03c9 + K\u00b7r\u00b7sin(\u03c8\u2212\u03b8): the pull is weak while the phases are scattered
+        // and only firms up as they gather. Dropping `r` applies the FULL restoring
+        // force toward a mean angle that is meaningless when r \u2248 0, which locks the
+        // ensemble far below the K_c the spread predicts \u2014 measured r pinned at 0.894
+        // and dead still even with K at 0.010. With `r` in place the K_c arithmetic
+        // above is the real threshold again.
+        d += (amt / 100) * _AMB_COUPLE_K * fld.r * Math.sin(2 * Math.PI * (fld.a - ph));
+      }
+      ph = ph + d;
+      ph -= Math.floor(ph);                       // keep it on the circle
+      _AMB_COUPLE.set(k, ph);
+      return (amt / 100) * _AMB_COUPLE_SPAN * per * Math.sin(2 * Math.PI * ph);
+    }
     function _ambDriftOffset(E, key, layer, cfg) {
       let off = 0;
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
@@ -11588,6 +11684,19 @@
         const pct = !!(cfg && cfg.groove && cfg.groove.pushMode === 'pct');
         off += pct ? (Math.max(-90, Math.min(90, push)) / 100) * _ambEffIntervalSec(layer) : (push / 1000);
       }
+      // \u273a COUPLE \u2014 the ensemble term, added last so it rides on top of whatever
+      // Drift and Push already asked for. Gated on the groove being active, like
+      // Push: Bypass silences the whole section.
+      try {
+        const _cg = _grOn ? _ambGroove() : null;
+        const _camt = _cg ? Math.max(0, Math.min(100, _cg.couple | 0)) : 0;
+        if (_camt > 0) {
+          let _per = 0;
+          try { _per = _ambLayerPeriodSec(E, key, layer, cfg); } catch (e) { _per = 0; }
+          if (!(_per > 0)) { try { _per = _ambEffIntervalSec(layer); } catch (e) { _per = 0; } }
+          off += _ambCoupleOffset(key, _per, _camt);
+        }
+      } catch (e) {}
       return off;
     }
     // Drift readout text: "idx/nSteps" (step division) in Unit-Sync, else the raw
@@ -49864,6 +49973,7 @@
         macro('ghost', 'Ghost', g.ghost, 'quiet in-between notes') +
         macro('rolls', 'Rolls', g.rolls, 'retrigger / roll chance') +
         macro('streak', 'Streaks', g.streak, 'scattered \u2192 notes and rests in runs') +
+        macro('couple', 'Couple', g.couple, 'layers pull together, then slip apart') +
         '</div>';
       // \u273a JITTER — the CHARACTER of the Humanize slider above (and of every
       // layer's Vel var): white = each onset lands independently, pink = 1/f, the

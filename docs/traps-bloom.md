@@ -277,6 +277,22 @@
   `kick·p/(1−decay)` > 1, deviation collapses), and kick 0.38/decay 0.55/span 46 is unsaturated but
   gives Δp ≈ 0.135 — a real effect nobody can hear. Absent/0 returns the old threshold before any
   of it is computed. `test/probe-streaks.js`.
+- **COUPLING LAYERS (`groove.couple`) FAILS BY SUCCEEDING — IF IT LOCKS, IT IS JUST `drift`.**
+  Layers are independent generators sharing only the clock and the key; Couple gives them a weak
+  Kuramoto pull, spent as a BOUNDED wobble (±`SPAN` of the layer's own period through a sine),
+  added in `_ambDriftOffset` where drift and push are already composed. The trap is that "the
+  layers came together" is the easy outcome and the WRONG one: a permanently locked ensemble is a
+  constant per-layer phase offset, which is exactly what `drift` already was. Assert BOTH
+  directions — the order parameter must rise **and** keep moving.
+  Two measured causes of unwanted lock, in the order they bit: (1) **the mean field's MAGNITUDE
+  was dropped.** Kuramoto is `dθ/dt = ω + K·r·sin(ψ−θ)`; using ψ without `r` applies full
+  restoring force toward a mean angle that is meaningless when r ≈ 0, and the ensemble locks far
+  below the K_c its spread predicts — measured r pinned at 0.894, dead still, and lowering K
+  barely moved it (0.978 → 0.894), because tuning cannot fix a wrong model. (2) **K past
+  critical.** For a rate spread that is uniform with half-width γ, `K_c = 4γ/π`; here γ ≈ 0.0078
+  so K_c ≈ 0.0099, and K_max = 0.018 locked solid. With `r` restored and K_max ≈ K_c: weak r =
+  0.362, strong r = 0.798 ranging 0.58–0.94 — entrained and still slipping. The natural-rate
+  SPREAD is what coupling competes against, so identical rates lock at any K. `test/probe-couple.js`.
 
 ### Bloom: emit, capture, freeze / Write
 

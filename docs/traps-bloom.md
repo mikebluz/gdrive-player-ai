@@ -293,6 +293,19 @@
   so K_c ≈ 0.0099, and K_max = 0.018 locked solid. With `r` restored and K_max ≈ K_c: weak r =
   0.362, strong r = 0.798 ranging 0.58–0.94 — entrained and still slipping. The natural-rate
   SPREAD is what coupling competes against, so identical rates lock at any K. `test/probe-couple.js`.
+- **`bloopsTaste` — 🎲 SURPRISE ME LEARNS FROM ✓ DONE, AND THE SIGNAL WAS ALREADY THERE.** The roll
+  samples from hardcoded priors (a macro engages at 0.7 into 10..60, a sparse die at 0.4 into
+  5..cap); those constants, like `DICE_SETS`' per-axis caps, exist because i.i.d. randomness has no
+  structure, so the only way to keep a roll playable was to keep it timid. You already roll until
+  you like something and press ✓ Done — every roll moved past is an implicit reject, the kept one a
+  positive. Learned per sampling unit: `p` (how often you keep it engaged) and `m` (how far it goes).
+  Three rules that are easy to get wrong: **a reject moves ENGAGEMENT only, never the value** ("not
+  this often" is not "wrong value", and pushing `m` away from rejects makes the model chase its own
+  tail); **the pass dice do not learn** (they re-roll every pass, so ✓ Done never judged them); and
+  **`on: 0` must be the shipped roll exactly** — `tasteDraw` returns null BEFORE touching the RNG so
+  the fallback consumes the stream in the same order and count. The store is WORKSPACE-level: taste
+  is the player's, not the layer's. The axis set is 6, not 10 — `part.rhythm.rateVar` is inside the
+  `ls` macro, so it is not a separate axis. `test/probe-taste.js`.
 
 ### Bloom: emit, capture, freeze / Write
 

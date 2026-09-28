@@ -132,6 +132,12 @@
     // with fine detail, at the SAME RMS, so the knobs keep their meaning).
     // A PARALLEL MODE — a switch to A/B against, never a replacement.
     let grooveNoise = 'white';
+    // ✺ TASTE — what 🎲 Surprise me has LEARNED from what you keep. `on` is the
+    // strength (0 = off, and off is exactly the hardcoded roll that shipped); `ax`
+    // holds a per-axis {p, m}: how often that axis is engaged and how far it goes
+    // when it is. Workspace-level ON PURPOSE — taste is the player's, not the
+    // layer's, so what you keep on one layer informs the next one you roll.
+    let bloopsTaste = { on: 0, ax: {} };
     // Accent: a metric emphasis. Notes on an accent beat (or a step flagged
     // step.accent) play at full velocity; the rest are ducked by
     // grooveAccentAmt — which keeps the accent audible even when voices sit

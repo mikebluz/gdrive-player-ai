@@ -7,6 +7,24 @@
 
 ### Measurement & testing discipline
 
+- **AN EQUALITY CHECK IS SATISFIED BY ABSENCE — so prove the thing HAPPENED before comparing.**
+  `probe-taste` asserts "at 0 the roll ignores what it learned: same seed, same draw". That passed
+  three times over three different kinds of NOTHING: the row was gated `kind:live` on a layer with
+  no material; the button reference was detached because the handler calls `V2.render(E)` and
+  rebuilds the card; and the read was aimed at `cfg.layers[0]` while ⚙ Deep stages the roll into a
+  DRAFT. Each time the paired opposite check ("turning it up must DIFFER") was the only thing that
+  caught it. Add a positive witness — here, the roll must move the layer off its pre-roll state —
+  and the comparison rests on something instead of on nothing.
+- **A PROBE MUST NOT CLICK "WHATEVER BUTTON IS IN THERE".** Walking ⚙ Deep's zones by clicking the
+  first button in each hit ↺ All to default, which zeroes every die — so the probe silently reset
+  the state it was measuring and read it back as a roll that did nothing. Open a container by its
+  OWN handle (`.v2-gzbar[data-gz=N]` → `.v2-gzbody[data-gz=N]`), never by groping for something
+  clickable.
+- **⚙ DEEP IS THREE DOORS DEEP, AND IT STAGES.** Its rows sit behind card → `.v2-genwrap`
+  (display:none until open) → `.v2-gzbody` (folded), and while it is open the layer under edit is
+  `V2.stagedOf(id)`, not `cfg.layers[id]`. A selector that finds a row there proves nothing about
+  reachability, and reading the real layer shows an unchanged record for ever.
+
 - **A PROBE'S OWN SELECTOR IS THE FIRST SUSPECT WHEN EVERYTHING FAILS AT ONCE.** Three ways this
   file has now paid for it, all of which read as "the product is broken" while the product was
   fine: (a) **ids are namespaced per engine** — `ambient-proggrp-groove` is

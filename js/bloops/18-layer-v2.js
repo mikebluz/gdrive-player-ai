@@ -6422,6 +6422,8 @@
     let R = null;
     try { R = ((E.getCfg().layers || []).find((x) => (x.id | 0) === id)) || null; } catch (e) {}
     DRAFTS.delete(id);
+    // \u273a TASTE: \u2713 Done is the POSITIVE label for whatever \ud83c\udfb2 Surprise me last rolled.
+    try { if (V2._tasteKeep) V2._tasteKeep(id, true); } catch (e) {}
     if (!R) return null;
     // IN PLACE — the layer object is what cfg.layers, the card and every map
     // keyed on it hold; non-enumerable runtime state survives the swap
@@ -6433,7 +6435,11 @@
     try { gridSeedFn(E, R); } catch (e) {}
     return R;
   }
-  function draftCancelFn(E, L) { return DRAFTS.delete(L && (L.id | 0)); }
+  function draftCancelFn(E, L) {
+    // …and \u2715 Cancel is the negative one: the roll was seen and thrown away.
+    try { if (V2._tasteKeep) V2._tasteKeep(L && (L.id | 0), false); } catch (e) {}
+    return DRAFTS.delete(L && (L.id | 0));
+  }
 
   // ── ⌸ ENTERING THE GRID SEEDS IT FROM WHAT THE LAYER ALREADY PLAYS ────
   // Without this, choosing ⌸ Grid is a SILENT LAYER: the rows ARE the material,
@@ -15584,15 +15590,117 @@
     if (which === 'take') delete L.dice;
     return true;
   }
+  // ── \u273a TASTE \u2014 \ud83c\udfb2 SURPRISE ME LEARNS WHAT YOU KEEP ──────────────────────
+  // The roll samples from HARDCODED priors: a macro engages at 0.7 and lands in
+  // 10..60, a sparse die engages at 0.4 and lands in 5..cap. Those constants (and
+  // the per-axis caps) exist because i.i.d. randomness has no structure of its own,
+  // so the only way to keep a roll playable was to keep it timid \u2014 the same
+  // ceilings-instead-of-shape problem \u273a Streaks and \u273a Couple attack from the other
+  // end. Here the fix is a SIGNAL: you already roll until you like something and
+  // then press \u2713 Done, so every roll before the keep is an implicit reject and the
+  // kept one is a positive. That is a labelled pair, free, already recorded.
+  //
+  // WHAT IS LEARNED, per sampling unit (the three macros and the dice no macro
+  // covers): `p`, how often you keep it engaged at all, and `m`, how far it goes
+  // when you do. Kept moves toward, rejected moves the ENGAGEMENT away only \u2014 a
+  // rejected roll says "not this often", it does not say the value was wrong, and
+  // pushing `m` away from rejects makes the model chase its own tail.
+  //
+  // THE PASS DICE DO NOT LEARN. They re-roll every pass, so \u2713 Done never expressed
+  // an opinion about the value one of them happened to have.
+  //
+  // `on: 0` MUST BE THE SHIPPED ROLL, EXACTLY \u2014 `tasteDraw` returns null before it
+  // touches the RNG, so the fallback below consumes the stream in the same order
+  // and the same number of times the original did. Blended in between, so the
+  // control means something and 0 still means "as it shipped".
+  const TASTE_LR = 0.25;              // toward what you kept
+  const TASTE_LR_NEG = 0.08;          // away from what you rolled past
+  const TASTE_PENDING = new Map();    // layer id -> the vector it last rolled
+  function tasteSpec() {
+    const out = {};
+    ['fl', 'ls', 'th'].forEach((k) => { out['m:' + k] = { p: 0.7, lo: 10, hi: 60 }; });
+    const MACRO_F = {};
+    ['fl', 'ls', 'th'].forEach((k) => Object.keys(DICE[k].set).forEach((f) => { MACRO_F[f] = 1; }));
+    (DICE_SETS.take || []).forEach(([f, cap]) => {
+      if (!MACRO_F[f]) out['t:' + f] = { p: 0.4, lo: 5, hi: cap };
+    });
+    return out;
+  }
+  function tasteOn() {
+    try { return Math.max(0, Math.min(100, (typeof bloopsTaste !== 'undefined' && bloopsTaste ? bloopsTaste.on : 0) | 0)); }
+    catch (e) { return 0; }
+  }
+  function tasteAx(id, sp) {
+    if (typeof bloopsTaste === 'undefined' || !bloopsTaste) return { p: sp.p, m: (sp.lo + sp.hi) / 2 };
+    if (!bloopsTaste.ax || typeof bloopsTaste.ax !== 'object') bloopsTaste.ax = {};
+    let a = bloopsTaste.ax[id];
+    if (!a || typeof a !== 'object' || !Number.isFinite(a.p) || !Number.isFinite(a.m)) {
+      a = { p: sp.p, m: (sp.lo + sp.hi) / 2 };
+      bloopsTaste.ax[id] = a;
+    }
+    return a;
+  }
+  // null = "not learning" \u2014 and it returns BEFORE drawing, so the caller's shipped
+  // path owns the RNG stream untouched.
+  function tasteDraw(id, sp, rnd) {
+    const w = tasteOn() / 100;
+    if (!(w > 0)) return null;
+    const a = tasteAx(id, sp);
+    const mid = (sp.lo + sp.hi) / 2;
+    const p = sp.p + (a.p - sp.p) * w;
+    const m = mid + (a.m - mid) * w;
+    if (!(rnd() < p)) return 0;
+    const half = (sp.hi - sp.lo) / 2;
+    return Math.round(Math.max(sp.lo, Math.min(sp.hi, m + (rnd() * 2 - 1) * half * 0.6)));
+  }
+  function tasteObserve(vec, kept) {
+    if (!vec || typeof bloopsTaste === 'undefined' || !bloopsTaste) return false;
+    const spec = tasteSpec();
+    let touched = false;
+    Object.keys(vec).forEach((id) => {
+      const sp = spec[id]; if (!sp) return;
+      const a = tasteAx(id, sp);
+      const v = vec[id] | 0, eng = (v > 0) ? 1 : 0;
+      if (kept) {
+        a.p += TASTE_LR * (eng - a.p);
+        if (eng) a.m += TASTE_LR * (v - a.m);
+      } else {
+        a.p -= TASTE_LR_NEG * (eng - a.p);
+      }
+      a.p = Math.max(0.05, Math.min(0.95, a.p));
+      a.m = Math.max(sp.lo, Math.min(sp.hi, a.m));
+      touched = true;
+    });
+    return touched;
+  }
+  // \u2713 Done / \u2715 Cancel reach this from the OTHER IIFE, which owns the drafts \u2014
+  // published rather than reimplemented there, the one-definition rule this file
+  // has paid for twice.
+  V2._tasteKeep = (id, kept) => {
+    const v = TASTE_PENDING.get(id | 0); if (!v) return false;
+    TASTE_PENDING.delete(id | 0);
+    const did = tasteObserve(v, !!kept);
+    if (did) { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} }
+    return did;
+  };
+  V2.tasteObserve = tasteObserve;
+  V2.tasteSpec = tasteSpec;
   function diceRandom(L, which) {
     if (!L) return false;
     if (which === 'take') {
       // THE MACROS ARE WHAT IS ROLLED, so a random take reads as one decision
       // per axis rather than ten — and the nine dice follow them.
       diceReset(L, 'take');
+      // the vector this roll REPLACES was rolled and never kept \u2014 that is the reject
+      const _tid = L.id | 0;
+      if (TASTE_PENDING.has(_tid)) { tasteObserve(TASTE_PENDING.get(_tid), false); }
+      const _tvec = {}, _tsp = tasteSpec();
       ['fl', 'ls', 'th'].forEach((k) => {
-        const on = Math.random() < 0.7;
-        diceApply(L, k, on ? Math.round(10 + Math.random() * 50) : 0);
+        const sid = 'm:' + k;
+        let v = tasteDraw(sid, _tsp[sid], Math.random);
+        if (v === null) { const on = Math.random() < 0.7; v = on ? Math.round(10 + Math.random() * 50) : 0; }
+        diceApply(L, k, v);
+        _tvec[sid] = v;
       });
       // …and the four take dice NO MACRO covers (they shape WHICH notes, not
       // how many): Scatter, Pitch vary, Vary and Rate var. Rolled sparsely —
@@ -15601,8 +15709,13 @@
       ['fl', 'ls', 'th'].forEach((k) => Object.keys(DICE[k].set).forEach((f) => { MACRO_F[f] = 1; }));
       DICE_SETS.take.forEach(([f, cap]) => {
         if (MACRO_F[f]) return;
-        setPath(L, f, (Math.random() < 0.4) ? Math.round(5 + Math.random() * (cap - 5)) : 0);
+        const sid = 't:' + f;
+        let v = tasteDraw(sid, _tsp[sid], Math.random);
+        if (v === null) v = (Math.random() < 0.4) ? Math.round(5 + Math.random() * (cap - 5)) : 0;
+        setPath(L, f, v);
+        _tvec[sid] = v;
       });
+      TASTE_PENDING.set(_tid, _tvec);
       return true;
     }
     (DICE_SETS.pass || []).forEach(([f, cap]) => {
@@ -15619,7 +15732,23 @@
           ' title="Put every one of these back to 0 \u2014 ' + esc(what) + ' as written">\u21ba All to default</button>' +
         '<button type="button" class="ambient-seg v2-dall" data-da="' + which + ':rand"' +
           ' title="Roll a fresh, playable set \u2014 each one is often off, and none goes to an extreme">\ud83c\udfb2 Surprise me</button>' +
-      '</span></div>';
+      '</span></div>' +
+    // \u273a TASTE \u2014 only under the TAKE dice, because only those are what \u2713 Done
+    // keeps an opinion about; the pass dice re-roll every pass.
+    ((which !== 'take') ? '' : (() => {
+      const on = (typeof bloopsTaste !== 'undefined' && bloopsTaste) ? Math.max(0, Math.min(100, bloopsTaste.on | 0)) : 0;
+      const n = (typeof bloopsTaste !== 'undefined' && bloopsTaste && bloopsTaste.ax) ? Object.keys(bloopsTaste.ax).length : 0;
+      return '<div class="ambient-ctrl v2-tasterow" data-v2when="kind:live">' +
+        '<label for="v2-taste">Taste</label>' +
+        '<input type="range" class="ambient-sl v2-taste" id="v2-taste" min="0" max="100" step="1" value="' + on + '"' +
+          ' title="How much \ud83c\udfb2 Surprise me leans on what you KEEP. Every roll you move past is a quiet no; \u2713 Done is a yes. 0 = the roll as it shipped, ignoring all of it.">' +
+        '<span class="ambient-hint v2-tastehint">' +
+          (on > 0 ? esc('leaning on ' + n + ' axis' + (n === 1 ? '' : 'es') + ' you have taught it')
+                  : 'off \u2014 rolls as it shipped') +
+        '</span>' +
+        '<button type="button" class="ambient-seg v2-tasteforget" title="Forget everything \ud83c\udfb2 Surprise me has learned and go back to the shipped priors.">\u21ba Forget</button>' +
+      '</div>';
+    })());
   // ONE MACRO ROW. Deliberately not a `.v2-f`: that handler writes ONE field,
   // and this writes the three the macro stands for, through `diceApply`.
   const dmRow = (L, k) => {
@@ -21844,6 +21973,23 @@
         // finger: the row is updated in place (never a re-render — that
         // replaces the slider mid-drag, the documented Humanize bug) and the
         // drawing is redrawn from the copy the panel is editing.
+        // \u273a TASTE strength \u2014 a workspace value, not a layer field, so it does not
+        // go through the `.v2-f` path (that writes onto the layer).
+        const tsl = ev.target.closest && ev.target.closest('.v2-taste');
+        if (tsl) {
+          const v = Math.max(0, Math.min(100, parseInt(tsl.value, 10) || 0));
+          if (typeof bloopsTaste !== 'undefined' && bloopsTaste) bloopsTaste.on = v;
+          const hint = tsl.parentElement && tsl.parentElement.querySelector('.v2-tastehint');
+          if (hint) {
+            const n = (typeof bloopsTaste !== 'undefined' && bloopsTaste && bloopsTaste.ax)
+              ? Object.keys(bloopsTaste.ax).length : 0;
+            hint.textContent = v > 0
+              ? ('leaning on ' + n + ' axis' + (n === 1 ? '' : 'es') + ' you have taught it')
+              : 'off \u2014 rolls as it shipped';
+          }
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
         const dm = ev.target.closest && ev.target.closest('.v2-dm');
         if (dm) {
           const ctx = layerOf(dm); if (!ctx) return;
@@ -25311,6 +25457,13 @@
           return;
         }
         // ↺ ALL TO DEFAULT / 🎲 SURPRISE ME — over one set of dice
+        const tsf = t.closest('.v2-tasteforget');
+        if (tsf) {
+          if (typeof bloopsTaste !== 'undefined' && bloopsTaste) { bloopsTaste.ax = {}; }
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          h._sig = ''; V2.render(E);
+          return;
+        }
         const da = t.closest('.v2-dall');
         if (da) {
           const ctx = layerOf(da); if (!ctx) return;

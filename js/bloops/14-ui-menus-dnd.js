@@ -436,6 +436,13 @@
         grooveAccentEvery = Number.isFinite(g.accentEvery) ? g.accentEvery : 0;
         grooveAccentAmt   = Number.isFinite(g.accentAmt)   ? g.accentAmt   : 35;
         grooveNoise       = (g.noise === 'pink') ? 'pink' : 'white';   // absent = white
+      }
+      {
+        // ✺ TASTE — absent means never taught, which is the shipped roll.
+        const t = w.taste;
+        bloopsTaste = (t && typeof t === 'object' && typeof t.ax === 'object')
+          ? { on: Math.max(0, Math.min(100, t.on | 0)), ax: t.ax }
+          : { on: 0, ax: {} };
         if (typeof refreshGrooveUI === 'function') { try { refreshGrooveUI(); } catch (e) {} }
       }
       gridColumns     = Math.min(8, Math.max(1, (w.gridColumns | 0) || 8));

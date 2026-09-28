@@ -1038,6 +1038,8 @@
             accentAmt:   grooveAccentAmt,
             noise:       grooveNoise,   // 'white' (default) | 'pink'
           },
+          // ✺ What 🎲 Surprise me has learned. Absent = never taught anything.
+          taste: (bloopsTaste && (bloopsTaste.on | 0) ? bloopsTaste : undefined),
           gridColumns,
           gridRows,
           chordMode: !!chordMode,

@@ -207,6 +207,20 @@
   `v2-ftt-<tab>`, kept across rebuilds with the `v2-so-*` folds). Off-tab rows hide by CSS `!important`;
   inline display stays `gateRow`'s. Tab counts, the "don't apply" list, Tuned chips and the recipe warning
   are all filled in `genSync` AFTER gating — a new Deep row needs only `ftrows` + a `data-v2when`.
+- **A ◐ Loop layer bypasses everything a note relies on, so each safety net must be re-granted.** A cold
+  library sample is silent "that once" — one NOTE normally, a whole 30 s PASS for a loop — and the picker
+  stores a bare id, so warm-on-select (`sample:` prefix) never fired: warm in the emit, and JOIN LATE
+  (start mid-pass with an offset) rather than wait a pass. The chord choke (`_ambNoteChoke`) cut a
+  recording at the first change: loop notes carry `_loopLayer`. Its cycle IS the loop (`cycSecOf` →
+  `loopInfo().per`); `notesFor` returns its pieces for the drawing only — the emit never uses them.
+- **`_ambSyncControls` RE-RENDERS EVERY v2 CARD** (`_ambSyncLayerUnits` → `_v2RenderSeam` → `V2.render`, and
+  each card drawing re-runs the whole normalizer via `getCfg`). Measured 1.2 s of the 1.3 s between tapping
+  ✺ Groove and its menu — several seconds on a phone. A surface that only needs its OWN readouts refreshed
+  wraps the call in `_ambSkipV2Render` (the ✺ popover does); profile a slow tap with CDP `Profiler` under a
+  real `touchscreen.tap` — these cards act on pointerdown, so `el.click()` measures nothing.
+  When a repaint MUST reach every card (✺ Variation On/Off), wrap it in `_ambWithCfgHold(E, fn)`: one
+  normalize for the whole synchronous repaint (1.9 s → 0.13 s). Only around code that WRITES nothing —
+  inside the hold `getCfg()` returns the pinned object without re-normalizing.
 - **Deep or ✺ Live: trace the seed, not the label.** Anything drawn from `seedBase` is per TAKE (Deep)
   unless `part.vary` is on; per-pass means seeded on play time, chord occurrence, or the shared stream.
 
@@ -1289,6 +1303,27 @@
   row was built, because none of those rebuild it. Hold's hint resolves `cycle / Steps × Hold` into a
   time this way (2026-09-18); `querySelectorAll`, never `querySelector` — a field can have two
   controls on one card and the copy you are not touching is the one that goes stale.
+- **A SCOPED ⚙ DEEP DRAFT (◫ Generate for: a bar / a change) STAGES THE REGION'S EFFECTIVE PART, not the
+  layer's.** `V2.draftOpen(E, L, {key, nm})` puts `partWithRules(part, ruleb[key])` in the staged copy, so
+  every row reads and writes that stretch with no scope logic of its own; ✓ Done diffs it against the
+  opening snapshot and merges only CHANGED, `BAR_RULE_F`-listed fields into `ruleb[key]` — never copying
+  the staged layer over the real one. Anything that draws or plays the draft must go through
+  `V2.scopedView(S)` (the composite) — `stageVizDraw` and `previewLayer` do; a new consumer that reads
+  the staged copy directly will show the region's rules smeared over the whole part. Rows a region cannot
+  hold are disabled by `genScopeSync`, and anything still lost is named in the ✓ Done toast.
+  **Only a LIVE or an EMPTY part scopes** (`V2.scopeOK`): `ruleb` shapes what the rules make, so over a
+  recorded part it drew notes in the summary above a silent part. An EMPTY part scopes FRESH — the draft
+  commits whole and `silenceOutside` writes every other bar (and cut piece) as `{rhythm:{kind:'chance',
+  chance:0}}`, one rule per BAR so scoping a bar later hits its exact key. Silence composes safely with an
+  overlapping rule: `composite` keeps each rule's notes only inside its own region.
+  **A scoped ✓ Done TRIMS THE PART TO THE STRETCH** (user: "editing the content down to just what's been
+  scoped") — what the ✓ Done writes drawing shows is what plays. `claimStretch` gives the stretch a rule
+  of its own (else it is still whole-part content, and the NEXT scoped Done silences it), then
+  `silenceOutside` silences whole-part content outside it — never overwriting a stretch that already has
+  a rule, so a part builds bar by bar. A silent stretch opens on the part's material (`silentHere`).
+  **A stretch's NEW TAKE lives in `ruleb[key].take`** (an offset on the part's take), not `takeb` — the
+  emitter calls `notesFor` with no pin, so `takeb` is drawn but never PLAYED; `composite` reads `ov.take`
+  in every path. A scoped draft's `part.take` is the region's take, and the diff writes the offset.
 - **A STAGED PANEL GATES FROM ITS CLONE, so a change made to the real layer below does not reach it**
   — and reads as a gate leak (a row gated `rhythm:euclid` still showing after switching to `ground`).
   `✓ Done` is the way out; `.v2-genbtn` may not close it once a rebuild has restored `GENPOP`. Check

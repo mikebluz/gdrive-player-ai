@@ -320,6 +320,13 @@
   flight log carries `lock=` (protected-data notifications), `low=` (ring low-water), `spl=` and
   `prod=`. **The previous session's log is kept as `bloops-flight-prev.json`** — the glitchy session
   is almost always the one before the relaunch that overwrote it.
+- **`capacitor://` ANSWERS `fetch` WITH `ok:false, status:0` AND A FULL BODY.** Anything that checks `res.ok`
+  silently fails in the app and works on the web — Tone's `ToneAudioBuffer.load` did, so every manifest
+  sample (Tone.Sampler) was silent on the phone. `00-native-audio.js` replaces that loader under the
+  scheme (status ≥ 400 or an empty body = failure). A new loader: check the BYTES, never `ok`. Repro it
+  in the simulator with a baked `bloopsauto.js` — mute by `Tone.getDestination().output.disconnect()`
+  (volume −∞ also silenced the Bloom mix at the input), and pull an analyser through a 0-gain node to
+  `raw.destination` or WebKit never renders it.
 - **THE iOS SIMULATOR PLAYS THROUGH THE MAC'S SPEAKERS.** A soak build left running there autoplays
   the user's project on their laptop with no visible source (reported: "I hear blooms playing and
   can't find where"). Every simulator run ends with `simctl terminate` + `simctl shutdown`.

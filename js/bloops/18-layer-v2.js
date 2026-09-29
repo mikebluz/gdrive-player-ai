@@ -2237,6 +2237,10 @@
         // shown, so a downgrade can never make the row claim a Character this
         // build does not have — and a stamp with no fields left is no stamp.
         if (typeof src.char === 'string' && PRESET_BY_ID[src.char] && Object.keys(ov).length) ov.char = src.char;
+        // ◫ A STRETCH'S OWN TAKE — an offset on the part's take, so 🎲 New take in a
+        // scoped Generate re-rolls just this stretch and PLAYBACK hears it (a
+        // `takeb` pin is audition-only; `composite` reads this one in every path).
+        if (Number.isFinite(src.take) && (src.take | 0) !== 0) ov.take = Math.max(-999999, Math.min(999999, src.take | 0));
         return Object.keys(ov).length ? ov : undefined;
       });
       if (rb2) p.ruleb = rb2; else delete p.ruleb;
@@ -4180,6 +4184,16 @@
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
   function notesFor(L, ctx) {
+    // ◐ A LOOP'S NOTES ARE ITS PIECES — drawn one row per SOURCE piece, so the cut
+    // reads at a glance (in order climbs, back to front falls, shuffled scatters).
+    // They are a picture of the pass: the emitter plays the recording itself and
+    // never takes these through the note pipeline (swing, accent… mean nothing here).
+    if (L && L.instrument && L.instrument.voice === 'loop') {
+      const li = loopInfo(L); if (!li) return [];
+      const cs = (ctx && Number.isFinite(ctx.cycleStart)) ? ctx.cycleStart : 0;
+      return loopPieces(L, li).map((p) => ({ at: cs + p.at, freq: li.f0 * Math.pow(2, p.j / 12),
+        durMs: p.dur * 1000, dur: p.dur, vel: 1, loopPiece: p }));
+    }
     // THE LAYER NAMES ITSELF TO THE HARMONY while it asks (17-ambient's
     // `_ambSaltLayerNow`): the per-layer Salt follow rules — Up to, How often
     // — read it, and audio, drawing and outlines all come through here, so
@@ -4392,8 +4406,9 @@
       // share it, so two bars retaken together still cost one roll between them.
       const groups = {};
       keys.forEach((k) => {
-        const t = has(pin.bars, k) ? (pin.bars[k] | 0) : (pin.base | 0);
         const ov = rb[k] || null;
+        const t = has(pin.bars, k) ? (pin.bars[k] | 0)
+          : ((pin.base | 0) + ((ov && Number.isFinite(ov.take)) ? (ov.take | 0) : 0));
         const sig = t + '|' + (ov ? JSON.stringify(ov) : '');
         const g2 = groups[sig] || (groups[sig] = { t, ov, keys: [] });
         g2.keys.push(k);
@@ -6396,7 +6411,63 @@
   // SPEED is v1's own rate MULTIPLIER (`_ambRateMult` — absent or 1 is an
   // exact FP identity); it scales the cycle rather than the note rate, which
   // is what "play this part half as fast" means when the part IS the cycle.
+  // ── ◐ A LOOP LAYER'S CYCLE IS ITS LOOP (2026-09-29, user: "nothing plays … no
+  // content on the visualizer … create some kind of trigger for the loop that
+  // syncs with the area"). One pass = the recording at the length it actually
+  // PLAYS (`_sampleLoopRate`: tempo-matched, or free at rate 1), anchored on the
+  // shared grid like every layer — so a tempo loop lands on bars and a nature bed
+  // runs at its own length. The emitter, the drawing and the cycle all ask here.
+  function loopInfo(L) {
+    const lid = String((L && L.instrument && L.instrument.loopId) || '');
+    if (!lid) return null;
+    let secs = 0, rate = 1, f0 = 261.6255653005986;     // C4, the sampler's own fallback root
+    try {
+      const meta = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(lid) : null;
+      if (meta && Number.isFinite(meta.seconds) && meta.seconds > 0) secs = meta.seconds;
+      if (meta && typeof _sampleLoopRate === 'function') rate = _sampleLoopRate(meta);
+      if (typeof _ambSampleRootMidi === 'function' && typeof Tone !== 'undefined') {
+        f0 = Tone.Frequency(_ambSampleRootMidi(lid), 'midi').toFrequency();
+      }
+    } catch (e) {}
+    if (!(secs > 0)) return null;
+    return { lid, secs, rate, per: secs / (rate > 0 ? rate : 1), f0 };
+  }
+  // THE CUT of one pass: pieces relative to the pass start, each `{ j, at, dur,
+  // off, rev }` in OUTPUT seconds (the voice scales offsets by its rate). No
+  // `slice` = one piece, the whole recording. ✂ Slice draws come from the TAKE's
+  // seed, so every pass is the same cut and only 🎲 New take re-cuts it.
+  function loopPieces(L, info) {
+    const sc = L.slice || null, per = info.per;
+    const n = sc ? Math.max(1, Math.min(32, sc.n | 0)) : 1;
+    const gate = sc && Number.isFinite(sc.gate) ? Math.max(0.1, Math.min(1, sc.gate / 100)) : 1;
+    if (!sc || (n === 1 && !(sc.rev > 0) && !(sc.skip > 0) && gate >= 1)) {
+      return [{ j: 0, at: 0, dur: per, off: 0, rev: false, whole: true }];
+    }
+    let sd = ((seedIdOf(L) * 9176) ^ ((takeOf(L) | 0) * 2246822519) ^ 0x51CE) >>> 0;
+    const rnd = () => {                                   // mulberry32
+      sd = (sd + 0x6D2B79F5) >>> 0; let t = sd;
+      t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const ord = []; for (let j = 0; j < n; j++) ord.push(j);
+    if (sc.order === 'back') ord.reverse();
+    else if (sc.order === 'shuffle') {
+      for (let j = n - 1; j > 0; j--) { const r = Math.floor(rnd() * (j + 1)); const t = ord[j]; ord[j] = ord[r]; ord[r] = t; }
+    }
+    const revP = (sc.rev | 0) / 100, skipP = (sc.skip | 0) / 100;
+    const revs = ord.map(() => rnd() < revP), drops = ord.map(() => rnd() < skipP);
+    const pl = per / n, out = [];
+    for (let j = 0; j < n; j++) {
+      if (drops[j]) continue;
+      out.push({ j: ord[j], at: j * pl, dur: pl * gate, off: ord[j] * pl, rev: revs[j], whole: false });
+    }
+    return out;
+  }
   function cycSecOf(L, cfg) {
+    if (L && L.instrument && L.instrument.voice === 'loop') {
+      const li = loopInfo(L);
+      if (li) return Math.max(0.05, li.per);
+    }
     let mult = 1;
     try { if (typeof _ambRateMult === 'function') mult = _ambRateMult(L) || 1; } catch (e) {}
     return ((L.part.clock === 'free') ? Math.max(0.05, (L.part.ms || 2000) / 1000)
@@ -6418,12 +6489,139 @@
   // that rely on normalize behave exactly as they do on a real layer. The map
   // is transient view state — never a field on the layer (`_soloLane` trap).
   const DRAFTS = new Map();
-  function draftOpenFn(E, L) {
+  // ── SCOPED GENERATE: A BAR OR A CHANGE OF THE PART (2026-09-29, user:
+  // "generation needs to be able to be scoped to bar and part … generate content
+  // for a subsection (bar, change) of a part for a layer at the Generate level").
+  // The per-region RULES already exist (`part.ruleb`, played by `composite`); this
+  // puts ⚙ Deep in front of them. A scoped draft's staged part IS the region's
+  // EFFECTIVE part (`partWithRules`), so every row shows and edits that stretch's
+  // values with no row knowing about scope; ✓ Done writes only what CHANGED, and
+  // only what `ruleb` can hold (`BAR_RULE_F`), into `ruleb[key]` — the part's own
+  // rules and every other region are untouched. The drawing and ▶ Preview show the
+  // COMPOSITE (`scopedViewFn`): the whole part with just that stretch replaced.
+  function draftOpenFn(E, L, scope) {
     const id = L && (L.id | 0); if (!L || DRAFTS.has(id)) return false;
-    DRAFTS.set(id, { S: JSON.parse(JSON.stringify(L)) });
+    const d = { S: JSON.parse(JSON.stringify(L)) };
+    // ONLY A GENERATING PART CAN BE SCOPED: `ruleb` shapes what the RULES make, and a
+    // recorded part (a new layer's empty one included) plays its stored notes — so a
+    // stretch's rules there drew "14 onsets" in the summary over a silent part.
+    if (scope && scope.key && regParse(scope.key) && L.part && scopeOKFn(L)) {
+      const rb = (L.part.ruleb && L.part.ruleb[scope.key]) || null;
+      // A STRETCH LEFT SILENT by an earlier scoped ✓ Done opens on the PART's own
+      // material, not on the silence — so the drawing shows what ✓ Done will bring
+      // back, and the diff against the silent rule writes it.
+      const silentHere = !!(rb && rb.rhythm && rb.rhythm.kind === 'chance' && !((rb.rhythm.chance | 0) > 0));
+      const eff = JSON.parse(JSON.stringify(partWithRules(L.part, silentHere ? null : rb)));
+      delete eff.ruleb; delete eff.takeb;
+      // FRESH: the part has nothing yet (user: "user should not have to generate a
+      // full content first; initial generation should be able to be scoped"). The
+      // Material picked here becomes the PART's rules and every other bar is written
+      // silent — so the first thing generated is exactly this stretch.
+      d.scope = { key: String(scope.key), nm: String(scope.nm || regLabel(scope.key)), fresh: L.part.kind !== 'live' };
+      if (!d.scope.fresh) eff.take = ((L.part.take | 0) + ((rb && Number.isFinite(rb.take)) ? (rb.take | 0) : 0));
+      d.orig = JSON.parse(JSON.stringify(L));
+      d.base = JSON.parse(JSON.stringify(silentHere ? Object.assign(partWithRules(L.part, rb), { take: eff.take }) : eff));
+      delete d.base.ruleb; delete d.base.takeb;
+      d.S.part = eff;
+    }
+    DRAFTS.set(id, d);
     try { E.getCfg(); } catch (e) {}
     return true;
   }
+  const draftScopeFn = (id) => { const d = DRAFTS.get(id | 0); return (d && d.scope) ? d.scope : null; };
+  // A part can be scoped when it GENERATES, or when it is EMPTY (nothing to lose —
+  // the scoped draft then builds it). A recorded take with notes is not: its notes
+  // are the content, and a stretch's rules would have nothing to act on.
+  const scopeOKFn = (L) => !!(L && L.part && (L.part.kind === 'live' ||
+    (L.part.kind === 'recorded' && !((L.part.notes || []).length))));
+  // SILENCE OUTSIDE A SCOPE, one rule per BAR (and per remaining piece of a bar the
+  // scope cuts), so scoping a bar later lands on that bar's own key and replaces it.
+  // `chance` at 0 on the chance rhythm makes no onsets — a stretch rule that exists
+  // already (`BAR_RULE_F`), so silence needs no new field.
+  const SILENT_RULE = { rhythm: { kind: 'chance', chance: 0 } };
+  // A SCOPED ✓ DONE CLAIMS ITS STRETCH: with no rule of its own it would still be
+  // playing the WHOLE-PART content, and the next scoped ✓ Done (which silences the
+  // whole-part content outside ITS stretch) would silence it too. The claim states
+  // what it already plays — the part's rhythm kind — so the sound does not change.
+  function claimStretch(part, key) {
+    if (!part) return;
+    const rb = part.ruleb = (part.ruleb && typeof part.ruleb === 'object') ? part.ruleb : {};
+    const own = rb[key];
+    if (own && typeof own === 'object' && Object.keys(own).length) return;
+    rb[key] = { rhythm: { kind: String((part.rhythm && part.rhythm.kind) || 'pulse') } };
+  }
+  function silenceOutside(part, key) {
+    const r = regParse(key); if (!r || !part) return;
+    const top = Math.max(1, Math.round(Math.max(0.125, +part.bars || 1) * SPB));
+    const rb = part.ruleb = (part.ruleb && typeof part.ruleb === 'object') ? part.ruleb : {};
+    // What goes silent is the part's WHOLE-PART content outside the scope. A
+    // stretch that already has its own rules was generated on purpose and stays —
+    // so a part can be built bar by bar. Its key is never overwritten, and where
+    // it merely OVERLAPS a silent piece it still plays: `composite` keeps each
+    // rule's notes inside its own region, and silence contributes none.
+    for (let s0 = 0; s0 < top; s0 += SPB) {
+      const e0 = Math.min(s0 + SPB, top);
+      const pieces = [];
+      if (s0 < r.a) pieces.push([s0, Math.min(e0, r.a)]);
+      if (r.b < e0) pieces.push([Math.max(s0, r.b), e0]);
+      pieces.forEach(([a, b]) => { const k2 = regKey(a, b); if (b > a && !rb[k2]) rb[k2] = JSON.parse(JSON.stringify(SILENT_RULE)); });
+    }
+  }
+  // Which ⚙ Deep field a region can hold — the same whitelist normalize enforces.
+  function scopableFn(path) {
+    const m = /^part\.(rhythm|pitch|shape)\.([A-Za-z0-9]+)$/.exec(String(path || ''));
+    return !!(m && BAR_RULE_F[m[1]] && BAR_RULE_F[m[1]][m[2]]);
+  }
+  // What a scoped draft changed: `keep` (per group, storable) and `dropped` (named
+  // fields a region cannot hold — reported, never silently lost).
+  function scopeDiffOf(d) {
+    const keep = {}, dropped = [];
+    const J = (v) => JSON.stringify(v === undefined ? null : v);
+    const P = d.S.part || {}, B = d.base || {};
+    ['rhythm', 'pitch', 'shape'].forEach((g) => {
+      const a = P[g] || {}, b = B[g] || {};
+      new Set(Object.keys(a).concat(Object.keys(b))).forEach((f) => {
+        if (J(a[f]) === J(b[f])) return;
+        if (a[f] !== undefined && scopableFn('part.' + g + '.' + f)) (keep[g] = keep[g] || {})[f] = JSON.parse(J(a[f]));
+        else dropped.push(g + ' ' + f);
+      });
+    });
+    if ((P.take | 0) !== (B.take | 0)) keep.$take = (P.take | 0) - (((d.orig && d.orig.part && d.orig.part.take) | 0));
+    new Set(Object.keys(P).concat(Object.keys(B))).forEach((k) => {
+      if (k === 'rhythm' || k === 'pitch' || k === 'shape' || k === 'take') return;
+      if (J(P[k]) !== J(B[k])) dropped.push(k);
+    });
+    new Set(Object.keys(d.S).concat(Object.keys(d.orig || {}))).forEach((k) => {
+      if (k === 'part') return;
+      if (J(d.S[k]) !== J((d.orig || {})[k])) dropped.push(k);
+    });
+    return { keep, dropped };
+  }
+  function scopeMerge(part, key, keep) {
+    const rb = part.ruleb = (part.ruleb && typeof part.ruleb === 'object') ? part.ruleb : {};
+    const cur = rb[key] = (rb[key] && typeof rb[key] === 'object') ? rb[key] : {};
+    Object.keys(keep).forEach((g) => {
+      if (g === '$take') { if (keep.$take) cur.take = keep.$take; else delete cur.take; return; }
+      cur[g] = Object.assign({}, cur[g] || {}, keep[g]);
+    });
+  }
+  // The staged layer AS IT WILL PLAY — for a scoped draft, the original layer with
+  // the region's pending rules merged in; anything else, the layer itself.
+  function scopedViewFn(L) {
+    const d = L && DRAFTS.get(L.id | 0);
+    if (!d || !d.scope || d.S !== L || !d.orig) return L;
+    if (d.scope.fresh) {
+      const F = JSON.parse(JSON.stringify(L));
+      if (F.part && F.part.kind === 'live') silenceOutside(F.part, d.scope.key);
+      return F;
+    }
+    const C = JSON.parse(JSON.stringify(d.orig));
+    try { scopeMerge(C.part, d.scope.key, scopeDiffOf(d).keep); } catch (e) {}
+    try { silenceOutside(C.part, d.scope.key); } catch (e) {}
+    return C;
+  }
+  let LAST_SCOPE = null;
+
   const draftOfFn = (L) => !!(L && DRAFTS.has(L.id | 0));
   const stagedOfFn = (id) => { const d = DRAFTS.get(id | 0); return d ? d.S : null; };
   const isStagedFn = (L) => !!(L && DRAFTS.has(L.id | 0) && DRAFTS.get(L.id | 0).S === L);
@@ -6435,6 +6633,31 @@
     // \u273a TASTE: \u2713 Done is the POSITIVE label for whatever \ud83c\udfb2 Surprise me last rolled.
     try { if (V2._tasteKeep) V2._tasteKeep(id, true); } catch (e) {}
     if (!R) return null;
+    if (d.scope && d.scope.fresh) {
+      // FRESH: the draft built the part — keep all of it, then silence the rest
+      Object.keys(R).forEach((k) => { delete R[k]; });
+      Object.assign(R, JSON.parse(JSON.stringify(d.S)));
+      const built = !!(R.part && R.part.kind === 'live');
+      if (built) { claimStretch(R.part, d.scope.key); silenceOutside(R.part, d.scope.key); }
+      LAST_SCOPE = { nm: d.scope.nm, fresh: true, built, wrote: 0, dropped: [] };
+      try { E.getCfg(); } catch (e) {}
+      try { gridSeedFn(E, R); } catch (e) {}
+      return R;
+    }
+    if (d.scope) {
+      // ONLY THE STRETCH: the layer keeps everything it had; the region gains
+      // the rules that changed. What a region cannot hold is reported by name.
+      const df = scopeDiffOf(d);
+      // ✓ DONE WRITES WHAT THE DRAWING SHOWED (user: "it should be editing the
+      // content down to just what's been scoped"): the stretch, as edited, IS the
+      // part now — everything outside it is silent.
+      LAST_SCOPE = { nm: d.scope.nm, dropped: df.dropped, retook: df.keep.$take !== undefined, trimmed: true,
+                     wrote: Object.keys(df.keep).reduce((n, g) => n + (g === '$take' ? 0 : Object.keys(df.keep[g]).length), 0) };
+      if (R.part) { scopeMerge(R.part, d.scope.key, df.keep); claimStretch(R.part, d.scope.key); silenceOutside(R.part, d.scope.key); }
+      try { E.getCfg(); } catch (e) {}
+      return R;
+    }
+    LAST_SCOPE = null;
     // IN PLACE — the layer object is what cfg.layers, the card and every map
     // keyed on it hold; non-enumerable runtime state survives the swap
     Object.keys(R).forEach((k) => { delete R[k]; });
@@ -6777,78 +7000,53 @@
     // Played at its RECORDED ROOT so `playbackRate` is 1 — the one thing that must not
     // happen to a loop is being transposed by the note it is triggered with.
     if (L.instrument.voice === 'loop') {
-      const lid = String(L.instrument.loopId || '');
-      let secs = 0, rate = 1, f0 = 261.6255653005986;    // C4, the sampler's own fallback root
-      try {
-        const meta = (lid && typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(lid) : null;
-        if (meta && Number.isFinite(meta.seconds) && meta.seconds > 0) secs = meta.seconds;
-        // THE SAME RATE THE VOICE PLAYS AT (`_sampleLoopRate`, the one rule): a loop
-        // with a stated tempo is matched to the project, one without (`bpm: null`)
-        // runs free at rate 1. Repeating at the RECORDED length while the voice ran
-        // tempo-matched left a gap or an overlap on every pass.
-        if (meta && typeof _sampleLoopRate === 'function') rate = _sampleLoopRate(meta);
-        if (typeof _ambSampleRootMidi === 'function' && typeof Tone !== 'undefined') {
-          f0 = Tone.Frequency(_ambSampleRootMidi(lid), 'midi').toFrequency();
-        }
-      } catch (e) {}
-      // NOTHING CHOSEN, OR A FILE THE LIBRARY DOES NOT KNOW: play nothing and say so
-      // by playing nothing — a guessed substitute would be worse than silence.
-      if (!lid || !(secs > 0)) { st.lastAt = to; return; }
-      const per = secs / (rate > 0 ? rate : 1);            // the length it actually PLAYS
-      const li = E.laneIdx ? E.laneIdx() : undefined, type = 'sample:' + lid;
-      // FULL LEVEL, SHORT TAIL. Unset, the note defaults (sustain 50%, 1.4 s
-      // release) sagged a held recording 6 dB a tenth of a second in, and would
-      // smear every slice into the next.
+      // NOTHING CHOSEN, OR A FILE THE LIBRARY DOES NOT KNOW: play nothing — a
+      // guessed substitute would be worse than silence.
+      const info = loopInfo(L);
+      if (!info) { st.lastAt = to; return; }
+      // WARM IT. Library samples load lazily and a cold one is silent "that once";
+      // for a note that is one note, for a 30 s loop it was the whole pass. The
+      // picker's value has no `sample:` prefix, so the app's warm-on-select never
+      // saw it. Idempotent (the getter caches), so every tick may ask.
+      let smp = null;
+      try { if (typeof ensureSampleLoaded === 'function') smp = ensureSampleLoaded(info.lid); } catch (e) {}
+      const warm = !!(smp && smp.loaded);
+      const per = info.per, li = E.laneIdx ? E.laneIdx() : undefined, type = 'sample:' + info.lid;
+      // FULL LEVEL, SHORT EDGES. The note defaults (sustain 50%, 1.4 s release)
+      // sagged a held recording 6 dB a tenth of a second in and smeared slices.
       const env = { attack: 4, decay: 10, sustain: 100, release: 100 };
-      // ✂ SLICE (⚙ Deep): cut each pass into `n` equal pieces and play them in an
-      // order, some backwards, some dropped, each gated to a share of its length.
-      // Every draw comes from the TAKE's seed, so a pass repeats the one before it
-      // and only 🎲 New take re-cuts it (the Deep side of the Deep/Live rule).
-      const sc = L.slice || null;
-      const n = sc ? Math.max(1, Math.min(32, sc.n | 0)) : 1;
-      const gate = sc && Number.isFinite(sc.gate) ? Math.max(0.1, Math.min(1, sc.gate / 100)) : 1;
-      const plain = !sc || (n === 1 && !(sc.rev > 0) && !(sc.skip > 0) && gate >= 1);
-      if (plain) {
-        let k = Math.max(0, Math.ceil((from - st.startAt) / per - 1e-6));
-        for (let g = 0; g < 32; g++) {
-          const at0 = st.startAt + k * per;
-          if (at0 >= to) break;
-          if (at0 >= from - 1e-6) {
-            try { playNote(f0, Object.assign({ type, volume: lvl }, env), Math.round(per * 1000), at0, dest, undefined, li); } catch (e) {}
-          }
-          k++;
-        }
-        st.lastAt = to;
-        return;
-      }
-      let sd = ((seedIdOf(L) * 9176) ^ ((takeOf(L) | 0) * 2246822519) ^ 0x51CE) >>> 0;
-      const rnd = () => {                                   // mulberry32
-        sd = (sd + 0x6D2B79F5) >>> 0; let t = sd;
-        t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-      const ord = []; for (let j = 0; j < n; j++) ord.push(j);
-      if (sc.order === 'back') ord.reverse();
-      else if (sc.order === 'shuffle') {
-        for (let j = n - 1; j > 0; j--) { const r = Math.floor(rnd() * (j + 1)); const t = ord[j]; ord[j] = ord[r]; ord[r] = t; }
-      }
-      const revP = (sc.rev | 0) / 100, skipP = (sc.skip | 0) / 100;
-      const revs = ord.map(() => rnd() < revP), drops = ord.map(() => rnd() < skipP);
-      const pl = per / n;                                   // one piece, as heard
-      let k = Math.max(0, Math.floor((from - st.startAt) / per));
+      const pieces = loopPieces(L, info);
+      if (!st.loopDone) st.loopDone = new Set();
+      let k = Math.max(0, Math.floor((from - st.startAt) / per - 1e-9));
+      // forget passes that are behind us
+      if (st.loopDone.size > 128) st.loopDone.forEach((t) => { if ((parseInt(t, 10) | 0) < k - 1) st.loopDone.delete(t); });
       for (let g = 0; g < 256; g++) {
         const passAt = st.startAt + k * per;
         if (passAt >= to) break;
-        for (let j = 0; j < n; j++) {
-          const at0 = passAt + j * pl;
+        for (let pi = 0; pi < pieces.length; pi++) {
+          const p = pieces[pi], at0 = passAt + p.at, tag = k + ':' + pi;
           if (at0 >= to) break;
-          if (at0 < from - 1e-6 || drops[j]) continue;
-          // offset/length are OUTPUT seconds — the voice scales them by its rate
-          try {
-            playNote(f0, Object.assign({ type, volume: lvl, sampleOffsetSec: ord[j] * pl, sliceDurSec: pl * gate,
-                                         reverse: revs[j] }, env),
-                     Math.round(pl * gate * 1000), at0, dest, undefined, li);
-          } catch (e) {}
+          // Done means "already under way" — a piece still AHEAD of the window is
+          // emitted again, because a re-anchor rewinds `lastAt` after cancelling
+          // exactly those scheduled-ahead voices.
+          if (st.loopDone.has(tag) && at0 < from - 1e-6) continue;
+          // THE LATE JOIN — the trigger that keeps it on the area's clock. A piece
+          // already under way (a cold file that has just landed, Play pressed or the
+          // recording picked mid-pass) starts NOW from where the pass has got to,
+          // instead of waiting silent for the next pass.
+          const late = Math.max(0, from - at0), left = p.dur - late;
+          if (late > 0 && left < 0.25) { st.loopDone.add(tag); continue; }
+          if (!warm) continue;                              // not loaded yet — join when it is
+          const params = Object.assign({ type, volume: lvl, _loopLayer: 1 }, env);
+          if (!p.whole || late > 0) {
+            // forward: the window moves on by `late`; reversed: it plays backwards
+            // from its end, so what is left is the window's FIRST part
+            params.sampleOffsetSec = p.rev ? p.off : p.off + late;
+            params.sliceDurSec = left;
+            params.reverse = !!p.rev;
+          }
+          try { playNote(info.f0, params, Math.round(left * 1000), at0 + late, dest, undefined, li); } catch (e) {}
+          st.loopDone.add(tag);
         }
         k++;
       }
@@ -7302,6 +7500,7 @@
   }
   let PV_RESUME = false;   // one pending resume-then-play, never a queue of them
   function previewLayer(E, L) {
+    L = scopedViewFn(L);                  // a scoped draft previews the COMPOSITE
     const key = 'v2:' + L.id;
     const cfg = E.getCfg(); if (!cfg) return 0;
     // A SUSPENDED context freezes the clock, so notes scheduled before the
@@ -8427,6 +8626,11 @@
     makeBeat: makeBeatFn,           // ♦ Beat — a kit recipe, not a pitch one
     presets: PRESETS,
     draftOpen: draftOpenFn,
+    draftScope: draftScopeFn,       // {key, nm} while ⚙ Deep generates for one bar/change
+    scopable: scopableFn,
+    scopeOK: scopeOKFn,
+    scopedView: scopedViewFn,
+    lastScope: () => LAST_SCOPE,
     draftOf: draftOfFn,
     stagedOf: stagedOfFn,
     isStaged: isStagedFn,
@@ -12728,12 +12932,29 @@
   // frame (the staged drawing needs the panel on screen to size its canvas).
   // `ctx` is `{ L, card }` exactly as `layerOf` returns, so every caller hands
   // over the same shape.
-  function genPanelOpen(E, ctx) {
+  function genPanelOpen(E, ctx, scope) {
     if (!ctx || !ctx.card || !ctx.L) return false;
     BARPOP = null; ctx.card.classList.remove('v2-baropen');
     AUTOPOP = null; ctx.card.classList.remove('v2-autoopen');
     GENPOP = ctx.L.id | 0;
-    V2.draftOpen(E, ctx.L);                      // STAGED until ✓ Done
+    // ◫ A STRETCH SELECTED IN THE DRAWING IS WHAT YOU MEANT: one tapped bar or
+    // change opens Generate scoped to it (more than one: the whole part, since a
+    // draft edits one region's rules).
+    if (scope === undefined) {
+      scope = null;
+      try {
+        const bs = bselOf(ctx.L), ks = bs ? bselKeys(bs) : [];
+        if (ks.length === 1) scope = { key: ks[0], nm: bs.bars.get(ks[0]) || regLabel(ks[0]) };
+      } catch (e) {}
+    }
+    if (!(V2.scopeOK && V2.scopeOK(ctx.L))) scope = null;   // a recorded take has no rules to scope
+    V2.draftOpen(E, ctx.L, scope);               // STAGED until ✓ Done
+    if (scope && V2.draftScope(ctx.L.id)) {
+      // the rows are built from the staged part — rebuild so they show THIS
+      // stretch's values (the render swaps in the staged panel)
+      try { const hh = host(E); if (hh) hh._sig = ''; V2.render(E); } catch (e) {}
+      return true;
+    }
     ctx.card.classList.add('v2-genopen');
     try { genSync(ctx.card, ctx.L); } catch (e) {}
     requestAnimationFrame(() => { try { applyGate(ctx.card, ctx.L); } catch (e) {} });
@@ -12758,7 +12979,133 @@
   };
   const openGenFn = (E, L) => genPanelOpen(E, panelCtxOf(L));
   const openQuickFn = (E, L) => autoPanelOpen(E, panelCtxOf(L));
+  // ◫ ✓ Done on a scoped draft says what it wrote, and names anything it could not.
+  function scopeToast() {
+    const ls = V2.lastScope && V2.lastScope(); if (!ls || typeof showToast !== 'function') return;
+    if (ls.fresh) {
+      showToast(ls.built ? ('\u25eb Generated ' + ls.nm + ' \u2014 the rest of the part is silent; pick another bar in Generate for to fill it.')
+                         : ('\u25eb Nothing was generated for ' + ls.nm + ' \u2014 pick a Material first.'), { ms: 5000 });
+      return;
+    }
+    // only what a person set — a Material rebuilds internal fields (cells, lanes, its
+    // own `mat` stamp…) that no control shows, and naming them read as an error list
+    const INTERNAL = /(^|\s)(take|mat|made|preset|ground|notes|reg|cells|lanes|steps|home|beat|mem|barsMode|_\w*)$/;
+    const NAMES = { ring: 'Ring out', 'pitch stutter': 'Repeat', 'pitch walkMode': 'Moves', 'pitch lineUp': 'Line above chords' };
+    const skipped = (ls.dropped || []).filter((x) => !INTERNAL.test(x)).map((x) => NAMES[x] || x);
+    if (ls.trimmed) {
+      const sk = (ls.dropped || []).filter((x) => !/(^|\s)(take|mat|made|preset|ground|notes|reg|cells|lanes|steps|home|beat|mem|barsMode|_\w*)$/.test(x));
+      showToast('\u25eb The part is now just ' + ls.nm + ' \u2014 everything outside it is silent. Pick another bar in Generate for to add to it.' +
+                (sk.length ? ' Whole-part only, not applied: ' + sk.slice(0, 4).join(', ') + (sk.length > 4 ? '\u2026' : '') + '.' : ''), { ms: 5500 });
+      return;
+    }
+    showToast(((ls.wrote || ls.retook)
+                ? ('\u25eb ' + ls.nm + ' now generates by its own ' +
+                   (ls.wrote ? ('rules (' + ls.wrote + ' setting' + (ls.wrote === 1 ? '' : 's') + (ls.retook ? ', and its own take' : '') + ')')
+                             : 'take') + '.')
+                : ('\u25eb Nothing changed for ' + ls.nm + ' \u2014 \ud83c\udfb2 New take re-rolls just it; a Material or a knob gives it its own rules.')) +
+              (skipped.length ? ' Whole-part only, not applied: ' + skipped.slice(0, 5).join(', ') + (skipped.length > 5 ? '…' : '') + '.' : ''),
+              { ms: 4500 });
+  }
+  // ◫ THE SCOPE ROW, kept current: options from the drawing (bars, then changes by
+  // their chord), the draft's scope selected, the title naming it, and every row a
+  // region cannot hold greyed — "whole part only" — so an edit is never made that
+  // ✓ Done would have to throw away.
+  function genScopeSync(card) {
+    const sel = card && card.querySelector('.v2-genscope-sel'); if (!sel) return;
+    const id = card.getAttribute('data-v2id') | 0;
+    const sc = V2.draftScope ? V2.draftScope(id) : null;
+    let R = null; try { R = ((_cfgOf().layers) || []).find((x) => (x.id | 0) === id) || null; } catch (e) {}
+    if (!R || !R.part) return;
+    const opts = [['', 'Whole part']], at = new Map();
+    // a recorded take has no rules for a stretch to override (an EMPTY part can be
+    // scoped — the draft builds it, silent outside the stretch)
+    const live = !!(V2.scopeOK && V2.scopeOK(R));
+    if (!live) {
+      const html0 = '<option value="">Whole part</option>';
+      if (sel._html !== html0) { sel.innerHTML = html0; sel._html = html0; }
+      sel.value = ''; sel.disabled = true;
+      const says0 = card.querySelector('.v2-genscope-says');
+      const t0 = 'this part is a recorded take \u2014 \u2744 Unfreeze it to give a bar or a change its own rules';
+      if (says0 && says0.textContent !== t0) says0.textContent = t0;
+      return;
+    }
+    sel.disabled = false;
+    const add = (k, lab) => { if (at.has(k)) { opts[at.get(k)][1] += ' · ' + lab; return; } at.set(k, opts.length); opts.push([k, lab]); };
+    const cvz = card.querySelector('.v2-partviz canvas');
+    const barsF = (cvz && cvz._barsGeo && cvz._barsGeo.barsF) || Math.max(0.125, +R.part.bars || 1);
+    const nb = Math.min(32, Math.max(1, Math.ceil(barsF - 1e-6)));
+    for (let b = 0; b < nb; b++) add(regBarKey(b), 'Bar ' + (b + 1));
+    try {
+      const marks = (cvz && cvz._chordGeo && Array.isArray(cvz._chordGeo.marks)) ? cvz._chordGeo.marks : [];
+      const top = Math.max(1, Math.round(barsF * SPB));
+      marks.forEach((m, i) => {
+        const sa = Math.max(0, Math.min(top - 1, Math.round(m.f0 * barsF * SPB)));
+        const sb = Math.max(sa + 1, Math.min(top, Math.round(m.f1 * barsF * SPB)));
+        const k = regKey(sa, sb);
+        add(k, 'Change ' + (i + 1) + (m.nm ? ' — ' + m.nm : '') + ' (' + regLabel(k) + ')');
+      });
+    } catch (e) {}
+    if (sc && !at.has(sc.key)) add(sc.key, sc.nm);
+    const html = opts.map(([v, lab]) => '<option value="' + esc(v) + '">' + esc(lab) + '</option>').join('');
+    if (sel._html !== html) { sel.innerHTML = html; sel._html = html; }
+    sel.value = sc ? sc.key : '';
+    const says = card.querySelector('.v2-genscope-says');
+    if (says) {
+      const t = (sc && sc.fresh) ? ('only ' + sc.nm + ' — pick a Material; ✓ Done builds it here and leaves the rest of the part silent')
+              : sc ? ('only ' + sc.nm + ' — ✓ Done keeps just this stretch (the rest goes silent); greyed rows are whole-part only')
+                   : 'or pick a bar or a change to generate just that stretch';
+      if (says.textContent !== t) says.textContent = t;
+    }
+    const ttl = card.querySelector('.v2-genwrap .v2-gentitle');
+    if (ttl) { const t = sc ? ('Generate — ' + sc.nm) : 'Generate'; if (ttl.textContent !== t) ttl.textContent = t; }
+    const off = (el, on) => { if (!el) return; el.disabled = !!on; el.classList.toggle('v2-scopeoff', !!on);
+      if (on) el.title = 'Whole part only — set Generate for to Whole part to change it'; };
+    const lim = !!sc && !sc.fresh;        // a fresh draft commits whole — nothing to grey
+    card.querySelectorAll('.v2-genwrap .v2-f[data-f]').forEach((f) => {
+      const no = lim && !(V2.scopable && V2.scopable(f.getAttribute('data-f')));
+      off(f, no);
+      const row = f.closest('.ambient-ctrl'); if (row) row.classList.toggle('v2-scopeoff', no);
+    });
+    // Quick / Key / Notes and the take dice act on the WHOLE layer or part
+    // Quick / Key / Notes act on the whole layer; 🎲 New take rolls THIS stretch's take
+    card.querySelectorAll('.v2-genwrap .v2-ghb').forEach((b) => off(b, lim));
+  }
+  // ◫ SWITCHING SCOPE KEEPS WHAT WAS DRAFTED — the same rule as leaving ⚙ Deep for
+  // one stretch's rules: the draft being left is committed, then the panel reopens
+  // on the new scope. Dropping it silently would lose work nothing on screen showed.
+  // CAPTURE PHASE, ON `input` AS WELL: a <select> fires `input` first and the card's
+  // input sweep (host-level, so it runs before a bubbling document listener) calls
+  // `genScopeSync`, which puts the value BACK to the current scope — by `change`
+  // the pick read as "no change" and nothing happened (reported). Capturing reads
+  // the pick before anything can repaint it.
+  const onScopePick = (ev) => {
+      const s2 = ev.target && ev.target.closest && ev.target.closest('.v2-genscope-sel'); if (!s2) return;
+      const card = s2.closest('.v2-layer'); if (!card) return;
+      const E = (typeof _masterEng !== 'undefined') ? _masterEng : null; if (!E) return;
+      const id = card.getAttribute('data-v2id') | 0, key = s2.value || '';
+      const cur = V2.draftScope(id);
+      if ((cur ? cur.key : '') === key) return;
+      let R = null; try { R = ((_cfgOf().layers) || []).find((x) => (x.id | 0) === id) || null; } catch (e) {}
+      if (!R) return;
+      const St = V2.stagedOf(id);
+      if (St) {
+        const R2 = V2.draftCommit(E, St);
+        if (R2) { try { v2TakeHeard(E, R2); } catch (e) {} R = R2; }
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { scopeToast(); } catch (e) {}
+      }
+      const o = s2.selectedOptions && s2.selectedOptions[0];
+      const nm = key ? ((o && o.textContent) || regLabel(key)) : '';
+      genPanelOpen(E, { L: R, card }, key ? { key, nm } : null);
+      // back to the whole part: rebuild so the rows show the PART's values again
+      if (!key) { try { const hh = host(E); if (hh) hh._sig = ''; V2.render(E); } catch (e) {} }
+  };
+  try {
+    document.addEventListener('input', onScopePick, true);
+    document.addEventListener('change', onScopePick, true);
+  } catch (e) {}
   function genSync(card, L) {
+    try { genScopeSync(card); } catch (e) {}
     // ── THE HARMONY SENTENCES ARE READOUTS ────────────────────────────────
     // and nothing was rebuilding them. The four per-voice controls commit
     // through the plain `.v2-f` path, which does not re-render the card
@@ -16525,6 +16872,13 @@
                   'title="Where this layer\u2019s pitches come from — a scale, a chord, a wrap or its own progression.">Notes</button>' +
               '</span>' +
               '<button type="button" class="v2-genclose" aria-label="Close">\u2715</button></div>' +
+            // ◫ SCOPE — the whole part, or one bar / one change of it (2026-09-29).
+            // Filled by `genScopeSync` from the drawing's own bar and chord marks, so
+            // a change is named exactly as tapping it names it. Not a `.v2-f`: it
+            // chooses WHAT this draft edits, it is not a field of the layer.
+            '<div class="ambient-ctrl v2-genscope" data-v2when="voice:synth,kit,speech"><label>Generate for</label>' +
+              '<select class="ambient-select v2-genscope-sel" aria-label="Generate for"></select>' +
+              '<span class="ambient-hint v2-genscope-says"></span></div>' +
             // …and the popovers those three raise. Built here, inside
             // `.v2-genwrap`, so a control in one still resolves to the staged
             // copy exactly as the rows below it do — and so v1's delegated
@@ -18821,6 +19175,7 @@
   // per-layer view state (the pitch window, the mode, the selection) keyed by
   // layer id, and a second drawing of the same id would move the card's.
   function stageVizDraw(card, S) {
+    try { if (V2.scopedView) S = V2.scopedView(S); } catch (e) {}   // ◫ scoped: the whole part, that stretch replaced
     const E = (typeof _masterEng !== 'undefined') ? _masterEng : null; if (!E) return;
     const open = { '.v2-genwrap': card.classList.contains('v2-genopen'), '.v2-autowrap': card.classList.contains('v2-autoopen') };
     Object.keys(open).forEach((sel) => {
@@ -18895,6 +19250,21 @@
           finally { E._progAnchor = sv3.pa; E._playStartAt = sv3.ps; E._barGridAnchor = sv3.bg; }
         }
       } catch (e) { notes = []; }
+      // ◫ SCOPED: ONLY THAT STRETCH IS DRAWN (user: "all events outside the selected
+      // scope should go away"). A note belongs to the region its ONSET is in — the
+      // same ownership rule as selection and `ruleb` — so a line held across the
+      // edge still shows from where it starts.
+      try {
+        const scp = V2.draftScope && V2.draftScope(S.id | 0), rg = scp && V2.regParse(scp.key);
+        if (rg && cyc > 0) {
+          const barsF = Math.max(0.125, +(S.part && S.part.bars) || 1);
+          notes = notes.filter((n) => {
+            if (!n || !Number.isFinite(n.at)) return false;
+            const fr = (((n.at - cs0) / cyc) % 1 + 1) % 1, slot = fr * barsF * SPB;
+            return slot >= rg.a - 1e-6 && slot < rg.b - 1e-6;
+          });
+        }
+      } catch (e) {}
       const bars = Math.max(1, Math.round(+(S.part && S.part.bars) || 1));
       const TOP = 14;
       // ── A PIANO ROLL, NOT A BARCODE (2026-09-20) ──────────────────────────
@@ -23408,6 +23778,7 @@
           const R = V2.draftCommit(E, ctx.L);
           if (R) { try { v2TakeHeard(E, R); } catch (e) {} }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          try { scopeToast(); } catch (e) {}
           // ✓ DONE GOES BACK TO THE LAYERS (2026-09-16, user: "both the current,
           // and the underlying Generate popovers, should close and return view
           // back to layers"). Closed BEFORE the render, which would otherwise
@@ -25074,7 +25445,11 @@
           // SCOPED BY THE SELECTED BARS: with bars tapped, only they are
           // retaken (a per-bar pin — the rest of the drawing holds still);
           // with none, the whole take moves.
-          const selN = bselOf(ctx.L);
+          // ◫ …EXCEPT INSIDE A SCOPED GENERATE: the draft IS the stretch, so the
+          // press rolls the draft's take (= that stretch's). Asking the drawing's
+          // selection there diverted to the rules panel and committed the draft.
+          const scopedGen = !!(nt.closest('.v2-genwrap') && V2.draftScope && V2.draftScope(ctx.L.id | 0));
+          const selN = scopedGen ? null : bselOf(ctx.L);
           const selBarsN = selN ? bselKeys(selN) : null;
           // WITH BARS TAPPED THE PRESS OPENS THE RULES, it does not throw the
           // dice — "it should open a popover showing the current generated
@@ -25134,6 +25509,9 @@
             // about that, and a button that reports nothing reads as broken.
             // Asked of the SEAM, at the cycle's own origin, before and after.
             const rollSig = (L3) => {
+              // ◫ a scoped draft is judged AS IT PLAYS — the composite — or a stretch
+              // that re-rolled reads as "IDENTICAL" against the region-only draft
+              try { if (V2.scopedView) L3 = V2.scopedView(L3); } catch (e) {}
               try {
                 const cfg3 = E.getCfg();
                 const cyc3 = (V2.cycleSec && V2.cycleSec(L3, cfg3)) || 2;
@@ -25153,7 +25531,9 @@
             // RE-RESOLVED: `getCfg` normalizes and replaces objects, so the
             // layer held across it is an orphan (the house rule).
             let L4 = c2.L;
-            try {
+            // …but a DRAFT is judged as the draft: the real layer has not moved yet,
+            // so re-reading it made every roll inside Generate report "IDENTICAL"
+            if (!(V2.isStaged && V2.isStaged(c2.L))) try {
               const f4 = (E.getCfg().layers || []).find((x) => x && (x.id | 0) === (c2.L.id | 0));
               if (f4) L4 = f4;
             } catch (e) {}
@@ -25633,6 +26013,15 @@
           // and leaves the content alone. Rebuilding is what the OTHER modes'
           // buttons are for, and re-rolling is 🎲 New take's.
           if (matWillDo(ctx.L, which) === 'adopt') {
+            // ◫ IN A SCOPED GENERATE, PICKING WHAT IT ALREADY IS MEANS "GENERATE IT
+            // AGAIN": the stretch rolls a new take, drawn at once — "adopt" alone
+            // changed nothing, and ✓ Done then said so (reported twice).
+            if (V2.draftScope && V2.draftScope(ctx.L.id | 0) && V2.isStaged && V2.isStaged(ctx.L)) {
+              ctx.L.part.take = (ctx.L.part.take | 0) + 1;
+              try { E.getCfg(); } catch (e) {}
+              h._sig = ''; V2.render(E);
+              return;
+            }
             if (ctx.L.part.mat !== which) {
               ctx.L.part.mat = which;
               try { E.getCfg(); } catch (e) {}
@@ -25682,8 +26071,13 @@
                 ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
                 : which === 'ground'
                 ? 'Groundwork — plays the changes: notes on the 1 and on every change, held to the next.'
-                : 'Sustained — ' + info.voices + ' note' + (info.voices === 1 ? '' : 's') +
-                  ' of the first change, held for the whole part (Ring out is on).') + how, { ms: 4500 });
+                : (which === 'sustain' && Number.isFinite(info.voices))
+                ? 'Sustained — ' + info.voices + ' note' + (info.voices === 1 ? '' : 's') +
+                  ' of the first change, held for the whole part (Ring out is on).'
+                // EVERY OTHER MATERIAL says what IT is — the chain used to end in the
+                // Sustain sentence, so ♪ Play a line, ⚓ Pedal, ▪ Repeat and ✻ Scatter
+                // all reported "Sustained — undefined notes…" (their `info` has no voices).
+                : (mk.getAttribute('title') || mk.textContent || 'Material set.').trim()) + how, { ms: 4500 });
             }
           } catch (e) {}
           return;

@@ -56,6 +56,8 @@
       document.addEventListener('change', (ev) => {
         const v = ev && ev.target && ev.target.value;
         if (typeof v === 'string' && v.startsWith('sample:')) { try { ensureSampleLoaded(v.slice(7)); } catch (e) {} }
+        // ◐ Loop's Recording picker holds the bare id
+        else if (v && ev.target.getAttribute && ev.target.getAttribute('data-f') === 'instrument.loopId') { try { ensureSampleLoaded(v); } catch (e) {} }
       }, true);
     } catch (e) {}
     // Whatever the CURRENT workspace already references gets warmed once the page
@@ -70,6 +72,9 @@
         // no ordering dependency on 11-modes-persistence).
         const re = /"sample:([^"]+)"/g; let m;
         while ((m = re.exec(raw))) ids.add(m[1]);
+        // ◐ Loop layers store the bare id (`instrument.loopId`), no `sample:` prefix
+        const rl = /"loopId":"([^"]+)"/g;
+        while ((m = rl.exec(raw))) ids.add(m[1]);
         return warmSamples([...ids]);
       } catch (e) { return 0; }
     }

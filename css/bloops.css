@@ -17739,3 +17739,17 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
    layout (it is v1's, unchanged), so this row is simply a block again. */
 .v2-layer .v2-rampctl { display: block; }
 .v2-layer .v2-rampctl .ambient-layer-ramps { margin-top: 0; border-top: 0; padding-top: 0; }
+
+/* ◫ Generate for: the dropdown takes the row and its (long) hint wraps beneath —
+   in the label | control | hint grid the hint's auto column squeezed it to 18px */
+.v2-genwrap .ambient-ctrl.v2-genscope { grid-template-columns: auto minmax(0, 1fr); }
+.v2-genwrap .v2-genscope .v2-genscope-sel { min-width: 0; width: 100%; }
+.v2-genwrap .v2-genscope .v2-genscope-says { grid-column: 1 / -1; }
+/* ◫ Scoped Generate: a row a bar/change cannot hold is whole-part only */
+.v2-genwrap .ambient-ctrl.v2-scopeoff { opacity: 0.4; }
+.v2-genwrap .v2-scopeoff:disabled { cursor: not-allowed; }
+
+/* ✺ Variation: On/Off — the master switch heads the card bank, full width; while
+   bypassed the cards dim and do not open (edits there would be overwritten on return) */
+.ambient-pov-varstrip .ambient-pov-varbar > .ambient-pov-varmaster { grid-column: 1 / -1; width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.ambient-pov-varstrip .ambient-pov-varbar.ambient-var-bypassed > [data-pov] { opacity: 0.4; pointer-events: none; }

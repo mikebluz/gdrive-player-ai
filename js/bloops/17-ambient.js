@@ -2178,8 +2178,19 @@
         }
       } catch (e) {}
     }
+    // A READ-ONLY REDRAW NORMALIZES ONCE. Every `getCfg()` runs the whole normalizer,
+    // and a full repaint asks once per layer drawing — measured ~1.9 s to repaint
+    // after ✺ Variation On/Off. `_ambWithCfgHold` pins ONE normalized result for the
+    // length of a synchronous repaint that writes nothing; everywhere else the
+    // normalizer still runs on every call (the one-chokepoint rule is untouched).
+    let _ambCfgHold = null;
+    function _ambWithCfgHold(E, fn) {
+      if (E !== _masterEng || _ambCfgHold) return fn();
+      _ambCfgHold = E.getCfg();
+      try { return fn(); } finally { _ambCfgHold = null; }
+    }
     const _masterEng = _makeAmbientEngine({
-      getCfg:  function () { _masterBloomState(); return _normalizeAmbientCfg(masterAmbient); },   // masterAmbient = active area
+      getCfg:  function () { if (_ambCfgHold) return _ambCfgHold; _masterBloomState(); return _normalizeAmbientCfg(masterAmbient); },   // masterAmbient = active area
       busNode: function (L) { return _ambBusDest(L); },
       laneIdx: function () { return null; },
       guard:   function () { return true; },
@@ -3234,6 +3245,10 @@
           if (!Object.keys(vo).length) delete prog.varOff;
         }
       }
+      // ✺ VARIATION MASTER BYPASS (additive, 2026-09-29): present = every Variation
+      // setting is parked in it and the live ones are neutral. Malformed = dropped.
+      if (prog.varBypass != null && !(typeof prog.varBypass === 'object' && !Array.isArray(prog.varBypass) &&
+          typeof prog.varBypass.nov === 'string')) delete prog.varBypass;
       // ↻ ORDER (additive): scheduled chord re-ordering. Absent / mode '' → key
       // deleted, so untouched projects stay byte-identical.
       if (prog.order != null) {
@@ -26273,7 +26288,9 @@
     // LAYER MODEL v2 — render seam. _ambSyncControls calls this, so v2 cards
     // repaint on the same path v1 cards do (and, critically, while STOPPED —
     // the viz rAF does not run then, the documented invisible-while-stopped trap).
+    let _ambSkipV2Render = false;
     function _v2RenderSeam(E) {
+      if (_ambSkipV2Render) return;
       try { if (window._v2 && typeof window._v2.render === 'function') window._v2.render(E); } catch (e) {}
     }
     // Refresh every layer header's unit readout in this engine's panel.
@@ -43080,7 +43097,37 @@
       let html = '';
       try { html = _ambPovVarChips(E, cfg, prog, esc); } catch (e) { html = ''; }
       host.style.display = '';
-      host.innerHTML = '<div class="ambient-pov-bar ambient-pov-varbar">' + html + '</div>';
+      // ✺ THE MASTER SWITCH heads the bank, full width. Lit = Variation is playing.
+      const byp = _ambVarBypassed(cfg);
+      const master = '<button type="button" class="ambient-var-toggle ambient-pov-varmaster' + (byp ? '' : ' active') + '" aria-pressed="' + (!byp) + '" ' +
+        'title="Bypass every Variation setting at once \u2014 hear the piece plain, then switch back. Everything is kept while it is off.">' +
+        (byp ? '\u273a Variation: Off \u2014 bypassed (tap to bring it back)' : '\u273a Variation: On') + '</button>';
+      host.innerHTML = '<div class="ambient-pov-bar ambient-pov-varbar' + (byp ? ' ambient-var-bypassed' : '') + '">' + master + html + '</div>';
+      if (!host._wiredMaster) { host._wiredMaster = true;
+        host.addEventListener('click', (ev) => {
+          const b = ev.target && ev.target.closest && ev.target.closest('.ambient-pov-varmaster'); if (!b) return;
+          const c = E.getCfg(); if (!c) return;
+          const off = !_ambVarBypassed(c);
+          _ambVarBypassSet(E, c, off);
+          try { E.getCfg(); } catch (e) {}
+          // heard at each layer's next unit boundary, the way every Variation switch lands
+          if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambReanchorLayer(E, key)); _ambSyncMods(); } catch (e) {} }
+          // SEEN AT ONCE, STOPPED OR PLAYING (user: "UI should update with the
+          // Variation on/off toggle, shouldn't have to press play to see the
+          // differences"): the overview, every control and every layer card's
+          // drawing (chord names, change lengths, note timing) — Novelty's own
+          // refresh, because Variation reaches all of them.
+          _ambWithCfgHold(E, () => {
+            try { _ambRenderProgOverview(E); } catch (e) {}
+            try { _ambSyncControls(E); } catch (e) {}
+            try { if (typeof _ambRefreshSrcChips === 'function') _ambRefreshSrcChips(E); } catch (e) {}
+            try { _ambRenderGroove(E); } catch (e) {}
+            try { _ambRenderVarBar(E); } catch (e) {}
+          });
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          try { if (typeof showToast === 'function') showToast(off ? '\u273a Variation bypassed \u2014 the piece plays plain. Tap again to bring every setting back.'
+                                                               : '\u273a Variation back on \u2014 every setting as it was.', { ms: 3000 }); } catch (e) {}
+        }); }
     }
 
     function _ambRenderProgOverview(E) {
@@ -44779,6 +44826,9 @@
       // clamped every audition note to a stub and the audition read as silent
       // while a bare sine in the same session played at 0.511.
       if (params && params._hangGen) return 0;
+      // ◐ A LOOP LAYER'S RECORDING IS NOT A CHORD NOTE: choked, a 30 s bed stopped
+      // at the first change — part of "nothing plays with a loop layer".
+      if (params && params._loopLayer) return 0;
       try {
         // THE ENGINE THAT IS EMITTING, not _masterEng — `_E` is set by every emit
         // scope. Gating on `_masterEng.timer` would have skipped the BOUNCE
@@ -44977,6 +45027,46 @@
       return true;
     }
     function _ambVarOptToggle(c, k) { return _ambVarOptSet(c, k, !(_ambVarOptLive(c, k) > 0)); }
+    // ✺ VARIATION: ON / OFF — ONE switch over the whole card bank (2026-09-29, user:
+    // "a master Variation on/off toggle … that can just bypass all Variation settings
+    // so user can see difference it makes"). OFF parks EVERYTHING the six cards can
+    // set in `prog.varBypass` and writes the neutral state; ON puts it all back as it
+    // was. The prog half is Novelty's own snapshot/restore pair — the one record of
+    // "every Variation value" (per-part rungs and per-layer tone sets included), so
+    // the two can never disagree about what Variation covers. Groove's numbers,
+    // Humanize (`startVary`) and each layer's Push ride beside it; 0 is "off" to
+    // every reader of those, as the per-option switches already rely on.
+    const _AMB_VARM_GROOVE = ['swing', 'accent', 'density', 'ghost', 'rolls', 'streak', 'couple'];
+    function _ambVarBypassed(c) { return !!(c && c.prog && c.prog.varBypass && typeof c.prog.varBypass === 'object'); }
+    function _ambVarBypassSet(E, c, off) {
+      if (!c || !c.prog) return false;
+      if (off) {
+        if (_ambVarBypassed(c)) return true;
+        const g = (c.groove && typeof c.groove === 'object') ? c.groove : null;
+        const rec = { nov: _ambNovSnapshot(c), groove: {}, startVary: c.startVary | 0, push: {} };
+        if (g) _AMB_VARM_GROOVE.forEach((k) => { rec.groove[k] = g[k] | 0; });
+        _ambVarPushLayers(E, c).forEach((x) => { if (Number.isFinite(x.L.push) && x.L.push !== 0) rec.push[x.key] = x.L.push; });
+        // the NEUTRAL snapshot: every key absent (restore deletes on null), every
+        // per-part / per-layer entry emptied
+        let nv = {}; try { nv = JSON.parse(rec.nov) || {}; } catch (e) { nv = {}; }
+        const neutral = { tset: {} };
+        ['chance', 'playsTo', 'partArc'].forEach((k) => { if (Array.isArray(nv[k])) neutral[k] = nv[k].map(() => null); });
+        Object.keys(nv.tset || {}).forEach((k) => { neutral.tset[k] = { pal: null, dub: null }; });
+        try { _ambNovRestore(E, c, JSON.stringify(neutral)); } catch (e) {}
+        if (g) _AMB_VARM_GROOVE.forEach((k) => { g[k] = 0; });
+        c.startVary = 0;
+        _ambVarPushLayers(E, c).forEach((x) => { if (rec.push[x.key] !== undefined) x.L.push = 0; });
+        c.prog.varBypass = rec;
+        return true;
+      }
+      if (!_ambVarBypassed(c)) return false;
+      const rec = c.prog.varBypass; delete c.prog.varBypass;
+      try { _ambNovRestore(E, c, rec.nov); } catch (e) {}
+      if (rec.groove && c.groove && typeof c.groove === 'object') _AMB_VARM_GROOVE.forEach((k) => { c.groove[k] = rec.groove[k] | 0; });
+      c.startVary = rec.startVary | 0;
+      if (rec.push) _ambVarPushLayers(E, c).forEach((x) => { const v = Number(rec.push[x.key]); if (Number.isFinite(v) && v !== 0) x.L.push = v; });
+      return false;
+    }
     // The switch itself — the FEATURE'S NAME on the face, the state in the fill
     // (the file's toggle rule), lit = on. `.ambient-var-toggle` is the ONE style
     // every ✺ Variation switch wears, so they cannot drift apart.
@@ -45134,7 +45224,12 @@
       ov.style.setProperty('display', 'flex', 'important');
       // Refresh what it shows now that it is on screen (the readouts skip work
       // while parked, since their rows are hidden).
-      try { _ambSyncControls(E); } catch (e) {}
+      // …WITHOUT re-rendering every v2 layer card: nothing on them changed by
+      // opening a popover, and that render (a normalize per card drawing) was
+      // 1.2 s of the 1.3 s between tapping ✺ Groove and the menu appearing —
+      // several seconds on a phone (reported).
+      _ambSkipV2Render = true;
+      try { _ambSyncControls(E); } catch (e) {} finally { _ambSkipV2Render = false; }
       try { _ambSaltReadoutSync(E, true); } catch (e) {}
     }
     // ADVANCED PART EDIT AS A POPOVER. The per-layer schedules (Unit, Evolve,

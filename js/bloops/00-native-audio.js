@@ -32,6 +32,31 @@
       return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
     } catch (e) { return false; }
   }
+  // ── TONE REJECTS EVERY capacitor:// RESPONSE (2026-09-29) ────────────────────
+  // The shell's scheme handler answers `fetch` with `status: 0, ok: false` — and a
+  // COMPLETE body. `ToneAudioBuffer.load` throws "could not load url" on `!ok`, so
+  // EVERY library sample built on Tone.Sampler (the whole manifest: drum loops,
+  // one-shots, the ◐ Loop recordings) was silent in the app while the web played
+  // it. Measured in the simulator: fetch → ok=false status=0, yet the same body
+  // decodes to 590400 frames. So: a status-0 answer with bytes is a success; a real
+  // HTTP error or an empty body still fails. Keyed on the SCHEME, not on `wanted()`
+  // — it is a transport quirk, whatever the audio routing preference says.
+  try {
+    if (location.protocol === 'capacitor:' && window.Tone && Tone.ToneAudioBuffer && Tone.ToneAudioBuffer.load) {
+      const _toneLoad = Tone.ToneAudioBuffer.load;
+      Tone.ToneAudioBuffer.load = async function (url) {
+        // absolute URLs, data/blob, and Tone's "[mp3|ogg]" choice syntax keep Tone's own path
+        if (typeof url !== 'string' || /^[a-z][a-z0-9+.-]*:/i.test(url) || /\[[^\]]+\|[^\]]+\]$/.test(url)) {
+          return _toneLoad.call(this, url);
+        }
+        const res = await fetch(encodeURI((Tone.ToneAudioBuffer.baseUrl || '') + url));
+        if (res.status >= 400) throw new Error('could not load url: ' + url + ' (' + res.status + ')');
+        const bytes = await res.arrayBuffer();
+        if (!bytes || !bytes.byteLength) throw new Error('could not load url: ' + url + ' (empty)');
+        return Tone.getContext().decodeAudioData(bytes);
+      };
+    }
+  } catch (e) {}
   if (!wanted()) return;
 
   const _flight = [];

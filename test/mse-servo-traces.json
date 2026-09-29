@@ -1,0 +1,118 @@
+{
+ "note": "Production traces harvested from real device flight logs (2026-09-28). prod = bufEnd growth per wall second = what the encoder actually delivered.",
+ "caveat": "bufEnd advances only in whole 0.372 s segments, so estimating production from it over a short window ALIASES: about 7.4 percent at a 5 s MSESTAT gap, indistinguishable from real production wobble, which made this gate first report failures that were pure fixture noise. These segments therefore span at least 15s each, trading time resolution for accuracy (about 2.5 percent), and windows containing a transport edge (stop/play/seek/ended) are dropped because the servo does not run across one. Builds after 2026-09-28 log head= (the encoder head, 46 ms resolution) in MSESTAT \u2014 prefer that when regenerating, and this smoothing becomes unnecessary.",
+ "traces": [
+  {
+   "name": "00:51 original \u2014 hidden deficit, two `ended`",
+   "build": "20260928005153",
+   "reserve0": 0.95,
+   "segments": [
+    {
+     "dur": 15.24,
+     "prod": 0.9993,
+     "vis": "visible",
+     "reserve_obs": 0.71
+    },
+    {
+     "dur": 15.25,
+     "prod": 0.9989,
+     "vis": "visible",
+     "reserve_obs": 0.69
+    },
+    {
+     "dur": 15.17,
+     "prod": 1.004,
+     "vis": "visible",
+     "reserve_obs": 0.9
+    },
+    {
+     "dur": 15.16,
+     "prod": 1.0046,
+     "vis": "visible",
+     "reserve_obs": 0.97
+    },
+    {
+     "dur": 20.0,
+     "prod": 0.9845,
+     "vis": "hidden",
+     "reserve_obs": 0.82
+    },
+    {
+     "dur": 24.3,
+     "prod": 0.9782,
+     "vis": "hidden",
+     "reserve_obs": 0.44
+    },
+    {
+     "dur": 20.0,
+     "prod": 1.0036,
+     "vis": "hidden",
+     "reserve_obs": 0.51
+    }
+   ]
+  },
+  {
+   "name": "11:14 \u2014 the 0.863 production dip",
+   "build": "20260928111408",
+   "reserve0": 0.76,
+   "segments": [
+    {
+     "dur": 15.13,
+     "prod": 1.0153,
+     "vis": "visible",
+     "reserve_obs": 1.0
+    },
+    {
+     "dur": 15.6,
+     "prod": 0.9624,
+     "vis": "visible",
+     "reserve_obs": 1.16
+    }
+   ]
+  },
+  {
+   "name": "11:27 \u2014 steady production (servo oscillated on it)",
+   "build": "20260928112717",
+   "reserve0": 5.12,
+   "segments": [
+    {
+     "dur": 15.1,
+     "prod": 0.972,
+     "vis": "visible",
+     "reserve_obs": 1.03
+    },
+    {
+     "dur": 15.3,
+     "prod": 1.004,
+     "vis": "hidden",
+     "reserve_obs": 1.2
+    },
+    {
+     "dur": 16.01,
+     "prod": 1.002,
+     "vis": "hidden",
+     "reserve_obs": 1.53
+    },
+    {
+     "dur": 17.0,
+     "prod": 1.0044,
+     "vis": "hidden",
+     "reserve_obs": 1.66
+    }
+   ]
+  },
+  {
+   "name": "11:38 \u2014 post-fix",
+   "build": "20260928113817",
+   "reserve0": 5.46,
+   "segments": [
+    {
+     "dur": 15.14,
+     "prod": 0.9923,
+     "vis": "visible",
+     "reserve_obs": 1.14
+    }
+   ]
+  }
+ ]
+}

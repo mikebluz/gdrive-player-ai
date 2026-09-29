@@ -3214,6 +3214,26 @@
         prog.tension = Math.max(0, Math.min(100, prog.tension | 0));
         if (!prog.tension) delete prog.tension;
       }
+      // ✺ VARIATION OPTION MEMORY (additive, 2026-09-28): what each switched-OFF
+      // option was, so its switch can put it back (`_ambVarOptSet`). A live value
+      // above 0 means the option is ON, so a memory beside one is stale — dropped
+      // here, the one place every writer (a drag, Novelty, a preset) passes through.
+      if (prog.varOff != null) {
+        const vo = prog.varOff;
+        if (typeof vo !== 'object' || Array.isArray(vo)) delete prog.varOff;
+        else {
+          const sl = (prog.salt && typeof prog.salt === 'object') ? prog.salt : {};
+          const live = { colors: sl.colors | 0, scatter: sl.scatter | 0, vary: prog.vary | 0,
+            tension: prog.tension | 0, reroll: prog.reroll | 0,
+            rubato: (prog.rubato && typeof prog.rubato === 'object') ? (prog.rubato.amount | 0) : 0 };
+          Object.keys(vo).forEach((k) => {
+            if (!(k in live)) { delete vo[k]; return; }
+            const v = Math.max(0, Math.min(k === 'colors' ? 7 : 100, vo[k] | 0));
+            if (v > 0 && live[k] === 0) vo[k] = v; else delete vo[k];
+          });
+          if (!Object.keys(vo).length) delete prog.varOff;
+        }
+      }
       // ↻ ORDER (additive): scheduled chord re-ordering. Absent / mode '' → key
       // deleted, so untouched projects stay byte-identical.
       if (prog.order != null) {
@@ -3564,6 +3584,29 @@
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
       if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
       else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); if (cfg.groove.streak != null) cfg.groove.streak = Math.max(0, Math.min(100, cfg.groove.streak | 0)); if (cfg.groove.couple != null) cfg.groove.couple = Math.max(0, Math.min(100, cfg.groove.couple | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
+      // ✺ GROOVE OPTION MEMORY — the ✺ Variation switches' twin of `prog.varOff`
+      // (see there): a macro switched OFF is parked here and written 0. `push` is
+      // per layer, keyed by layer key (never position — layers come and go).
+      if (cfg.groove.varOff != null) {
+        const gvo = cfg.groove.varOff;
+        if (typeof gvo !== 'object' || Array.isArray(gvo)) delete cfg.groove.varOff;
+        else {
+          Object.keys(gvo).forEach((k) => {
+            if (k === 'push') {
+              const pm = gvo.push;
+              if (!pm || typeof pm !== 'object') { delete gvo.push; return; }
+              Object.keys(pm).forEach((lk) => { const pv = Number(pm[lk]); if (Number.isFinite(pv) && pv !== 0) pm[lk] = Math.max(-200, Math.min(200, Math.round(pv))); else delete pm[lk]; });
+              if (!Object.keys(pm).length) delete gvo.push;
+              return;
+            }
+            if (['swing', 'accent', 'humanize', 'density', 'ghost', 'rolls', 'streak', 'couple'].indexOf(k) < 0) { delete gvo[k]; return; }
+            const liveG = (k === 'humanize') ? (cfg.startVary | 0) : (cfg.groove[k] | 0);
+            const v = Math.max(0, Math.min(100, gvo[k] | 0));
+            if (v > 0 && liveG === 0) gvo[k] = v; else delete gvo[k];
+          });
+          if (!Object.keys(gvo).length) delete cfg.groove.varOff;
+        }
+      }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -7516,10 +7559,26 @@
     // luxury here: this writes TEN keys at once, and a macro you cannot take back is
     // one people are right to be afraid of.
     let _ambNovUndo = null;
+    // ✺ Novelty on/off: while switched OFF after an Apply, this holds what Apply
+    // wrote, so switching back ON restores it exactly (null = showing the applied state).
+    let _ambNovRedo = null;
     function _ambNovApply(E, cfg) {
       const plan = _ambNovPlan(cfg, _ambNovState());
       const p = cfg && cfg.prog; if (!p) return 0;
-      _ambNovUndo = { seed: cfg.seed | 0, snap: JSON.stringify({
+      _ambNovRedo = null;
+      _ambNovUndo = { seed: cfg.seed | 0, snap: _ambNovSnapshot(cfg) };
+      let n = 0;
+      // A DEAD ROW IS NOT WRITTEN. Storing a key nothing reads is how a project ends
+      // up carrying settings it never had a chance to hear.
+      plan.forEach((row) => { if (row.write && row.live !== false) { try { row.write(p); n++; } catch (e) {} } });
+      return n;
+    }
+    // EVERYTHING APPLY CAN WRITE, as one JSON string — the same record serves ↶ Undo
+    // and both directions of the ✺ Novelty switch, so the three can never disagree
+    // about what "before" means.
+    function _ambNovSnapshot(cfg) {
+      const p = cfg.prog;
+      return JSON.stringify({
         vary: p.vary, tension: p.tension, reroll: p.reroll, salt: p.salt, order: p.order,
         rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc,
         // PER-PART KEYS, one entry per part, `null` where the part had none — Apply
@@ -7544,16 +7603,34 @@
             m[e.key] = { pal: Number.isFinite(q.pal) ? (q.pal | 0) : null,
                          dub: Number.isFinite(q.dub) ? (q.dub | 0) : null }; }); } catch (e) {}
           return m;
-        })() }) };
-      let n = 0;
-      // A DEAD ROW IS NOT WRITTEN. Storing a key nothing reads is how a project ends
-      // up carrying settings it never had a chance to hear.
-      plan.forEach((row) => { if (row.write && row.live !== false) { try { row.write(p); n++; } catch (e) {} } });
-      return n;
+        })() });
     }
     function _ambNovRevert(E, cfg) {
       if (!_ambNovUndo || !cfg || !cfg.prog) return false;
-      let was = null; try { was = JSON.parse(_ambNovUndo.snap); } catch (e) { return false; }
+      // Switched OFF already means the original is what is in place — undo is then
+      // just forgetting the applied copy.
+      if (_ambNovRedo) { _ambNovRedo = null; _ambNovUndo = null; return true; }
+      if (!_ambNovRestore(E, cfg, _ambNovUndo.snap)) return false;
+      _ambNovUndo = null;
+      return true;
+    }
+    // ✺ NOVELTY ON/OFF. ON → OFF keeps what Apply wrote and puts the original back;
+    // OFF → ON puts Apply's result back. Returns the new state, or null if there is
+    // no Apply to compare against.
+    function _ambNovCompare(E, cfg) {
+      if (!_ambNovUndo || !cfg || !cfg.prog) return null;
+      if (!_ambNovRedo) {
+        const applied = _ambNovSnapshot(cfg);
+        if (!_ambNovRestore(E, cfg, _ambNovUndo.snap)) return null;
+        _ambNovRedo = applied;
+        return false;
+      }
+      if (!_ambNovRestore(E, cfg, _ambNovRedo)) return null;
+      _ambNovRedo = null;
+      return true;
+    }
+    function _ambNovRestore(E, cfg, snapStr) {
+      let was = null; try { was = JSON.parse(snapStr); } catch (e) { return false; }
       const p = cfg.prog;
       ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach((k) => {
         if (was[k] == null) delete p[k]; else p[k] = was[k];
@@ -7577,7 +7654,6 @@
           if (w.dub == null) delete L.toneSeq.dub; else L.toneSeq.dub = w.dub;
         });
       }
-      _ambNovUndo = null;
       return true;
     }
     function _ambSectionGateOK(E, L, atSec, cfg, hard) {
@@ -44832,7 +44908,165 @@
     // rule the v2 knobs follow). It is a RANGE now, so it also inherits the
     // delegated touch-slider handling; `.v2-knob` markup + `V2.knobify` paint
     // and drag it, which is why there is no second knob implementation here.
-    function _ambSaltDial(id, label, max, step, sub, title) {
+    // ✺ VARIATION OPTION SWITCHES (2026-09-28, user: "all options in Variation need
+    // on/off toggles so user can compare what it's like with them on or off").
+    // ONE mechanism for every option on the ✺ Variation cards: OFF parks the live
+    // value in `varOff` (on `prog` or on `groove`, beside the value it remembers)
+    // and writes 0; ON writes it back. 0 already means "off" to every reader of
+    // these values, so no engine code changes — the bargain 🧂 Salt's own switch
+    // made first. A live value above 0 ALWAYS means ON (the normalizer drops a
+    // memory that has gone stale), so a drag, a preset or Novelty can never leave
+    // an option that plays while its switch says off.
+    // `dflt` is what ON gives an option that was never set: a switch that engages
+    // INAUDIBLY reads as broken, so it is a musical middle, never 0.
+    const _AMB_VAR_OPTS = (function () {
+      const pv = (k) => ({ store: 'prog', max: 100,
+        get: (c) => (c.prog && c.prog[k]) | 0,
+        set: (c, v) => { if (!c.prog) return; if (v > 0) c.prog[k] = v; else delete c.prog[k]; } });
+      const ps = (k, max) => ({ store: 'prog', max: max,
+        get: (c) => (c.prog && c.prog.salt && typeof c.prog.salt === 'object') ? (c.prog.salt[k] | 0) : 0,
+        set: (c, v) => { if (!c.prog) return; if (!c.prog.salt || typeof c.prog.salt !== 'object') c.prog.salt = { colors: 0, scatter: 0 }; c.prog.salt[k] = v; } });
+      const gv = (k) => ({ store: 'groove', max: 100,
+        get: (c) => (c.groove && typeof c.groove === 'object') ? (c.groove[k] | 0) : 0,
+        set: (c, v) => { if (!c.groove || typeof c.groove !== 'object') c.groove = { swing: 0, accent: 0, pushMode: 'ms' }; c.groove[k] = v; } });
+      return {
+        colors:   Object.assign(ps('colors', 7),    { name: 'Colours',   dflt: 3 }),
+        vary:     Object.assign(pv('vary'),         { name: '🌊 Vary',    dflt: 30 }),
+        tension:  Object.assign(pv('tension'),      { name: '🌡 Tension', dflt: 40 }),
+        reroll:   Object.assign(pv('reroll'),       { name: '🎲 Take',    dflt: 30 }),
+        scatter:  Object.assign(ps('scatter', 100), { name: 'Scatter',   dflt: 40 }),
+        rubato:   { store: 'prog', max: 100, name: '↔ Rubato', dflt: 30,
+          get: (c) => (c.prog && c.prog.rubato && typeof c.prog.rubato === 'object') ? (c.prog.rubato.amount | 0) : 0,
+          set: (c, v) => { if (!c.prog) return; if (v > 0) c.prog.rubato = { amount: v }; else delete c.prog.rubato; } },
+        swing:    Object.assign(gv('swing'),   { name: 'Swing',   dflt: 30 }),
+        accent:   Object.assign(gv('accent'),  { name: 'Accent',  dflt: 40 }),
+        humanize: { store: 'groove', max: 100, name: 'Humanize', dflt: 25,
+          get: (c) => c.startVary | 0, set: (c, v) => { c.startVary = v; } },
+        density:  Object.assign(gv('density'), { name: 'Sparse',  dflt: 25 }),
+        ghost:    Object.assign(gv('ghost'),   { name: 'Ghost',   dflt: 30 }),
+        rolls:    Object.assign(gv('rolls'),   { name: 'Rolls',   dflt: 20 }),
+        streak:   Object.assign(gv('streak'),  { name: 'Streaks', dflt: 40 }),
+        couple:   Object.assign(gv('couple'),  { name: 'Couple',  dflt: 40 }),
+      };
+    })();
+    // The Salt card's five, in its own order — its master switch acts on these.
+    const _AMB_SALT_OPTS = ['colors', 'vary', 'tension', 'reroll', 'scatter'];
+    function _ambVarOffOf(c, store, make) {
+      const host = (store === 'prog') ? (c && c.prog) : (c && c.groove);
+      if (!host || typeof host !== 'object') return null;
+      if (!host.varOff || typeof host.varOff !== 'object') { if (!make) return null; host.varOff = {}; }
+      return host.varOff;
+    }
+    function _ambVarOptLive(c, k) { const o = _AMB_VAR_OPTS[k]; if (!o || !c) return 0; try { return o.get(c) | 0; } catch (e) { return 0; } }
+    function _ambVarOptMem(c, k) { const o = _AMB_VAR_OPTS[k]; const m = o && _ambVarOffOf(c, o.store, false); return m ? (m[k] | 0) : 0; }
+    // What the option's control should SHOW: the live value, or — while it is
+    // switched off — the value it will come back at, so off never looks "reset".
+    function _ambVarOptShown(c, k) { const v = _ambVarOptLive(c, k); return v > 0 ? v : _ambVarOptMem(c, k); }
+    function _ambVarOptSet(c, k, on) {
+      const o = _AMB_VAR_OPTS[k]; if (!o || !c) return false;
+      const live = _ambVarOptLive(c, k);
+      if (!on) {
+        if (live > 0) { const m = _ambVarOffOf(c, o.store, true); if (m) m[k] = live; o.set(c, 0); }
+        return false;
+      }
+      if (live > 0) return true;
+      const m = _ambVarOffOf(c, o.store, false);
+      const v = Math.max(1, Math.min(o.max, (m && (m[k] | 0)) || o.dflt));
+      o.set(c, v);
+      if (m) { delete m[k]; if (!Object.keys(m).length) { const host = (o.store === 'prog') ? c.prog : c.groove; if (host) delete host.varOff; } }
+      return true;
+    }
+    function _ambVarOptToggle(c, k) { return _ambVarOptSet(c, k, !(_ambVarOptLive(c, k) > 0)); }
+    // The switch itself — the FEATURE'S NAME on the face, the state in the fill
+    // (the file's toggle rule), lit = on. `.ambient-var-toggle` is the ONE style
+    // every ✺ Variation switch wears, so they cannot drift apart.
+    // ⚡ Core engine (lead synth A/B) — ONE global switch, so every card's button
+    // is repainted together; visible only on a card whose Tone select reads `mono`.
+    // The button sits in the Tone row of BOTH card kinds (v1 `_ambCtrlHtml`, v2's
+    // own Tone row) and its id is the Tone select's id with `-coremono` for `-tone`
+    // — that pairing is how the paint finds the select. Click and repaint are
+    // DELEGATED from the document, so neither card needs per-card wiring.
+    function _ambCoreMonoBtnHtml(id, tone) {
+      let on = true;
+      try { if (typeof window.bloopsCoreMono === 'function') on = !!window.bloopsCoreMono(); } catch (e) {}
+      return '<button type="button" class="ambient-var-toggle ambient-coremono' + (on ? ' active' : '') + '" id="' + id + '" ' +
+        'aria-pressed="' + on + '"' + (tone === 'mono' ? '' : ' style="display:none"') + ' ' +
+        'title="Lead synth engine. On: the built-in core (far lighter on the phone). Off: the original Tone synth. Flip it while playing to compare by ear \u2014 it applies to every layer on this voice.">\u26a1 Core engine</button>';
+    }
+    try {
+      document.addEventListener('click', (ev) => {
+        const b = ev.target && ev.target.closest && ev.target.closest('.ambient-coremono');
+        if (!b || typeof window.bloopsCoreMono !== 'function') return;
+        window.bloopsCoreMono(!window.bloopsCoreMono());
+        _ambCoreMonoPaint();
+        // notes already built ahead keep their engine — re-anchor the playing layer
+        // so the switch is heard at once, not a lookahead later
+        try {
+          const E = _masterEng; if (!E || !E.timer) return;
+          const v2 = /^v2-(\d+)-/.exec(b.id), card = b.closest('.ambient-layer');
+          const key = v2 ? ('v2:' + v2[1]) : (card && card.getAttribute('data-inst'));
+          if (key) _ambReanchorLayer(E, key);
+        } catch (e) {}
+      });
+      // v1's Tone select fires `change`, v2's fires `input` — listen to both
+      const repaint = (ev) => {
+        const t = ev.target; if (t && t.id && /-tone$/.test(t.id) && document.getElementById(t.id.replace(/-tone$/, '-coremono'))) _ambCoreMonoPaint();
+      };
+      document.addEventListener('change', repaint);
+      document.addEventListener('input', repaint);
+    } catch (e) {}
+    function _ambCoreMonoPaint() {
+      let on = true;
+      try { if (typeof window.bloopsCoreMono === 'function') on = !!window.bloopsCoreMono(); } catch (e) {}
+      document.querySelectorAll('.ambient-coremono').forEach((b) => {
+        const sel = document.getElementById(b.id.replace(/-coremono$/, '-tone'));
+        b.style.display = (sel && sel.value === 'mono') ? '' : 'none';
+        b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    function _ambVarOptBtn(k, label, title) {
+      const _t = (x) => String(x == null ? '' : x).replace(/[<>&]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]));
+      const _a = (x) => (typeof _ambEscAttr === 'function') ? _ambEscAttr(x) : _t(x).replace(/"/g, '&quot;');
+      return '<button type="button" class="ambient-var-toggle ambient-var-opt" data-varopt="' + k + '" aria-pressed="false" ' +
+        'title="' + _a(title || ('Switch ' + label + ' on or off to hear the difference — the setting is kept while it is off.')) + '">' + _t(label) + '</button>';
+    }
+    // PUSH/PULL is per layer (`layer.push`), so its memory is a map by layer key.
+    function _ambVarPushLayers(E, c) {
+      const out = [];
+      try { _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L) out.push({ key: key, L: L }); }); } catch (e) {}
+      return out;
+    }
+    function _ambVarPushOn(E, c) {
+      return _ambVarPushLayers(E, c).some((x) => Number.isFinite(x.L.push) && x.L.push !== 0);
+    }
+    function _ambVarPushToggle(E, c) {
+      if (!c.groove || typeof c.groove !== 'object') c.groove = { swing: 0, accent: 0, pushMode: 'ms' };
+      const rows = _ambVarPushLayers(E, c);
+      if (rows.some((x) => Number.isFinite(x.L.push) && x.L.push !== 0)) {
+        const m = _ambVarOffOf(c, 'groove', true); m.push = {};
+        rows.forEach((x) => { if (Number.isFinite(x.L.push) && x.L.push !== 0) { m.push[x.key] = x.L.push; x.L.push = 0; } });
+        return false;
+      }
+      const m = _ambVarOffOf(c, 'groove', false);
+      const mem = (m && m.push && typeof m.push === 'object') ? m.push : null;
+      let n = 0;
+      if (mem) rows.forEach((x) => { const v = Number(mem[x.key]); if (Number.isFinite(v) && v !== 0) { x.L.push = v; n++; } });
+      if (m) { delete m.push; if (!Object.keys(m).length) delete c.groove.varOff; }
+      return n > 0;
+    }
+    // Repaint every switch (and dim its control) under `root` from the config.
+    function _ambVarOptPaint(E, root, c) {
+      if (!root || !c) return;
+      root.querySelectorAll('.ambient-var-opt[data-varopt]').forEach((b) => {
+        const k = b.getAttribute('data-varopt');
+        const on = (k === 'push') ? _ambVarPushOn(E, c) : (_ambVarOptLive(c, k) > 0);
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const cell = b.closest('.ambient-salt-dial, .ambient-groove-macro, .ambient-prog-rubato, .ambient-groove-pushblock');
+        if (cell) cell.classList.toggle('ambient-var-isoff', !on);
+      });
+    }
+    function _ambSaltDial(id, label, max, step, sub, title, varKey) {
       // IT CARRIES ITS OWN ESCAPER. There is NO file-level `esc` in
       // 17-ambient — all ~35 of them are LOCAL consts inside the function that
       // builds their markup — and this helper sits in a scope with none.
@@ -44847,7 +45081,10 @@
       const _t = (x) => String(x == null ? '' : x).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
       const _a = (x) => (typeof _ambEscAttr === 'function') ? _ambEscAttr(x) : _t(x).replace(/"/g, '&quot;');
       return '<div class="ambient-ctrl ambient-salt-dial" title="' + _a(title) + '">' +
-        '<label for="' + id + '">' + _t(label) + '</label>' +
+        // With a ✺ Variation key, the LABEL IS THE SWITCH (the ↻ Chords / 🌒 Arc
+        // idiom): the dial's own name, lit while the option is on.
+        (varKey ? _ambVarOptBtn(varKey, label, label + ' — switch it off to hear the changes without it; the setting is kept and comes back when you switch it on.')
+                : '<label for="' + id + '">' + _t(label) + '</label>') +
         // NOT `.ambient-salt-in` — that class is v1's 52px NUMBER BOX chrome
         // (border, background, fixed width), and a range wearing it looks like
         // a broken field in the one state where the knob fails to build.
@@ -49943,11 +50180,18 @@
       const g = cfg.groove;
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const pctMode = g.pushMode === 'pct';
-      const macro = (id, label, val, hint) =>
-        '<div class="ambient-groove-macro"><label>' + label + '</label>' +
-          '<input type="range" class="ambient-sl ambient-groove-mac" data-gm="' + id + '" min="0" max="100" step="1" value="' + (val | 0) + '">' +
-          '<span class="ambient-groove-val" data-gv="' + id + '">' + (val | 0) + '</span>' +
+      // ✺ EVERY MACRO HAS ITS OWN SWITCH — its label (user: "all options in
+      // Variation need on/off toggles so user can compare"). While one is off its
+      // slider shows the value it will come back at, dimmed, and dragging it turns
+      // it back on; `val` is ignored in favour of that shown value.
+      const macro = (id, label, val, hint) => {
+        const sv = _ambVarOptShown(cfg, id);
+        return '<div class="ambient-groove-macro">' +
+          _ambVarOptBtn(id, label, label + ' \u2014 switch it off to hear the groove without it; the setting is kept and comes back when you switch it on.') +
+          '<input type="range" class="ambient-sl ambient-groove-mac" data-gm="' + id + '" min="0" max="100" step="1" value="' + (sv | 0) + '">' +
+          '<span class="ambient-groove-val" data-gv="' + id + '">' + (sv | 0) + '</span>' +
           '<span class="ambient-sched-lbl">' + hint + '</span></div>';
+      };
       // Preset picker — a named feel (sets the macros + per-type Push).
       const presetOpts = '<option value="">— feel —</option>' +
         _AMB_GROOVE_PRESETS.map((pr, i) => '<option value="' + i + '">' + esc(pr.name) + '</option>').join('');
@@ -50003,14 +50247,22 @@
       }
       // Per-layer Push/Pull rows.
       const layers = _ambMixerLayers(cfg);
-      html += '<div class="ambient-groove-push"><div class="ambient-groove-pushhead"><span class="ambient-sched-lbl">push / pull — ahead ← beat → behind</span>' +
+      // PUSH / PULL IS AN OPTION TOO — one switch for every layer's offset, kept per
+      // layer (`groove.varOff.push`, keyed by layer key) so it comes back exactly.
+      const _pushMem = (g.varOff && g.varOff.push && typeof g.varOff.push === 'object') ? g.varOff.push : null;
+      html += '<div class="ambient-groove-push ambient-groove-pushblock"><div class="ambient-groove-pushhead">' +
+        _ambVarOptBtn('push', 'Push / pull', 'Push / pull \u2014 switch it off to hear every layer land on the beat; each layer\u2019s offset is kept and comes back when you switch it on.') +
+        '<span class="ambient-sched-lbl">ahead \u2190 beat \u2192 behind</span>' +
         '<span class="ambient-seg-row ambient-groove-modeseg">' +
           '<button type="button" class="ambient-seg ambient-groove-mode' + (pctMode ? '' : ' active') + '" data-gmode="ms">ms</button>' +
           '<button type="button" class="ambient-seg ambient-groove-mode' + (pctMode ? ' active' : '') + '" data-gmode="pct">% unit</button>' +
         '</span></div>';
       const pmax = pctMode ? 90 : 200;
       layers.forEach(({ name, key, layer }) => {
-        const pv = Number.isFinite(layer.push) ? Math.max(-pmax, Math.min(pmax, layer.push)) : 0;
+        // switched off → show the offset it will come back at (dimmed by the block)
+        const _pRaw = (Number.isFinite(layer.push) && layer.push !== 0) ? layer.push
+          : ((_pushMem && Number.isFinite(Number(_pushMem[key]))) ? Number(_pushMem[key]) : 0);
+        const pv = Math.max(-pmax, Math.min(pmax, _pRaw));
         html += '<div class="ambient-groove-row" data-gkey="' + esc(key) + '">' +
           '<span class="ambient-groove-name" title="' + esc(name) + '">' + esc(name) + '</span>' +
           '<input type="range" class="ambient-sl ambient-groove-pushsl" min="' + (-pmax) + '" max="' + pmax + '" step="1" value="' + pv + '">' +
@@ -50034,6 +50286,7 @@
         '</div>';
       body.innerHTML = html;
       body.classList.toggle('ambient-groove-bypassed', byp);   // dim the controls when off
+      try { _ambVarOptPaint(E, body, cfg); } catch (e) {}      // light each option's switch
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -51145,7 +51398,7 @@
       // folded into Seed). Non-interactive; no wiring branch needed.
       if (k === 'sub') return '<div class="ambient-grp-sub"' + (c[2] ? ' title="' + String(c[2]).replace(/"/g, '&quot;') + '"' : '') + '>' + c[1] + '</div>';
       if (k === 'tone') {
-        const toneSel = '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
+        const toneSel = '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span>' + _ambCoreMonoBtnHtml(p + '-coremono', inst && inst.tone) + '</div>';
         // Bed: the "Tones [Single|Per-voice]" MODE selector comes FIRST (it decides
         // whether the single Tone select or the per-voice tone selects are shown),
         // then the Tone select (Single) / per-voice selects (Per-voice) below it.
@@ -54779,10 +55032,12 @@
           if (saltRow) {
             saltRow.style.display = progOn ? '' : 'none';
             const sv = (cfg.prog && cfg.prog.salt) || {};
-            [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', sv.colors | 0], ['ambient-salt-scatter', sv.scatter | 0],
-             ['ambient-prog-reroll', (cfg.prog && cfg.prog.reroll | 0) || 0],
-             ['ambient-prog-vary', (cfg.prog && cfg.prog.vary | 0) || 0],
-             ['ambient-prog-tension', (cfg.prog && cfg.prog.tension | 0) || 0]].forEach(pr => {
+            // SHOWN, not live: an option switched OFF keeps showing the value it will
+            // come back at (dimmed by its switch), so off never reads as "reset".
+            [['ambient-salt-len', sv.len | 0], ['ambient-salt-colors', _ambVarOptShown(cfg, 'colors')], ['ambient-salt-scatter', _ambVarOptShown(cfg, 'scatter')],
+             ['ambient-prog-reroll', _ambVarOptShown(cfg, 'reroll')],
+             ['ambient-prog-vary', _ambVarOptShown(cfg, 'vary')],
+             ['ambient-prog-tension', _ambVarOptShown(cfg, 'tension')]].forEach(pr => {
               const el = document.getElementById(tr(pr[0]));
               if (el && document.activeElement !== el) el.value = String(pr[1]);
             });
@@ -54790,13 +55045,20 @@
             // input, so a value written here has to repaint it — the documented
             // "a computed face with one writer is frozen" rule)
             try { if (window._v2 && window._v2.knobSync) window._v2.knobSync(saltRow); } catch (e) {}
+            // …and each option's switch, plus the master (lit while ANY of the five
+            // plays — it had no painter at all, so it read "off" whatever Salt did).
+            try { _ambVarOptPaint(E, saltRow, cfg); } catch (e) {}
+            { const mo = document.getElementById(tr('ambient-salt-onoff'));
+              if (mo) { const anyOn = _AMB_SALT_OPTS.some((k) => _ambVarOptLive(cfg, k) > 0);
+                mo.classList.toggle('active', anyOn); mo.setAttribute('aria-pressed', anyOn ? 'true' : 'false'); } }
             // ↔ Rubato lives in its OWN row — same visibility rule, its own store.
             { const rRow = document.getElementById(tr('ambient-prog-rubatorow'));
               if (rRow) {
                 rRow.style.display = progOn ? '' : 'none';
-                const amt = (cfg.prog && cfg.prog.rubato && (cfg.prog.rubato.amount | 0)) || 0;
+                const amt = _ambVarOptShown(cfg, 'rubato');
                 const inp = rRow.querySelector('#' + tr('ambient-rubato-amt'));
                 if (inp && document.activeElement !== inp) inp.value = String(amt);
+                try { _ambVarOptPaint(E, rRow, cfg); } catch (e) {}
                 if (inp) inp.title = 'Each cycle re-slices the CHORD LENGTHS on a 1/8-bar grid. '
                   + 'The cycle total is always preserved — with a Passes grid, every PASS keeps its length too, '
                   + 'so only where the changes fall inside a pass moves. 0 = as written, 100 = wild.';
@@ -55386,11 +55648,11 @@
                 'title="Turn Salt off without losing the settings — the five dials are remembered and come back when you turn it on. A single pass can be salted or not in ▦ Schedule.">' +
                 '🧂 Salt</button>' +
               '<div class="ambient-salt-dials">' +
-              _ambSaltDial('ambient-salt-colors', 'Colours', 7, 1, 'recolours per chord', 'How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections.') +
-              _ambSaltDial('ambient-prog-vary', '🌊 Vary', 100, 5, 'harmony variance', 'Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly.') +
-              _ambSaltDial('ambient-prog-tension', '🌡 Tension', 100, 5, 'ramp toward the turn', 'Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written.') +
-              _ambSaltDial('ambient-prog-reroll', '🎲 Take', 100, 5, 'substituted chords', 'Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored.') +
-              _ambSaltDial('ambient-salt-scatter', 'Scatter', 100, 5, 'how uneven the colours fall', 'How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically).') +
+              _ambSaltDial('ambient-salt-colors', 'Colours', 7, 1, 'recolours per chord', 'How many times each chord recolours inside its unit. The chord is cut into colours+1 sections: the downbeat is always the written chord, the later ones become root-preserving colours of it (maj7 · add9 · 6 · maj9 · sus2 · sus4 · open 5). 0 = off; 7 is the ceiling, because a chord is never cut into more than 8 sections.', 'colors') +
+              _ambSaltDial('ambient-prog-vary', '🌊 Vary', 100, 5, 'harmony variance', 'Per-CYCLE harmony variance — the chance each chord is swapped for a same-function substitute, RE-ROLLED EVERY PASS, so the changes keep evolving while you listen. (🎲 take fixes one realization per take id; this one moves.) Same candidates, same in-key rule; deterministic per (chord, cycle, take), so a Loop replays it exactly.', 'vary') +
+              _ambSaltDial('ambient-prog-tension', '🌡 Tension', 100, 5, 'ramp toward the turn', 'Tension ramp — chords gain colour extensions (♭7 → 9th → 11th) progressively ACROSS the progression cycle and reset at the top, so harmony tightens toward the turnaround. Purely additive: the written tones are never removed. 0 = as written.', 'tension') +
+              _ambSaltDial('ambient-prog-reroll', '🎲 Take', 100, 5, 'substituted chords', 'Harmony re-roll — the chance each chord is swapped for a SAME-FUNCTION substitute (relative minor/major, mediant, or a 7th/9th colour) when you press 🎲 New take. Only substitutions that stay in the key are offered. Deterministic: the same take id always gives the same changes, and the written progression is never altered — set it back to 0 to hear it as authored.', 'reroll') +
+              _ambSaltDial('ambient-salt-scatter', 'Scatter', 100, 5, 'how uneven the colours fall', 'How unevenly the Colors count lands per chord unit — 0: every unit gets the full count; 100: most units stay plain and only the occasional unit blooms fully (stochastic, seeded — same seed replays identically).', 'scatter') +
               '</div>' +
               // NAME THE LADDER. This row is the AREA rung, and the narrower ones
               // now have surfaces of their own — a control that is silently the
@@ -55441,6 +55703,11 @@
               '</div>' +
               '<div class="ambient-nov-preview" id="ambient-nov-preview"></div>' +
               '<div class="ambient-nov-foot">' +
+                // ✺ NOVELTY ON/OFF — compare what Apply wrote against what was there
+                // before, without losing either. Always rendered (a control absent in
+                // some states cannot be found): dim until there is an Apply to compare.
+                '<button type="button" class="ambient-var-toggle ambient-nov-ab" id="ambient-nov-ab" aria-pressed="false" ' +
+                  'title="Novelty on/off \u2014 after \u273a Apply, switch between what it wrote and what was there before, to hear the difference. Neither is lost.">\u273a Novelty</button>' +
                 '<button type="button" class="ambient-seg ambient-nov-apply" id="ambient-nov-apply">\u273a Apply</button>' +
                 '<button type="button" class="ambient-seg ambient-nov-undo" id="ambient-nov-undo" hidden>\u21b6 Undo</button>' +
               '</div>' +
@@ -55448,7 +55715,9 @@
             _ambProgGrpClose() +
             _ambProgGrpOpen('rubato', '\u2194 Rubato', false, true) +
             '<div class="ambient-row ambient-prog-rubato" id="ambient-prog-rubatorow" style="display:none" title="Rubato \u2014 how the chord lengths move. Everything at 0 = the changes fall exactly as written.">' +
-              '<span class="ambient-sched-lbl salt-lbl">\u2194 rubato</span>' +
+              // THE LABEL IS THE SWITCH — ✺ Variation's one on/off idiom (`_ambVarOptBtn`):
+              // off parks the amount and plays the changes as written; on brings it back.
+              _ambVarOptBtn('rubato', '\u2194 Rubato', '\u2194 Rubato \u2014 switch it off to hear the changes fall exactly as written; the amount is kept and comes back when you switch it on.') +
               '<span class="ambient-sched-grp ambient-rubato-grp"><span class="ambient-sched-lbl">amount</span><input type="number" class="ambient-salt-in" id="ambient-rubato-amt" min="0" max="100" step="5" value="0" title="Each cycle re-slices the CHORD LENGTHS (A 1\u00bc bars, B \u00bd, C 1\u00be \u2026) on a 1/8-bar grid. The cycle total is ALWAYS preserved, so loops and Evolve stay aligned \u2014 only where the changes fall moves. AREA-WIDE by nature: this is the shared chord clock, so every layer agrees about which chord is sounding. 0 = as written, 100 = wild."></span>' +
               '<span class="ambient-hint rubato-ladder">The <b>area</b> default. A set of changes can carry its own ' +
               '(\u270e Edit \u2192 Changes settings \u2192 Variation). Under a Passes grid every pass keeps its ' +
@@ -55495,7 +55764,7 @@
               // all, so "off" and "absent" are one state and there is no stale depth
               // waiting to surprise anyone. Turning it on seeds a musical middle
               // rather than 0, because a control that engages inaudibly reads as broken.
-              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-arc-toggle" id="ambient-arc-toggle" title="\ud83c\udf12 Arc \u2014 thin the arrangement out and build it back up as it plays. OFF = flat: every layer plays wherever its own settings allow. Click to turn on.">\ud83c\udf12 Arc</button>' +
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-var-toggle ambient-arc-toggle" id="ambient-arc-toggle" title="\ud83c\udf12 Arc \u2014 thin the arrangement out and build it back up as it plays. OFF = flat: every layer plays wherever its own settings allow. Click to turn on.">\ud83c\udf12 Arc</button>' +
               '<select id="ambient-arc-shape" class="ambient-select ambient-arc-shape" title="How the density moves across one arc. Building: thinnest at the start, full by the end. Waves: full at the top, thinnest in the middle, full again. Drifting: the same set of densities in a different order every arc \u2014 unpredictable, but never stuck thin.">' +
                 '<option value="build">building</option><option value="wave">waves</option><option value="drift">drifting</option></select>' +
               '<select id="ambient-arc-bars" class="ambient-select ambient-arc-bars" title="How long ONE arc is. It is divided into 8 slices, and a layer holds its in-or-out state for a whole slice \u2014 so 32 bars means the line-up can change every 4 bars.">' +
@@ -55890,13 +56159,20 @@
                 } catch (e) {}
               }
               _grLiveSwing();
+              try { _ambVarOptPaint(E, grBody, c); } catch (e) {}   // dragging an OFF macro turns it on
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const tb = ev.target.closest('.ambient-groove-tapbars, .ambient-groove-tapsteps');
             if (tb) { const t = _ambTapState(E); const v = parseInt(tb.value, 10) || 0; if (tb.classList.contains('ambient-groove-tapbars')) t.bars = Math.max(1, Math.min(8, v)); else t.steps = Math.max(2, Math.min(32, v)); return; }
             const psl = ev.target.closest('.ambient-groove-pushsl');
             if (psl) { const key = _grPushKey(psl); const L = key && _ambLayerByKey(E, key); if (!L) return;
               const c = _grCfg(); const pct = c && c.groove.pushMode === 'pct'; const v = parseInt(psl.value, 10) || 0;
-              L.push = v; const pv = psl.parentElement.querySelector('.ambient-groove-pv'); if (pv) pv.textContent = (v > 0 ? '+' : '') + v + (pct ? '%' : 'ms');
+              // Dragging while Push / pull is switched OFF turns it back ON: every
+              // other layer's kept offset returns, then this one takes the drag.
+              if (c && c.groove.varOff && c.groove.varOff.push) {
+                try { _ambVarPushToggle(E, c); if (E.timer) _ambMixerLayers(c).forEach(({ key: k2 }) => _ambUnitReanchor(E, k2)); } catch (e) {}
+              }
+              L.push = v;
+              try { _ambVarOptPaint(E, grBody, c); } catch (e) {} const pv = psl.parentElement.querySelector('.ambient-groove-pv'); if (pv) pv.textContent = (v > 0 ? '+' : '') + v + (pct ? '%' : 'ms');
               if (E.timer) { try { _ambUnitReanchor(E, key); } catch (e) {} }   // re-anchor so the new offset applies at the next boundary
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
           });
@@ -55929,6 +56205,23 @@
           });
           grBody.addEventListener('click', (ev) => {
             _E = E;
+            // ✺ AN OPTION'S OWN SWITCH (its label). Every layer is re-anchored, the
+            // Bypass rule, so the change lands at each one's next unit boundary.
+            const vt = ev.target.closest('.ambient-var-opt[data-varopt]');
+            if (vt) { const c = _grCfg(); if (!c) return;
+              const k = vt.getAttribute('data-varopt');
+              if (k === 'push') {
+                const had = _ambVarPushOn(E, c) || !!(c.groove.varOff && c.groove.varOff.push);
+                _ambVarPushToggle(E, c);
+                if (!had) { try { if (typeof showToast === 'function') showToast('No layer is pushed or pulled yet \u2014 drag a layer\u2019s slider below.', { ms: 3000 }); } catch (e) {} }
+              } else if (_AMB_VAR_OPTS[k] && _AMB_VAR_OPTS[k].store === 'groove') {
+                _ambVarOptToggle(c, k);
+              } else return;
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambReanchorLayer(E, key)); _ambSyncMods(); } catch (e) {} }
+              _ambRenderGroove(E);
+              if (k === 'humanize') { try { _ambSyncControls(E); } catch (e) {} }   // Area start mirrors it
+              try { _ambRenderVarBar(E); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             // Bypass — A/B the whole groove in real time. Re-anchor every layer so
             // the change snaps in at each one's next unit boundary (phase-aligned,
             // so nothing jumps) instead of waiting out the scheduler lookahead.
@@ -57653,35 +57946,51 @@
         // The five live in two stores (`salt.colors` / `salt.scatter`, and
         // `prog.vary` / `prog.tension` / `prog.reroll`), so "off" is written
         // once here rather than asked at 28 read sites.
+        // THE MASTER IS THE FIVE SWITCHES AT ONCE (2026-09-28). Each dial now has
+        // its own ✺ Variation switch, so "Salt off" is simply all five off — the
+        // same memory (`prog.varOff`), so the master and a dial can never disagree
+        // about what comes back. `salt.was` (the master's memory before this) is
+        // still honoured on the way back ON, so an older project loses nothing.
         { const onoff = G('ambient-salt-onoff');
           if (onoff) onoff.addEventListener('click', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
             const pr2 = c.prog;
-            const sl = (pr2.salt && typeof pr2.salt === 'object') ? pr2.salt : null;
-            const live = ((sl && (sl.colors | 0)) || 0) + ((sl && (sl.scatter | 0)) || 0) +
-              (pr2.vary | 0) + (pr2.tension | 0) + (pr2.reroll | 0);
-            if (live > 0) {
-              // OFF — keep what it was, so turning it back on is not a retype.
-              pr2.salt = pr2.salt || {};
-              pr2.salt.was = { colors: (sl && sl.colors | 0) || 0, scatter: (sl && sl.scatter | 0) || 0,
-                vary: pr2.vary | 0, tension: pr2.tension | 0, reroll: pr2.reroll | 0 };
-              pr2.salt.colors = 0; pr2.salt.scatter = 0;
-              delete pr2.vary; delete pr2.tension; delete pr2.reroll;
+            if (_AMB_SALT_OPTS.some((k) => _ambVarOptLive(c, k) > 0)) {
+              _AMB_SALT_OPTS.forEach((k) => _ambVarOptSet(c, k, false));
             } else {
-              // ON — whatever it was, or a plain default if it has never been on.
-              const w = (sl && sl.was && typeof sl.was === 'object') ? sl.was : null;
-              pr2.salt = pr2.salt || {};
-              pr2.salt.colors = w ? Math.max(0, Math.min(7, w.colors | 0)) : 3;
-              pr2.salt.scatter = w ? Math.max(0, Math.min(100, w.scatter | 0)) : 0;
-              const put = (k, v) => { const n = Math.max(0, Math.min(100, v | 0)); if (n > 0) pr2[k] = n; else delete pr2[k]; };
-              put('vary', w ? w.vary : 0); put('tension', w ? w.tension : 0); put('reroll', w ? w.reroll : 0);
-              if (pr2.salt.was) delete pr2.salt.was;
+              const w = (pr2.salt && pr2.salt.was && typeof pr2.salt.was === 'object') ? pr2.salt.was : null;
+              if (w) {
+                const m = _ambVarOffOf(c, 'prog', true);
+                _AMB_SALT_OPTS.forEach((k) => { if ((w[k] | 0) > 0 && !(m[k] | 0)) m[k] = w[k] | 0; });
+                delete pr2.salt.was;
+              }
+              let any = false;
+              _AMB_SALT_OPTS.forEach((k) => { if (_ambVarOptMem(c, k) > 0) { _ambVarOptSet(c, k, true); any = true; } });
+              if (!any) _ambVarOptSet(c, 'colors', true);   // never on before: a plain default
             }
             persist();
             try { _ambSyncControls(E); } catch (e) {}
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            try { _ambRenderVarBar(E); } catch (e) {}
             try { _ambRenderScheduler(E); } catch (e) {}
           }); }
+        // ✺ ONE SWITCH PER OPTION on 🧂 Salt and ↔ Rubato (the dials' own labels).
+        // Delegated on the two rows: they are MOVED into the popover when it opens,
+        // never rebuilt, so a row-level listener travels with them.
+        { const _varClick = (ev) => {
+            const bt = ev.target.closest && ev.target.closest('.ambient-var-opt[data-varopt]'); if (!bt) return;
+            const k = bt.getAttribute('data-varopt');
+            if (!_AMB_VAR_OPTS[k] || _AMB_VAR_OPTS[k].store !== 'prog') return;
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            _ambVarOptToggle(c, k);
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            try { _ambRenderVarBar(E); } catch (e) {}
+            try { _ambRenderScheduler(E); } catch (e) {}
+          };
+          ['ambient-prog-saltrow', 'ambient-prog-rubatorow'].forEach((id) => { const r = G(id); if (r) r.addEventListener('click', _varClick); });
+        }
         [['ambient-salt-colors', 'colors', 7], ['ambient-salt-scatter', 'scatter', 100]].forEach(pr => {
           const el = G(pr[0]); if (!el) return;
           el.addEventListener('input', () => {
@@ -57690,6 +57999,7 @@
             c.prog.salt[pr[1]] = Math.max(0, Math.min(pr[2], parseInt(el.value, 10) || 0));
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}   // readout tracks the knobs live
+            try { _ambVarOptPaint(E, G('ambient-prog-saltrow'), c); } catch (e) {}   // a drag turns an OFF option on
           });
         });
         // ↔ Rubato — its own store, so its own handler. An absent/zero amount is
@@ -57701,6 +58011,8 @@
             if (v > 0) c.prog.rubato = { amount: v }; else delete c.prog.rubato;
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            try { _ambVarOptPaint(E, G('ambient-prog-rubatorow'), c); } catch (e) {}
+            try { _ambRenderVarBar(E); } catch (e) {}
           }); }
         // 🎲 Harmony re-roll amount → cfg.prog.reroll. Read per onset like salt,
         // so a change is heard within the lookahead; the readout names what this
@@ -57713,6 +58025,7 @@
             if (v) c.prog[pr[1]] = v; else delete c.prog[pr[1]];
             persist();
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            try { _ambVarOptPaint(E, G('ambient-prog-saltrow'), c); } catch (e) {}
           });
         });
         // ↻ order selects → cfg.prog.order (mode '' deletes; normalize prunes).
@@ -57806,6 +58119,15 @@
               }).join('');
           }
           const un = G('ambient-nov-undo'); if (un) un.hidden = !_ambNovUndo;
+          // ✺ Novelty on/off: lit = Apply's result is what plays; dim = nothing to
+          // compare yet (still pressable — it explains itself instead).
+          const ab = G('ambient-nov-ab');
+          if (ab) {
+            const on = !!_ambNovUndo && !_ambNovRedo;
+            ab.classList.toggle('active', on);
+            ab.classList.toggle('ambient-var-dim', !_ambNovUndo);
+            ab.setAttribute('aria-pressed', on ? 'true' : 'false');
+          }
         };
         { const amtEl = G('ambient-nov-amt');
           if (amtEl) amtEl.addEventListener('input', () => {
@@ -57835,6 +58157,20 @@
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
             _novPaint();
             try { if (typeof showToast === 'function') showToast('\u273a ' + n + ' settings updated \u2014 \u21b6 Undo is in the panel', { ms: 4000 }); } catch (e) {}
+          }); }
+        { const ab = G('ambient-nov-ab');
+          if (ab) ab.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const st = _ambNovCompare(E, c);
+            if (st === null) {
+              try { if (typeof showToast === 'function') showToast('\u273a Apply first \u2014 then this switches between what it wrote and what was there before.', { ms: 3500 }); } catch (e) {}
+              return;
+            }
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try { _ambRenderProgOverview(E); } catch (e) {}
+            try { _ambSaltReadoutSync(E, true); } catch (e) {}
+            _novPaint();
           }); }
         { const un = G('ambient-nov-undo');
           if (un) un.addEventListener('click', () => {

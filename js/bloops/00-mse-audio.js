@@ -113,6 +113,9 @@
   // playing encoded mix. sourceNode is tapped via a worklet; el.src becomes
   // the ManagedMediaSource.
   async function start(ctx, sourceNode, el, log) {
+    const startedAt = Date.now();   // the attach budget is measured from here
+    let servoOn = true;   // localStorage bloopsMseServo='0' pins rate at 1.000 (A/B the servo)
+    try { if (localStorage.getItem('bloopsMseServo') === '0') servoOn = false; } catch (e) {}
     if (typeof ManagedMediaSource === 'undefined' || typeof AudioEncoder === 'undefined') return false;
     if (!ManagedMediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"')) return false;
     const sr = ctx.sampleRate;
@@ -144,22 +147,84 @@
 
     // 2. MMS + element. MMS is picky: remote playback must be disabled
     // BEFORE src is assigned, and the element should live in the DOM.
-    log('MSE stage: creating MMS');
-    const mms = new ManagedMediaSource();
-    try { el.pause(); } catch (e) {}
-    el.srcObject = null;
-    el.removeAttribute('src');
-    el.disableRemotePlayback = true;
-    try { if (!el.isConnected) { el.style.display = 'none'; document.body.appendChild(el); } } catch (e) {}
-    el.src = URL.createObjectURL(mms);
-    log('MSE stage: waiting for sourceopen (readyState=' + mms.readyState + ')');
-    const opened = await new Promise((res) => {
-      const t = setTimeout(() => res(false), 4000);
-      mms.addEventListener('sourceopen', () => { clearTimeout(t); res(true); }, { once: true });
-    });
-    if (!opened) { log('MSE sourceopen never fired (readyState=' + mms.readyState + ')'); return false; }
-    log('MSE stage: source open');
-    const sb = mms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+    // ATTACHING THE MMS IS A RETRY, NOT A ONE-SHOT — and the budget is bounded
+    // by the CALLER. `armMse` races start() against 8 s and arms the AVAudioEngine
+    // fallback if the race wins; `armNativePlugin` only tests
+    // `__BLOOPS_MSE_ACTIVE` at call time, so a LATE success would leave BOTH
+    // paths audible (the "quiet voice then a loud copy" duplication). So every
+    // attempt must finish comfortably inside 8 s.
+    //
+    // Why a retry at all: whether `sourceopen` fires depends on HOW EARLY in boot
+    // the MMS is attached, and nothing else found so far. The run that worked
+    // created it at 4.18 s (only because `audioWorklet.addModule` happened to
+    // take 3.2 s) and opened 0.13 s later; the two that failed created it at
+    // 0.52 s and 0.43 s and never opened, `readyState` stuck at `closed`.
+    // DEMAND IS NOT THE GATE — the nudge below does give the element demand
+    // (flight 2026-09-28 11:04 logs `mseEl event: waiting` at 0.47 s, then
+    // `stalled`), and it still did not open. So retry across the early-boot
+    // window and log what differs per attempt rather than guessing again.
+    // Budget from when start() BEGAN, not from here: addModule above took 3.2 s
+    // in one flight, and a deadline measured from this line would have pushed the
+    // last attempt past the caller's race — the one thing that must not happen.
+    // Bail outright if boot has already eaten the budget; a refusal is safe, a
+    // late success is not.
+    let mms = null, sb = null, attempt = 0;
+    const attachBy = startedAt + 6800;
+    if (Date.now() >= attachBy) {
+      log('MSE: boot too slow to attach safely (' + (Date.now() - startedAt) + 'ms used) — leaving it to the fallback');
+      return false;
+    }
+    while (Date.now() < attachBy) {
+      attempt++;
+      mms = new ManagedMediaSource();
+      try { el.pause(); } catch (e) {}
+      el.srcObject = null;
+      el.removeAttribute('src');
+      el.disableRemotePlayback = true;
+      try { if (!el.isConnected) { el.style.display = 'none'; document.body.appendChild(el); } } catch (e) {}
+      el.src = URL.createObjectURL(mms);
+      if (attempt === 1) log('MSE stage: waiting for sourceopen (readyState=' + mms.readyState + ')');
+      const opened = await new Promise((res) => {
+        let done = false;
+        // DECLARED BEFORE `finish` CLOSES OVER THEM. `finish` is reachable from the
+        // sourceopen listener, which is registered before kick() runs — so if that
+        // event ever dispatched synchronously, `clearInterval(nudge)` would be a
+        // temporal-dead-zone throw. That is not hypothetical: the same shape took
+        // the whole broadcast down on 2026-09-28 (`Cannot access 'servoOn' before
+        // initialization` -> silent fallback). `npm run lint` pins it.
+        let nudge = 0, t = 0;
+        const finish = (v) => { if (!done) { done = true; clearInterval(nudge); clearTimeout(t); res(v); } };
+        mms.addEventListener('sourceopen', () => finish(true), { once: true });
+        // give the element real demand; with no source buffer it just stalls
+        const kick = () => { try { el.play().catch(() => {}); } catch (e) {} };
+        kick();
+        nudge = setInterval(kick, 300);
+        t = setTimeout(() => finish(false), 1200);
+      });
+      if (opened) {
+        log('MSE stage: source open (attempt ' + attempt + ', ' + Math.round(performance.now()) + 'ms into boot)');
+        log('MSE servo: ' + (servoOn ? 'ON' : 'OFF (bloopsMseServo=0, rate pinned 1.000)'));
+        // the nudge left the element PLAYING — hand it back to the cushion gate,
+        // or the first segment to land plays against a ~0 reserve
+        try { el.pause(); } catch (e) {}
+        sb = mms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+        break;
+      }
+      // the one line that will name the gate if this still fails
+      log('MSE attach ' + attempt + ' no-open: mms=' + mms.readyState
+        + ' elRS=' + el.readyState + ' net=' + el.networkState
+        + ' err=' + (el.error ? el.error.code : '-')
+        + ' paused=' + el.paused
+        + ' act=' + (navigator.userActivation ? navigator.userActivation.hasBeenActive : '?')
+        + ' vis=' + document.visibilityState
+        + ' t=' + Math.round(performance.now()) + 'ms');
+      try { URL.revokeObjectURL(el.src); } catch (e) {}
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!sb) {
+      log('MSE sourceopen never fired after ' + attempt + ' attempts — broadcast unavailable');
+      return false;
+    }
     let queue = [], appending = false;
     const pump = () => {
       if (appending || !queue.length || sb.updating) return;
@@ -212,13 +277,29 @@
     // JITTER: with no cushion the element rides ~0.05s behind the encoder and
     // every main-thread hiccup starves it (measured). Hold playback until a
     // real cushion exists; after a foreground stall, rebuild it before resuming.
-    const CUSHION = 1.2;        // deep cushion: stall recovery
+    // THE SERVO MODULE OWNS THE TUNABLES so one number has one home: CUSHION is
+    // both the cushion gate's deep target and the servo's ride target, and two
+    // copies of it would be two mechanisms. 00-mse-servo.js is pure arithmetic
+    // and is pinned by `node test/mse-servo.js` (which replays real device
+    // traces) — keep the servo's decisions THERE, not inline here, or the gate
+    // stops testing what the app runs.
+    const SERVO = (typeof window !== 'undefined' && window._bloopsMseServo) || null;
+    const CUSHION = SERVO ? SERVO.DEFAULTS.cushion : 1.2;   // deep cushion: stall recovery
     const PLAY_CUSHION = 0.6;   // start-of-play cushion — the depth that rode a real
                                 // device lock untouched; halves press-to-sound vs 1.2
     let needCushion = true;
     let cushionTarget = CUSHION;
+    // preservesPitch ON makes a rate warp a TEMPO trim, not a transpose: a
+    // semitone that snaps back at unlock would be unmissable, a few percent of
+    // tempo drift while the phone is in a pocket is not.
+    const SV = SERVO ? SERVO.create() : null;   // servo state; null = servo unavailable
+    let rate = 1;         // last rate WRITTEN to the element (the servo owns its own)
+    try { el.preservesPitch = true; } catch (e) {}
+    try { el.webkitPreservesPitch = true; } catch (e) {}
     let stopHold = false;       // transport stopped → the element stays PAUSED
     let userHold = false;       // lock-screen pause → the element stays PAUSED
+    let coverUntil = 0;         // media time the stop-cover mute must reach (0 = none)
+    let coverGen = 0;           // generation, so a stale backstop cannot cut a newer cover short
     let fgMode = false;         // foreground: the low-latency stream path is
                                 // audible and THIS element rides its cushion
                                 // MUTED, ready to take over at hide/lock
@@ -277,9 +358,23 @@
       }
     };
     el.addEventListener('waiting', () => {
-      if (document.visibilityState === 'visible' && !stopHold) {
+      if (stopHold) return;
+      if (document.visibilityState === 'visible') {
         try { el.pause(); } catch (e) {} needCushion = true; cushionTarget = CUSHION;
+        return;
       }
+      // HIDDEN: a starve here used to fall through to NOTHING, and the 250 ms
+      // loop then re-play()ed into an empty buffer — four pause→playing cycles
+      // in 9 s (flight 2026-09-28). Pausing is not available as a recovery
+      // while hidden (a paused renderer is what iOS reclassifies, popping the
+      // session), so drop the consumer to the floor instead and let the servo
+      // walk the reserve back up while the element stays audible throughout.
+      // Undershoot the measured production rate so the reserve rebuilds; the
+      // servo takes it from here on its next (throttled, ~2 s) tick.
+      if (!SV) return;
+      rate = SERVO.starve(SV);
+      try { el.playbackRate = rate; } catch (e) {}
+      log('starve while hidden — consumer to ' + rate.toFixed(3) + ', staying audible w=' + (Date.now() % 1000000));
     });
     // TRANSPORT EDGES on a FAST poll — the REQUIREMENT is that music stops the
     // INSTANT stop is pressed, and the 250 ms maintenance tick is too coarse
@@ -328,20 +423,41 @@
           // renderer is the "playback finished" signal that makes iOS
           // re-evaluate the session (flight: stop → ended → interrupted 1.35 s
           // later = the tick, reintroduced). The element plays THROUGH the
-          // residual buffered music under the cover mute instead: the in-flight
-          // pre-mask audio is ≤ ~0.5 s (tap block + encoder + segment batch),
-          // the cushion stays intact, and nothing ends.
+          // residual buffered music under the cover mute instead: the cushion
+          // stays intact and nothing ends.
+          // THE COVER IS MEASURED, NEVER A FIXED DELAY. It was 900 ms on the
+          // claim that in-flight pre-mask audio is ≤ ~0.5 s; flight 2026-09-28
+          // measured 1.25-1.56 s all session, so the last 0.4-0.7 s of pre-stop
+          // music played out ~0.9 s AFTER the press — the intermittent "blip at
+          // stop". ts/1e6 is the production head, so everything before it is
+          // pre-gate material and everything after is true silence: unmute when
+          // the PLAYHEAD passes it, whatever the reserve happens to be. The
+          // rate servo deepens the reserve, which would have made a fixed cover
+          // steadily worse.
           try { el.muted = true; } catch (e) {}
+          coverUntil = ts / 1e6 + (CHUNK / sr);
+          // backstop: a stalled playhead must never leave the element muted —
+          // an OS-visible mute is the reclassification trigger this all avoids.
+          // Generation-tagged: stop → play → stop inside 4 s otherwise lets the
+          // FIRST press's backstop fire against the SECOND press's cover.
+          const gen = ++coverGen;
           setTimeout(() => {
-            try { if (stopHold && !fgMode) el.muted = false; } catch (e) {}
-          }, 900);
-          log('stop: gated immediately (element plays through under mute) w=' + (Date.now() % 1000000));
+            try {
+              if (stopHold && !fgMode && coverUntil && coverGen === gen) {
+                coverUntil = 0; el.muted = false;
+                log('stop cover released by backstop w=' + (Date.now() % 1000000));
+              }
+            } catch (e) {}
+          }, 4000);
+          log('stop: gated immediately (element plays through under mute, cover to media '
+            + coverUntil.toFixed(2) + ' = +' + (coverUntil - el.currentTime).toFixed(2) + 's) w=' + (Date.now() % 1000000));
         }
         // PLAY EDGE: everything buffered ahead of the playhead is stale
         // content from before/during the stop — skip it, and rebuild only the
         // small start cushion so sound arrives ~0.6-0.9 s after the press.
         if (on === true && wasOn === false) {
           stopHold = false;
+          coverUntil = 0;   // the cushion gate owns the unmute from here
           try { if (window._bloopsStopGate) window._bloopsStopGate(false); } catch (e) {}
           if (sb.buffered.length) {
             const liveEnd = sb.buffered.end(sb.buffered.length - 1);
@@ -354,7 +470,8 @@
         wasOn = on;
       } catch (e) {}
     }, 80);
-    let mtick = 0;
+    let mtick = 0;        // wall ms of the last periodic MSESTAT line
+    let lastThin = 0;     // wall ms of the last THIN-reserve warning
     setInterval(() => {
       try {
         // NOTHING may resume the element while the transport is stopped or a
@@ -362,8 +479,21 @@
         // blip factory in every earlier design (a paused element + a
         // refilling buffer = a deferred tail).
         if (stopHold || userHold) {
+          // a held element consumes nothing — the servo has no error to act on
+          if (rate !== 1) {
+            rate = 1;
+            if (SV) SERVO.reset(SV);
+            try { el.playbackRate = 1; } catch (e) {}
+          }
           if (userHold) { if (!el.paused) { try { el.pause(); } catch (e) {} } }
           else {
+            // COVER RELEASE: the playhead has passed the last pre-gate material,
+            // so what follows is true silence and the unmute is inaudible.
+            if (coverUntil && el.currentTime >= coverUntil) {
+              coverUntil = 0;
+              if (!fgMode) { try { el.muted = false; } catch (e) {} }
+              log('stop cover released at media ' + el.currentTime.toFixed(2) + ' w=' + (Date.now() % 1000000));
+            }
             // stopped = the element plays true silence UNMUTED (the stop gate
             // holds the graph at zero) — never re-mute here, an OS-visible
             // mute is exactly the reclassification trigger being avoided.
@@ -393,15 +523,74 @@
             el.play().catch(() => {});
           }
         }
-        if (++mtick % 20 === 0 && sb.buffered.length) {
+        // WALL-CLOCK cadence, not a tick count: the loop is throttled to ~2 s
+        // while hidden, so `% 20` sampled every 40 s there and a brief starve
+        // fell between samples entirely.
+        if (sb.buffered.length && Date.now() - mtick >= 5000) {
+          mtick = Date.now();
           log('MSESTAT elT=' + el.currentTime.toFixed(2)
             + ' bufEnd=' + sb.buffered.end(sb.buffered.length - 1).toFixed(2)
             + ' seq=' + seq + ' playing=' + !el.paused
+            + ' rate=' + el.playbackRate.toFixed(3) + ' vis=' + document.visibilityState
+            // the ENCODER HEAD, so a harvested log yields a faithful production
+            // trace: bufEnd is quantised to 0.372 s segments, and sampling that
+            // every 5 s aliases to +/-7.4% — which is indistinguishable from real
+            // production wobble and poisoned the servo gate's first fixtures.
+            + ' head=' + (ts / 1e6).toFixed(3)
             + ' outLag=' + (window._bloopsMseOutLag ? window._bloopsMseOutLag().toFixed(2) : '?'));
         }
         if (!sb.buffered.length) return;
         const end = sb.buffered.end(sb.buffered.length - 1);
         const lag = end - el.currentTime;
+        // THE RATE SERVO — rate MATCHING, not depth building. The element consumes
+        // at playbackRate × wall exactly, while production is NOT realtime (measured
+        // 0.873 and 0.907 across two hidden stretches on 2026-09-28, which starved
+        // it to 'ended' twice). Why feed-forward rather than feedback, why the
+        // derivative avoids `lag`, and why the slew cap is per second: all in
+        // js/bloops/00-mse-servo.js, pinned by `node test/mse-servo.js`.
+        //
+        // KILL SWITCH — `localStorage.bloopsMseServo = '0'` pins the rate at 1.000
+        // and reverts to the pre-servo behaviour, so "is the servo causing this?"
+        // is an A/B you can run in seconds instead of a rebuild. It is a real
+        // question to be able to ask: the servo's first version was itself heard
+        // as a square-wave tremolo, and only a comparison separates a servo
+        // artifact from a starvation artifact by ear.
+        if (!servoOn) {
+          if (rate !== 1) {
+            rate = 1;
+            if (SV) SERVO.reset(SV);
+            try { el.playbackRate = 1; } catch (e) {}
+          }
+        } else if (SV && !needCushion && !el.paused) {
+          // ALL the arithmetic lives in 00-mse-servo.js, replayed against real
+          // device traces by `node test/mse-servo.js`. Here we only supply the
+          // physical readings and apply the answer.
+          //   lag      the reserve the element can actually PLAY (segment-quantised)
+          //   prodHead the encoder's head, ~46 ms resolution
+          //   headroom the same reserve at that finer resolution — the servo takes
+          //            its derivative on this, never on lag (one 0.372 s segment
+          //            step inside a 2 s window fakes a slope of +/-0.186/s, which
+          //            is the square-wave tremolo of 2026-09-28)
+          const prodHead = ts / 1e6;
+          const want = SERVO.step(SV, {
+            nowS: Date.now() / 1000,
+            lag: lag,
+            prodHead: prodHead,
+            headroom: prodHead - el.currentTime,
+          });
+          if (Math.abs(want - rate) > 0.0005) {
+            rate = want;
+            try { el.playbackRate = rate; } catch (e) {}
+          }
+          // A near-empty reserve is the one event worth a line of its own — the
+          // periodic stat can still miss it, and it is the direct precursor of
+          // every 'ended'. Rate-limited so a sustained dip cannot flood the log.
+          if (lag < 0.4 && Date.now() - lastThin > 1000) {
+            lastThin = Date.now();
+            log('THIN reserve=' + lag.toFixed(2) + ' rate=' + rate.toFixed(3)
+              + ' vis=' + document.visibilityState + ' w=' + (Date.now() % 1000000));
+          }
+        }
         // NEVER SEEK BACKWARD. When production stalls (a lock-time context
         // suspension, or the user stopping the transport), the buffered end
         // freezes — a rewind then replays the same tail forever, which is

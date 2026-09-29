@@ -12,7 +12,7 @@
     // localStorage 'bloopsCoreVoices'.
     //
     // Core-supported kinds (each spectrally calibrated against recorded Tone
-    // output): sine, fm, bass, bell, xylo, am, pad — plain Bloom notes only
+    // output): sine, fm, bass, bell, xylo, am, pad, mono — plain Bloom notes only
     // (no Design features, no glide, no per-note FX). See _coreVoices.eligible.
     const _coreVoices = (() => {
       const SLOTS = 16;
@@ -24,8 +24,11 @@
       // layer teardown (Phase-1 voice-only slots are never released).
       const stripByKey = new Map();
       const freeSlots = [];
+      // mono 15 (2026-09-29): the Tone.MonoSynth 'mono' preset — until then the
+      // one node-only voice in a measured project (~50 WebAudio nodes, ~2 ms of
+      // main thread per note). Calibrated by test/calib-mono.js.
       const KINDS = { sine: 0, fm: 1, bass: 2, bell: 3, xylo: 4, am: 5, pad: 6,
-                      duo: 7, kick: 9, metal: 10, pluck: 11, wavetable: 12 };
+                      duo: 7, kick: 9, metal: 10, pluck: 11, wavetable: 12, mono: 15 };
       // basic waves render as kind 13 with a wave id param
       const WAVES = { square: 0, triangle: 1, sawtooth: 2, pulse: 3, fat: 4 };
       // kinds that accept Design params (filter/env/matrix/osc) in the core
@@ -252,6 +255,9 @@
         const h = stripByKey.get(key);
         if (!h) return;
         stripByKey.delete(key);
+        // Notes this layer already sent ahead (core notes skip the build queue)
+        // would otherwise sound into whatever layer claims the slot next.
+        if (ready) node.port.postMessage({ cmd: 'cancelFrom', slot: h.slot, t: 0 });
         _post({ cmd: 'strip', fn: 'strip_enable', a: [h.slot, 0] });
         try { h.input.dispose(); } catch (e) {}
         try { node.disconnect(h.slot); } catch (e) {}
@@ -499,6 +505,9 @@
       function eligible(type, p, held) {
         const kf = kindFor(type);
         if (!kf) return false;
+        // Per-voice kill switch for the newest kind — `bloopsCoreMono(false)`
+        // sends `mono` back to Tone's MonoSynth, for an A/B or a retreat.
+        if (kf.kind === 15) { try { if (localStorage.getItem('bloopsCoreMono') === '0') return false; } catch (e) {} }
         if (type === 'wavetable' && (p.wtPosition != null || p.wavetableMix)) return false; // design wavetable → node engine
         if (_hasDesign(p)) {
           // RETREAT LIFTED (2026-07-16): design notes render in the core again
@@ -667,6 +676,10 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
+      // Every key holding a core slot — so a Stop can reach layers whose notes
+      // live ONLY in the worklet (they bypass the build queue and are no voice
+      // object anywhere else).
+      function keys() { return Array.from(slotByKey.keys()); }
       // ---- OFFLINE SESSION (the Bloom bounce) ------------------------------
       // A SECOND voice-processor node, built on whatever context is current —
       // called from inside Tone.Offline, that is the OFFLINE context, so core
@@ -859,7 +872,7 @@
         off.taken++;
         return true;
       }
-      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
+      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, keys, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node,
                offlineBegin, offlineEnd, offlineFlush, offlineStats, offlineNode, offlineActive: () => !!off };
     })();
@@ -876,6 +889,11 @@
         if (on) _coreVoices.init();
         else _coreVoices.stopAll();
         console.info('[bloops-core] core voices ' + (on ? 'ON' : 'OFF') + ' (new notes route accordingly)');
+      };
+      window.bloopsCoreMono = (on) => {
+        if (typeof on === 'undefined') { try { return localStorage.getItem('bloopsCoreMono') !== '0'; } catch (e) { return true; } }
+        try { localStorage.setItem('bloopsCoreMono', on ? '1' : '0'); } catch (e) {}
+        console.info('[bloops-core] mono voice on the ' + (on ? 'CORE' : 'TONE MonoSynth') + ' (new notes route accordingly)');
       };
       window.bloopsCoreStrips = (on) => {
         if (typeof on === 'undefined') return _coreVoices.stripsEnabled();

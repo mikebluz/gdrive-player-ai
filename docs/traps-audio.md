@@ -74,7 +74,7 @@
 
 Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core (`dsp/`, built by `dsp/build.sh` → `js/bloops/core/bloops-dsp.wasm`) inside ONE AudioWorklet (`js/bloops/core/voice-processor.js`, bridged by `js/bloops/03b-core-voices.js`). **Default ON** — `window.bloopsCore(false)` / `window.bloopsCoreStrips(false)` are the kill switches (persisted localStorage `'0'`); the Tone node engine remains the automatic fallback (cold start, ineligible notes, slot exhaustion, pads/held notes, offline export). Rules:
 
-- **Any DSP change must keep `node test/golden-render.js` green** (82 bit-exact sections); an
+- **Any DSP change must keep `node test/golden-render.js` green** (83 bit-exact sections); an
   intentional audio change re-baselines with `--update` IN THE SAME COMMIT. `dsp/build.sh` runs the
   gate after every build. Check the blast radius: only the sections you meant to move should drift.
 - **Calibrate against RECORDED node output, never derive from Tone internals** (proven wrong
@@ -82,6 +82,17 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
   ZEROES the destination param; cycle-member DelayNodes keep true delay with the quantum penalty on the
   feedback edge; `Tone.Panner` is channelCount 1 (a mono downmix — which is why the core strip has its
   own width-preserving pan law, and why per-note pan gives a layer no audible spread on the node path).
+- **PORTING A TONE VOICE: its filter moves in HERTZ, squared — and Q is dB.** Tone's
+  `FrequencyEnvelope` is LINEAR in Hz (base + base·(2^oct−1)·env), and a `MonoSynth`'s
+  `filterEnvelope` carries `exponent: 2`, so the cutoff follows env², not env. An exponential sweep
+  measured ~6 dB off per harmonic and a linear one ~24 dB; env² landed at ≤0.5 dB. Envelope decay /
+  release time constant = ln(dur+1)/ln(200). Per-section linear Q = 10^(Q/20) (Tone Q 6 → 2.0).
+  Recipe: `test/calib-mono.js` renders Tone.Offline against the wasm in Node and reports the constant
+  GAIN offset apart from the per-harmonic SHAPE error — fix the shape first, then set `GAIN[kind]`.
+  A new kind gets a per-voice kill switch (`bloopsCoreMono`) and a UI A/B before it is trusted.
+- **Core-eligible Bloom notes BYPASS the deferred build queue** (`playNote` → `_playNoteNow` before
+  `_vqShouldDefer`): they cost ~nothing to start, and queueing them behind node builds is what let a
+  hidden page (timers throttled) drop notes. Only node voices queue.
 - **The worklet must always stay pulled** (keep-pull sink on output 16) and `init()` must reset ALL
   core globals, or golden loses determinism. That send bus is GLOBAL — one summed send feeding ONE
   reverb, re-claimed by whichever engine builds strips.

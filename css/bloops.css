@@ -3567,6 +3567,33 @@
     .ambient-order-toggle.active { color: #e9e4f8; background: rgba(159,122,234,0.22); border-color: #9f7aea; }
     @media (hover: hover) { .ambient-order-toggle:not(.active):hover { color: #cbb8ee; border-color: #4a3d6b; } }
     .ambient-prog-order > .ambient-select { flex: 1 1 0; width: auto; min-width: 0; }
+    /* ✺ THE ONE VARIATION SWITCH (2026-09-28, "all options in Variation need on/off
+       toggles"). Every option's LABEL is its switch — Salt's five dials, ↔ Rubato,
+       each Groove macro, Push / pull, ✺ Novelty, 🌒 Arc — so they share ↻ Order's
+       look exactly: the option's name on the face, lit while it plays. 🌒 Arc
+       carried `.active` with no style at all, so on and off looked the same. */
+    .ambient-var-toggle {
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 6px;
+      padding: 3px 9px; cursor: pointer; touch-action: manipulation;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #8b7fa8;
+      white-space: normal; overflow-wrap: anywhere; min-width: 0; max-width: 100%;
+    }
+    .ambient-var-toggle.active { color: #e9e4f8; background: rgba(159,122,234,0.22); border-color: #9f7aea; }
+    @media (hover: hover) { .ambient-var-toggle:not(.active):hover { color: #cbb8ee; border-color: #4a3d6b; } }
+    /* dim = nothing to switch yet (✺ Novelty before an Apply) — still pressable,
+       so the press can say why instead of doing nothing. */
+    .ambient-var-toggle.ambient-var-dim { opacity: 0.5; }
+    /* an option switched OFF: its control stays visible at the value it will come
+       back at, dimmed — dragging it switches it back on. */
+    .ambient-var-isoff input[type=range],
+    .ambient-var-isoff .v2-knob,
+    .ambient-var-isoff .ambient-salt-in,
+    .ambient-var-isoff .ambient-groove-val,
+    .ambient-var-isoff .ambient-groove-pushsl,
+    .ambient-var-isoff .ambient-groove-pv { opacity: 0.4; }
+    .ambient-salt-dials .ambient-salt-dial > .ambient-var-opt { text-align: center; }
+    .ambient-groove-macro > .ambient-var-opt { flex: 0 0 auto; min-width: 68px; }
+    .ambient-groove-pushhead > .ambient-var-opt { flex: 0 0 auto; }
     .ambient-prog-salt .salt-lbl { color: #9f7aea; font-weight: 600; }
     .ambient-prog-salt .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; }
     /* Its own row under the six inputs — `.ambient-prog-salt` is a wrapping flex
@@ -15526,6 +15553,7 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"]  { --vxr: 90,169,230;  --vxt: #bfe0fb; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"]   { --vxr: 230,163,90;  --vxt: #f7dcbb; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:arc"]     { --vxr: 90,200,160;  --vxt: #c2efdd; }
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:groove"]  { --vxr: 236,110,140; --vxt: #fcd3dd; }
     /* ❄ Capture is the quiet neutral — an ACTION, not an axis. */
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="capture"]     { --vxr: 139,149,181; --vxt: #aab4d2; }
     @media (hover: hover) {

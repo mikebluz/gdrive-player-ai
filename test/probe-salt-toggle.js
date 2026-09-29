@@ -59,7 +59,9 @@ const ok = (name, cond, detail) => {
     const p = _masterEng.getCfg().prog;
     return { colors: (p.salt || {}).colors, scatter: (p.salt || {}).scatter,
              vary: p.vary, tension: p.tension, reroll: p.reroll,
-             was: (p.salt || {}).was || null,
+             // the master is the five per-option switches now: its memory is
+             // `prog.varOff` (2026-09-28), the same store each dial's switch uses
+             was: p.varOff || null,
              cfgOn: !!_ambProgSaltCfg(_masterEng.getCfg()) };
   });
   const tapToggle = () => page.evaluate(() => {
@@ -97,7 +99,7 @@ const ok = (name, cond, detail) => {
   // pruned, and the remembered values would have gone with it.
   const survived = await page.evaluate(() => {
     const E = _masterEng; E.getCfg(); E.getCfg(); E.getCfg();
-    return (E.getCfg().prog.salt || {}).was || null;
+    return E.getCfg().prog.varOff || null;   // the per-option memory (2026-09-28)
   });
   ok('…and survives normalize, which prunes an all-zero salt',
     !!survived && survived.colors === 3, JSON.stringify(survived));

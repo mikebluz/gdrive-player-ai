@@ -30,7 +30,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 - **`_normalizeAmbientCfg` is the ONE migration chokepoint** and runs on EVERY `getCfg()`, replacing
   objects — a value read before a `getCfg` is an orphan. New fields are ADDITIVE and ABSENT BY DEFAULT.
 - **The gates are the contract:** `node test/golden-render.js` (DSP, bit-exact), the invariant harness,
-  `arch-parity`, `mod-parity`, `test:partseq`, `test:ui`. An intentional output change re-baselines
+  `arch-parity`, `mod-parity`, `test:partseq`, `test:ui`, `npm run lint`, `test/mse-servo.js`. An intentional output change re-baselines
   deliberately IN THE SAME COMMIT; never silent drift. Never edit source while a gate runs; run
   mod-parity ALONE.
 - **Verify at the right scale.** A label or hint change: one targeted check
@@ -112,6 +112,8 @@ npm run samples  # Import a folder of audio into the shipped sample library (too
 node test/bloom-mod-parity.js   # B2 mod-source parity gate (needs npm start running; --update re-baselines deliberately)
 node test/arch-parity.js        # arrangement-clock gate: sections/parts/repeats/keys/salt (needs npm start; --update re-baselines)
 npm run test:partseq            # per-iteration layer sequences (L.partSeqs): migration, pass indexing, the four cascade rules, own-phrase restore (needs npm start)
+npm run lint                    # TDZ gate (`no-use-before-define`) — a RATCHET: enforced on the files already clean, legacy files listed in eslint.config.mjs and that list may only SHRINK. Catches the class where a `let` used above its declaration throws into a catch and degrades SILENTLY (cost a build cycle on 2026-09-28).
+node test/mse-servo.js          # MSE broadcast rate-servo gate — pure arithmetic, no device/server/browser. Replays REAL production traces harvested from device flight logs plus synthetic shapes. Asserts no starvation (dropout), bounded rate slew per SECOND (a jump = tremolo) and bounded wander on steady production (a noisy control signal = slow tremolo). Poison-verified against 5 mutations incl. both real 2026-09-28 bugs.
 npm run test:ui                 # UI LIFECYCLE gate — drives every control on the v2 layer card under TOUCH, in the app's real order (init → card → panel rebuild → interact). Poison-verified: removing the v2 skip from the panel's wiring sweeps fails 4 named checks.
 npm run test:ui -- --only=<regex>   # run TO the last check whose name matches, earlier checks quiet (they cannot be skipped — the probes share page state); ~15 s for an early check vs ~2:30 for the file. No match = exit 2.
 ```

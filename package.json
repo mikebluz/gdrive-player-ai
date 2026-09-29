@@ -18,7 +18,8 @@
     "stoch": "node tools/stochastic-matrix.mjs",
     "test:seam": "node test/seam.js",
     "test:replay": "node test/replay.js",
-    "test:vizdrag": "node test/viz-drag.js"
+    "test:vizdrag": "node test/viz-drag.js",
+    "lint": "eslint js/ test/ tools/"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@electron/packager": "^18.3.6",
     "electron": "^33.4.11",
+    "eslint": "^9.39.5",
     "puppeteer-core": "^25.3.0"
   }
 }

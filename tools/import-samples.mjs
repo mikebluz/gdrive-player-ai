@@ -29,10 +29,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEST = path.join(ROOT, 'samples');
 const MANIFEST = path.join(DEST, 'manifest.json');
+// The manifest as it stood BEFORE this run, by file — read now, while it is still
+// intact, because a file this import does not cover is re-listed from it below.
+const PREV_BY_FILE = (() => {
+  try {
+    const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+    return new Map((Array.isArray(m) ? m : (m.samples || [])).map((e) => [e.file, e]));
+  } catch (e) { return new Map(); }
+})();
 
 // Formats a browser can actually decode. AIFF is deliberately absent — Chrome
 // cannot decode it, so importing one would produce a library entry that is
@@ -128,6 +137,7 @@ function rootNoteOf(name) {
 // (sample packs are organised by exactly this distinction), then duration, then
 // a bpm in the name. Duration is only available for WAV without pulling in a
 // decoder, which is why it is not the primary signal.
+const DRUM_HIT_RE = /(^|[\/_ .-])(cymbals?|crash(es)?|rides?|toms?|kicks?|snares?|hi-?hats?|hats?|claps?|rims?(hots?)?|cowbells?|shakers?|percs?)(?=[\/_ .-]|\d|$)/;
 const LOOP_MIN_SEC = 1.6;      // longest one-shot measured in real packs: 0.62s
 const ONESHOT_MAX_SEC = 1.0;
 
@@ -156,6 +166,25 @@ function wavDurationSec(file) {
   } catch (e) { return null; }
 }
 
+// COMPRESSED FILES (.m4a/.mp3/…) have no header this script can read, and a LOOP
+// with no `seconds` plays nothing (the ◐ Loop layer repeats at its length). macOS
+// ships `afinfo`, which reports the exact PLAYABLE frame count — encoder priming
+// and padding excluded, the same samples a browser's decoder hands back (measured
+// 2026-09-29: Chrome decodes an afconvert AAC to exactly those frames, lag 0).
+// Anywhere without afinfo this answers null, as before.
+function codedDurationSec(file) {
+  try {
+    const out = execFileSync('afinfo', [file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 });
+    const valid = out.match(/audio\s+(\d+)\s+valid frames/), rate = out.match(/(\d+)\s+Hz/);
+    if (valid && rate && +rate[1] > 0) return +valid[1] / +rate[1];
+    const est = out.match(/estimated duration:\s*([\d.]+)/);
+    return est ? +est[1] : null;
+  } catch (e) { return null; }
+}
+function durationSec(file) {
+  return /\.wav$/i.test(file) ? wavDurationSec(file) : codedDurationSec(file);
+}
+
 // A tempo stated in the filename — "drum125", "_130_", "128bpm". Bounded to a
 // musically plausible range so a catalogue number or a year cannot masquerade
 // as one. This is what makes a loop USABLE: without it the engine cannot
@@ -181,6 +210,11 @@ function classify(rel, durSec) {
   // tuned instrument however long it is, and long sustained samples (pads,
   // strings, organ) are exactly the ones duration alone would misfile as loops.
   else if (rootNoteOf(rel)) { kind = 'tuned'; why = 'note in the name'; }
+  // A SINGLE DRUM, BY NAME, IS A HIT however long it rings — a crash or a tom
+  // decays past LOOP_MIN_SEC, and the duration rule filed three Oberheim hits
+  // (cymbal 1.7 s / 2.8 s, tom 1.9 s) as loops, where they surfaced in ◐ Loop's
+  // Recording list. A stated bpm still wins (a "tom groove 120" is a loop).
+  else if (!bpm && DRUM_HIT_RE.test(low)) { kind = 'tuned'; why = 'drum hit by name'; }
   else if (durSec != null && durSec >= LOOP_MIN_SEC) { kind = 'loop'; why = durSec.toFixed(1) + 's long'; }
   else if (durSec != null && durSec <= ONESHOT_MAX_SEC) { kind = 'tuned'; why = durSec.toFixed(2) + 's short'; }
   else if (bpm) { kind = 'loop'; why = 'bpm in name'; }
@@ -279,7 +313,7 @@ const prettyName = (rel) => {
     bytes += f.size;
     }
 
-    const cls = classify(f.rel, f.full ? wavDurationSec(f.full) : null);
+    const cls = classify(f.rel, f.full ? durationSec(f.full) : null);
     kinds[cls.kind] = (kinds[cls.kind] || 0) + 1;
     classified.push({ rel: destRel, ...cls });
     const rn = rootNoteOf(f.rel);
@@ -304,7 +338,7 @@ const prettyName = (rel) => {
       loops.slice(0, 8).forEach(x => console.log(c.dim('    loop   ' + (x.bpm ? (x.bpm + ' bpm') : c.y('bpm unknown')) + '   ' + x.rel + c.dim('   (' + x.why + ')'))));
       if (loops.length > 8) console.log(c.dim(`    …and ${loops.length - 8} more`));
       const noBpm = loops.filter(x => !x.bpm).length;
-      if (noBpm) console.log(c.y(`  ${noBpm} loop(s) have no bpm in the filename — add one (e.g. "…_124.wav") so they can be tempo-matched.`));
+      if (noBpm) console.log(c.dim(`  ${noBpm} loop(s) have no bpm in the filename — they run FREE at recorded speed (right for a nature bed). Add one (e.g. "…_124.wav") only if it should follow the project tempo.`));
     }
     console.log(c.dim('  Loops are not played at a note; tuned samples are. Override by editing "kind" in manifest.json.\n'));
   }
@@ -411,8 +445,13 @@ function pruneEmptyDirs(dir, top = true) {
 }
 // A file already in samples/ that the source no longer has still deserves a
 // manifest entry, or it would ship but be unreachable.
+// KEEP ITS ENTRY, NOT JUST ITS FILE (2026-09-29). This rebuilt every file outside
+// the imported folder from its NAME alone, so importing one folder stripped `kind`,
+// `bpm` and `seconds` from all 72 others — the drum loops stopped being loops and
+// every hand-corrected kind was lost. The previous entry wins whenever it exists.
 function keepOrphan(rel, entries) {
   const id = rel.replace(/\.[^.]+$/, '');
   if (entries.some(e => e.id === id)) return;
-  entries.push({ id, file: rel, name: prettyName(rel), rootNote: rootNoteOf(rel) || 'C4' });
+  const prev = PREV_BY_FILE.get(rel);
+  entries.push(prev ? Object.assign({}, prev) : { id, file: rel, name: prettyName(rel), rootNote: rootNoteOf(rel) || 'C4' });
 }

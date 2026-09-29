@@ -25,6 +25,10 @@
 //!            FIXED amp .001/1.4/0/.2
 //!  11 pluck  Tone.PluckSynth: Karplus-Strong, dampening 4 kHz, resonance .7
 //!  12 wavetable  legacy default stack: sine 1.0 + saw 0.5 + tri 0.3, note ADSR
+//!  15 mono   the app's Tone.MonoSynth 'mono' preset: polyBLEP saw → 2×biquad LP
+//!            swept 200 Hz·2^(3·fenv), fenv .01/.3/.3/2, note ADSR — kind 2's
+//!            topology with a saw (added 2026-09-29: it was the one node-only
+//!            voice in a measured project, ~50 WebAudio nodes per note)
 //!
 //! Every kind's depth/resonance is CALIBRATED against recorded Tone output
 //! (see CAL / BASS_Q and the voice-ab harness) — matching the sound projects
@@ -182,7 +186,7 @@ pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 13;
+const CORE_REV: u32 = 14;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -219,8 +223,10 @@ static mut CAL: [f32; 16] = [1.0, 0.25, 1.0, 0.25, 0.3, 0.3, 0.3, 1.6,
 // MetalSynth records silent even when triggered per its own signature, and
 // the app's playNote mistriggers it too, so the core version is tuned to
 // be musical rather than matched); pluck 1.0; wavetable 1.4.
+// mono (15) 0.82: measured 1.4-2.0 dB hot against the recorded MonoSynth across
+// four cases (test/calib-mono.js), everything else within 0.6 dB once aligned.
 static mut GAIN: [f32; 16] = [1.0, 0.32, 1.0, 0.32, 0.32, 0.32, 0.32, 1.9,
-                              0.5, 0.85, 0.5, 1.0, 1.4, 1.0, 1.0, 1.0];
+                              0.5, 0.85, 0.5, 1.0, 1.4, 1.0, 1.0, 0.82];
 
 #[no_mangle]
 pub extern "C" fn set_kind_cal(kind: u32, k: f32) {
@@ -253,6 +259,54 @@ static mut BASS_Q: f32 = 1.6;
 #[no_mangle]
 pub extern "C" fn set_bass_q(q: f32) {
     unsafe { BASS_Q = q.clamp(0.1, 12.0) }
+}
+
+// ---- mono (the app's Tone.MonoSynth 'mono' preset) constants --------------
+// Tone.MonoSynth defaults the filter to Q 6 / lowpass / -24, and the app sets
+// filterEnvelope {a .01, d .3, s .3, r 2, base 200, octaves 3}. Same topology as
+// bass, so the same calibration applies: per-section Q is NOT the nominal Q
+// (bass: 4 → 1.6 measured). MONO_Q is swept against recorded Tone output
+// (test/calib-mono.js) — see the value's own note.
+const MONO_FBASE: f32 = 200.0;
+const MONO_FOCT: f32 = 3.0;
+const MONO_FA: f32 = 0.01;
+const MONO_FD: f32 = 0.3;
+const MONO_FS: f32 = 0.3;
+const MONO_FR: f32 = 2.0;
+// Web Audio's lowpass Q is in DECIBELS: linear per-section Q = 10^(dB/20). Tone
+// sets both cascaded biquads to the MonoSynth's Q 6 → 10^(6/20) = 2.0 (the same
+// rule gives bass its calibrated 1.6 = 10^(4/20)).
+static mut MONO_Q: f32 = 2.0;
+
+#[no_mangle]
+pub extern "C" fn set_mono_q(q: f32) {
+    unsafe { MONO_Q = q.clamp(0.1, 12.0) }
+}
+
+/// Mono filter-envelope value (0..1) — Tone's Envelope EXACTLY, measured: linear
+/// attack, then exponential approaches whose time constant is Tone's own
+/// `exponentialApproachValueAtTime` rule, ln(dur + 1) / ln(200) (decay .3 s →
+/// k 6.06, release 2 s → k 9.64 — both reproduced to 0.1 from a recorded
+/// FrequencyEnvelope). The release decays from the level AT release.
+#[inline(always)]
+fn tone_tc(dur: f32) -> f32 {
+    ((dur + 1.0).ln() / 200f32.ln()).max(1e-4)
+}
+#[inline(always)]
+fn mono_held(tn: f32) -> f32 {
+    if tn < MONO_FA {
+        tn / MONO_FA
+    } else {
+        MONO_FS + (1.0 - MONO_FS) * (-(tn - MONO_FA) / tone_tc(MONO_FD)).exp()
+    }
+}
+#[inline(always)]
+fn mono_fenv(tn: f32, released: bool, tr: f32) -> f32 {
+    if released {
+        mono_held((tn - tr).max(0.0)) * (-tr / tone_tc(MONO_FR)).exp()
+    } else {
+        mono_held(tn)
+    }
 }
 
 #[no_mangle]
@@ -937,7 +991,7 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 if v.m_n == 0 { v.m_n = 16; }
                 v.m_n -= 1;
                 // ---- modulation envelope (FM/AM kinds) --------------------
-                let me = if v.kind == 0 || v.kind == 2 {
+                let me = if v.kind == 0 || v.kind == 2 || v.kind == 15 {
                     0.0
                 } else {
                     let held = adsr_held(tn, v.me_a, v.me_d, v.me_s);
@@ -994,6 +1048,37 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         v.ph_c += inc_c;
                         if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
                         let x = square_blep2(v.ph_c, inc_c);
+                        let y1 = v.fc_b[0] * x + v.fc_b[1] * v.fs[0] + v.fc_b[2] * v.fs[1]
+                            - v.fc_a[0] * v.fs[2] - v.fc_a[1] * v.fs[3];
+                        v.fs[1] = v.fs[0]; v.fs[0] = x;
+                        v.fs[3] = v.fs[2]; v.fs[2] = y1;
+                        let y2 = v.fc_b[0] * y1 + v.fc_b[1] * v.fs[4] + v.fc_b[2] * v.fs[5]
+                            - v.fc_a[0] * v.fs[6] - v.fc_a[1] * v.fs[7];
+                        v.fs[5] = v.fs[4]; v.fs[4] = y1;
+                        v.fs[7] = v.fs[6]; v.fs[6] = y2;
+                        y2
+                    }
+                    15 => {
+                        // mono: polyBLEP saw → 2×biquad LP (env-swept) — kind 2
+                        // with a saw and the mono preset's filter numbers
+                        if v.fc_n == 0 {
+                            let tr = if v.stage == Stage::Released { (t - v.t_rel) as f32 } else { 0.0 };
+                            let fe = mono_fenv(tn, v.stage == Stage::Released, tr);
+                            // Tone's FrequencyEnvelope: a LINEAR Scale from base to
+                            // base·2^oct of env^exponent — and a MonoSynth's filter
+                            // envelope defaults exponent to 2, which the app never
+                            // overrides (measured: FrequencyEnvelope exponent 1,
+                            // MonoSynth.filterEnvelope exponent 2). Sustain .3 → 326 Hz.
+                            let fc = (MONO_FBASE + MONO_FBASE * (exp2f(MONO_FOCT) - 1.0) * fe * fe).min(20000.0);
+                            let (b, a) = lp_coeffs(fc, MONO_Q, SR);
+                            v.fc_b = b;
+                            v.fc_a = a;
+                            v.fc_n = 16;
+                        }
+                        v.fc_n -= 1;
+                        v.ph_c += inc_c;
+                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                        let x = saw_blep(v.ph_c, inc_c);
                         let y1 = v.fc_b[0] * x + v.fc_b[1] * v.fs[0] + v.fc_b[2] * v.fs[1]
                             - v.fc_a[0] * v.fs[2] - v.fc_a[1] * v.fs[3];
                         v.fs[1] = v.fs[0]; v.fs[0] = x;

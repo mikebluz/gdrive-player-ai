@@ -887,11 +887,26 @@ without being told. The ONE-WORD COLLISION is resolved label-only: the Tone list
 family is **Sampled instruments** (pitched — piano, organ, Rhodes), and a recording that
 plays itself is **◐ Loop**. `probe-looplayer` 16/16, golden unmoved.
 
+**LANDED 2026-09-29 — tempo rule + ✂ Slice.**
+- ONE RATE RULE, `_sampleLoopRate(info)` (04): a stated tempo is matched to the project,
+  `bpm: null` runs free at rate 1. The layer emit now repeats at the length the voice
+  actually PLAYS (`seconds / rate`) — it used the recorded length while the voice ran
+  tempo-matched, so a 130-bpm loop at 120 gapped every pass. (Loop/Stretch/Once in
+  `18-schedule.js` is PHRASE placement, not a loop reader — nothing to change there.)
+- ⚙ Deep on a loop layer holds **✂ Slice** (`L.slice = {n, order, rev, skip, gate}`,
+  absent = play whole): n pieces per pass, In order / Back to front / Shuffled, % reversed,
+  % dropped, % of each piece that sounds. Draws come from the TAKE seed, so every pass is
+  the same cut and 🎲 New take re-cuts it (Deep, not Live). The note-rule blocks of Deep
+  (Material, ✓ Done writes, the rows, Quick/Key/Notes) gate to `voice:synth,kit,speech`.
+  Played through the existing sample slice params (`sampleOffsetSec`/`sliceDurSec`/
+  `reverse`) on both the core and node paths — no DSP change. Named Slice, not Chop:
+  Chop is FX's trance gate. Loop notes now carry an explicit full-level envelope — the
+  defaults (sustain 50%, 1.4 s release) sagged a held loop 6 dB and would smear slices.
+
 **Still open:**
 
-1. `bpm: null` has to mean "free-running, never stretched" everywhere the loop path
-   reads bpm — the one field a nature bed cannot supply, and the reason Loop/Stretch/
-   Once (`18-schedule.js:169`) are the wrong three choices for it.
+1. ~~`bpm: null` free-running~~ (landed above). A ✺ Live counterpart — a re-cut per
+   pass (stutter/jumble) — is the natural next knob if Slice is wanted to MOVE.
 2. Licensing/size: the 8 packs are third-party production packs. Nature beds want to
    be CC0 or original, and they are LONG — `seconds` for a usable ocean bed is tens of
    seconds, against ~7 s for the existing loops, so the shipped payload and the

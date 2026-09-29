@@ -162,6 +162,9 @@ const SECTIONS = {
   'kind-sine':   { s: 1.2, ev: [N(0, 0), N(0.4, 0, { f: 440, pan: 0.5, slot: 1 })] },
   'kind-fm':     { s: 1.2, ev: [N(0, 1), N(0.4, 1, { f: 110, pan: -0.5, slot: 2 })] },
   'kind-bass':   { s: 1.2, ev: [N(0, 2, { f: 65 }), N(0.4, 2, { f: 98, slot: 1 })] },
+  // mono (2026-09-29): Tone.MonoSynth 'mono' — saw → 2×biquad LP, exponent-2
+  // linear-Hz filter sweep; calibrated by test/calib-mono.js
+  'kind-mono':   { s: 1.6, ev: [N(0, 15, { f: 110, a: 0.4, d: 0.2, s: 0.8, r: 1.2, dur: 0.8 }), N(0.5, 15, { f: 220, slot: 1 })] },
   'kind-bell':   { s: 1.6, ev: [N(0, 3, { f: 523 }), N(0.4, 3, { f: 660, pan: 0.3, slot: 3 })] },
   'kind-xylo':   { s: 1.2, ev: [N(0, 4, { f: 523 }), N(0.3, 4, { f: 784, slot: 1 })] },
   'kind-am':     { s: 1.2, ev: [N(0, 5), N(0.4, 5, { f: 330, slot: 2 })] },

@@ -557,9 +557,7 @@
       // trade and it is inaudible on drums. Clamped so an extreme mismatch cannot
       // produce a chipmunk or a drone.
       if (info && info.kind === 'loop') {
-        const srcBpm = Number.isFinite(info.bpm) && info.bpm > 0 ? info.bpm : 0;
-        // No stated tempo → play it as recorded rather than guess.
-        const tempoRate = srcBpm ? Math.max(0.25, Math.min(4, _projectBpm() / srcBpm)) : 1;
+        const tempoRate = _sampleLoopRate(info);
         // A DELIBERATE varispeed still applies. Only the NOTE is ignored: the
         // Sample layer's Pitch knob arrives as `drumTuneSemis` ("pitch this in
         // place"), so it survives, while a melodic emitter's note does not
@@ -570,6 +568,16 @@
       }
       return { info, sampleMidi, audioBuf, playbackRate };
     }
+    // A LOOP's playback rate — THE ONE RULE, read by the voice above and by the
+    // ◐ Loop layer's emit (18-layer-v2), which must repeat it at the length it
+    // actually PLAYS or a tempo-matched loop gaps or overlaps every pass.
+    // No stated tempo (`bpm: null` — a nature bed has none) = free-running: rate 1,
+    // never stretched. Clamped so an extreme mismatch cannot chipmunk or drone.
+    function _sampleLoopRate(info) {
+      const srcBpm = (info && Number.isFinite(info.bpm) && info.bpm > 0) ? info.bpm : 0;
+      return srcBpm ? Math.max(0.25, Math.min(4, _projectBpm() / srcBpm)) : 1;
+    }
+    try { window._sampleLoopRate = _sampleLoopRate; } catch (e) {}
     function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {
       if (_offlineSamplerOverride) return null;
       const _rs = _resolveSampleVoice(sampler, id, tunedFreq, opts && opts.drumTune);
@@ -3116,6 +3124,11 @@
         try { _activeSampleVoices.forEach(add); } catch (e) {}
         try { _activePadVoices.forEach(add); } catch (e) {}
         try { (_voiceBuildQueue || []).forEach((q) => { if (q && q.ak) keys.add(q.ak); }); } catch (e) {}
+        // CORE-ONLY LAYERS. A core note bypasses the queue and is no voice object,
+        // so a layer playing only core voices is in none of the sets above — its
+        // notes already sent ahead (up to the look-ahead) sounded AFTER Stop.
+        // Grid lanes ('lane:N') and live presses ('live') are not Bloom's to stop.
+        try { if (typeof _coreVoices !== 'undefined' && _coreVoices.keys) _coreVoices.keys().forEach((k) => { if (k !== 'live' && k.indexOf('lane:') !== 0) keys.add(k); }); } catch (e) {}
         keys.forEach((k) => { try { cancelBloomFutureVoices(k, fromAt); } catch (e) {} });
         return;
       }
@@ -4096,23 +4109,70 @@
         ak: w ? w._ambEmitKey : null,
         akAt: w ? w._ambEmitAt : null,
       });
-      if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 0);
+      if (_vqHidden()) _vqYield();
+      else if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 0);
+    }
+    // ── A HIDDEN PAGE CANNOT PACE THIS QUEUE WITH TIMERS (2026-09-28) ────────
+    // `setTimeout` is throttled to one per 1-2 s on a hidden iOS page (measured),
+    // so the 12 ms-apart slices ran ~100x too slowly in the background: voices
+    // built late or never, and the phone played roughly half the notes — the
+    // node-voice layers only (core voices never queue), heard as "slowed way
+    // down, only some notes, some layers" (ring input: 12-16 attacks / 5 s
+    // visible, 7-10 hidden).
+    // BUILDING AT EMIT INSTEAD WAS TRIED AND MEASURED WORSE: the hidden tick
+    // schedules 5.6 s ahead, so each tick built seconds of voices in one burst,
+    // and that many graph mutations at once stalled the render thread (production
+    // 0.89 at the hide, gaps the ring could not cover).
+    // So hidden keeps the queue and changes only its PACING: a slice runs when a
+    // voice is due within `_VQ_HIDDEN_WINDOW`, slices are small, and the next one
+    // is triggered by a MessageChannel message — a task, not a timer, so it is not
+    // throttled — which spreads the builds across the window instead of bursting.
+    // When nothing is due yet, a (throttled, ~1-2 s) timer is enough: the window
+    // is wider than the throttle.
+    const _VQ_HIDDEN_WINDOW = 3.5;    // seconds ahead a hidden page builds a voice
+    const _VQ_HIDDEN_SLICE_MS = 6;
+    function _vqHidden() { try { return typeof document !== 'undefined' && !!document.hidden; } catch (e) { return false; } }
+    let _vqChan = null, _vqChanPending = false;
+    function _vqYield() {
+      if (_vqChanPending) return;
+      try {
+        if (!_vqChan) { _vqChan = new MessageChannel(); _vqChan.port1.onmessage = () => { _vqChanPending = false; _vqPump(); }; }
+        _vqChanPending = true;
+        _vqChan.port2.postMessage(0);
+      } catch (e) { _vqChanPending = false; if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 0); }
     }
     function _vqPump() {
+      if (_vqTimer) { try { clearTimeout(_vqTimer); } catch (e) {} }
       _vqTimer = null;
       _voiceBuildQueue.sort((a, b) => a.at - b.at);
+      const hidden = _vqHidden();
       const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       while (_voiceBuildQueue.length) {
         const e = _voiceBuildQueue[0];
-        let urgent = true;
-        try { urgent = (e.at - Tone.now()) < _VQ_URGENT_SEC; } catch (x) {}
+        let lead = 0;
+        try { lead = e.at - Tone.now(); } catch (x) {}
+        if (hidden && lead > _VQ_HIDDEN_WINDOW) break;     // not due yet — built later, spread out
+        const urgent = lead < _VQ_URGENT_SEC;
         const spent = (typeof performance !== 'undefined') ? (performance.now() - t0) : 0;
-        if (spent > (urgent ? _VQ_URGENT_SLICE_MS : _VQ_SLICE_MS)) break;
+        if (spent > (hidden ? (urgent ? _VQ_URGENT_SLICE_MS : _VQ_HIDDEN_SLICE_MS) : (urgent ? _VQ_URGENT_SLICE_MS : _VQ_SLICE_MS))) break;
         _voiceBuildQueue.shift();
         _vqBuild(e);
       }
-      if (_voiceBuildQueue.length && !_vqTimer) _vqTimer = setTimeout(_vqPump, _VQ_PUMP_MS);
+      if (!_voiceBuildQueue.length) return;
+      if (hidden) {
+        let next = 0;
+        try { next = _voiceBuildQueue[0].at - Tone.now(); } catch (x) {}
+        if (next <= _VQ_HIDDEN_WINDOW) _vqYield();         // more due: next slice after one task turn
+        else if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 250);   // nothing due: a throttled timer suffices
+      } else if (!_vqTimer) _vqTimer = setTimeout(_vqPump, _VQ_PUMP_MS);
     }
+    // Hiding with a queue waiting on a (now throttled) timer: hand it to the
+    // hidden pacing at once. Coming back: back to the ordinary 12 ms slices.
+    try {
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
+        if (_voiceBuildQueue.length) { if (document.hidden) _vqYield(); else if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 0); }
+      });
+    } catch (e) {}
     function _vqBuild(e) {
       const w = (typeof window !== 'undefined') ? window : null;
       let pSink, pKey, pAt;
@@ -4366,6 +4426,19 @@
       // This sits AFTER the capture-sink tee (capture must see notes at emit
       // time) and the cold-start guard (its startTime shift is near-now and
       // must not defer).
+      // A CORE NOTE IS NOT BUILT, SO IT IS NOT QUEUED (2026-09-29 audit). The
+      // queue exists to spread out multi-node Tone builds; a note the WASM core
+      // takes is ONE message to the worklet, which schedules it at its own start
+      // time. Queuing it bought nothing and cost lateness risk — ~80% of a
+      // measured project's notes (and every core layer in the background, where
+      // the queue's pacing was starved). `eligible` is the same check the core
+      // branch in `_playNoteNow` makes, on the same default type; a note the core
+      // then declines (cold start, no slot) falls through to a node build here,
+      // exactly as an interactive note does.
+      if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
+          && _coreVoices.eligible(params.type || 'sine', params)) {
+        return _playNoteNow(freq, params, durationMs, startTime, destination, trackIdx, laneIdx);
+      }
       if (_vqShouldDefer(startTime)) {
         _vqEnqueue(freq, params, durationMs, startTime, destination, trackIdx, laneIdx);
         return;

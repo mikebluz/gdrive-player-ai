@@ -25,7 +25,10 @@
   path and must stay STABLE (a project stores `sample:<id>`). Re-runs diff by size AND mtime+bytes — a
   file edited in place keeps its byte count. In-place mode (a folder already inside `samples/`) copies
   nothing. `kind` is `tuned` / `loop` / `kit`: the axis is "does it carry its own tempo", so a LOOP is
-  rate-matched to the project and never transposed by the note.
+  rate-matched to the project and never transposed by the note. A loop with NO bpm runs free (nature beds).
+  A loop needs `seconds` or ◐ Loop plays nothing: non-WAV lengths come from macOS `afinfo` (valid frames —
+  afconvert AAC decodes gapless in Chrome, exact length, lag 0). Files outside the imported folder keep
+  their EXISTING entry — before 2026-09-29 one folder's import stripped kind/bpm/seconds from all others.
 - **`UI_WAIT_SCALE=0.6 npm run test:ui`** runs the UI gate in ~2:20 by scaling settle waits ≤350 ms
   (longer waits are AUDIO-clock settles and never scale). Dev at 0.6; FINAL verification at 1.
 - **`bloopsCoreStrips` / `bloopsCore` READ when called with no argument** — they used to be pure setters,

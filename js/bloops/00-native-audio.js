@@ -63,12 +63,29 @@
     } catch (e) {}
   };
   setInterval(_flush, 20000);
+  // KEEP THE PREVIOUS SESSION. Every launch overwrote the log, so a report
+  // made after reopening the app arrived with the evidence already gone —
+  // the glitchy session is almost always the one BEFORE the current launch.
+  try {
+    const FS0 = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS0) {
+      FS0.readFile({ path: 'bloops-flight.json', directory: 'DOCUMENTS', encoding: 'utf8' }).then((r) => {
+        if (r && r.data) return FS0.writeFile({ path: 'bloops-flight-prev.json', directory: 'DOCUMENTS', encoding: 'utf8', data: r.data });
+      }).catch(() => {});
+    }
+  } catch (e) {}
   // ALSO ON THE WAY OUT. A 20 s interval can lose the last stretch before the
   // app backgrounds — which is exactly the stretch someone was interacting
   // with when they hit a problem, so the harvest arrives missing the evidence
   // it was collected for.
   try {
-    document.addEventListener('visibilitychange', () => { if (document.hidden) _flush(); });
+    // …AND SHORTLY AFTER COMING BACK. The unlock edge is where the stall is
+    // worst, and a harvest taken seconds after foregrounding otherwise ends at
+    // the last HIDDEN flush — the evidence for the unlock never reaches disk.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) _flush();
+      else setTimeout(_flush, 8000);
+    });
     window.addEventListener('pagehide', _flush);
   } catch (e) {}
 
@@ -333,6 +350,24 @@
       // glitches. Engaged async; until it resolves the stream path plays.
       armMse = () => {
         if (!window._bloopsMse) return Promise.resolve(false);
+        // PATH KILL SWITCH — `localStorage.bloopsMsePath = '0'` skips the MSE
+        // broadcast entirely and takes the AVAudioEngine/stream path instead.
+        // The two output paths fail in different ways and BOTH have been blamed
+        // for the same reported symptom; only swapping between them at runtime
+        // separates "this architecture is glitching" from "my control loop is".
+        // DIAGNOSTIC DEFAULT, 2026-09-28: the MSE broadcast is OFF unless asked
+        // for. A reported tremolo survived seven builds of MSE work while every
+        // measurement of the MSE path came back clean, and the switch that would
+        // have A/B'd it needs localStorage — which on a phone means attaching
+        // Safari's Web Inspector over USB, so it never actually got run. Default
+        // it OFF and the comparison happens by listening to a build instead.
+        // Set localStorage bloopsMsePath='1' to get the broadcast back.
+        let wantMse = false;
+        try { wantMse = localStorage.getItem('bloopsMsePath') === '1'; } catch (e) {}
+        if (!wantMse) {
+          log('MSE SKIPPED (diagnostic default) — native/stream path is the speaker');
+          return Promise.resolve(false);
+        }
         // MSE gets its OWN element; the original element stays on the -40 dB
         // bridge stream as the CONTEXT KEEP-ALIVE (mode-B mechanism: a playing
         // stream-fed element is what stops WebKit suspending the contexts at
@@ -363,7 +398,18 @@
         if (!plug) log('BloopsAudio plugin ABSENT — plugins: ' + Object.keys((window.Capacitor && window.Capacitor.Plugins) || {}).join(','));
         if (plug) {
           const CHUNK = 4800;   // 100 ms @ 48 k
-          bridge.audioWorklet.addModule(URL.createObjectURL(new Blob([
+          // THE TAP LIVES ON THE TONE CONTEXT, NOT THE BRIDGE (2026-09-28).
+          // On the bridge it read the mix AFTER the MediaStream hop between the
+          // two contexts, and that hop turns a render shortfall into DIGITAL
+          // SILENCE: the bridge keeps running at 1.0 and fills whatever the tone
+          // context failed to render with zeros. Captured on the ring's input:
+          // every context stall arrived as a hole of silence at full frame rate,
+          // so the ring saw no deficit and simply played the hole. Tapped here,
+          // a shortfall arrives as FEWER FRAMES, which the splice ring can
+          // stretch. The bridge + element stay only as the keep-alive.
+          // Post-mask, so the stop gate's silence is what the ring hears;
+          // with the 28 Hz DC blocker the bridge path carried (interruption thump).
+          const TAP_SRC =
             "registerProcessor('bloops-tap', class extends AudioWorkletProcessor {" +
             "  constructor() { super(); this.buf = new Int16Array(" + (CHUNK * 2) + "); this.n = 0; }" +
             "  process(inputs) {" +
@@ -381,12 +427,42 @@
             "    }" +
             "    return true;" +
             "  }" +
-            "});"], { type: 'application/javascript' }))).then(() => {
-            const tap = new AudioWorkletNode(bridge, 'bloops-tap');
-            bSrc.connect(tap);
-            // a worklet with no output still needs a pull path
-            const pull = bridge.createGain(); pull.gain.value = 0;
-            tap.connect(pull); pull.connect(bDest);
+            "});";
+          const tapUrl = () => URL.createObjectURL(new Blob([TAP_SRC], { type: 'application/javascript' }));
+          raw.audioWorklet.addModule(tapUrl()).then(() => true, (e) => { log('tone-context tap module failed: ' + (e && e.message)); return false; }).then((modOk) => {
+            let tap = null;
+            if (modOk) try {
+              // Tone wraps the AudioContext (standardized-audio-context): the
+              // native constructor rejects it, Tone's factory does not.
+              tap = Tone.context.createAudioWorkletNode('bloops-tap', {
+                numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+                channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+              });
+              const tHp = raw.createBiquadFilter();
+              tHp.type = 'highpass'; tHp.frequency.value = 28; tHp.Q.value = 0.7;
+              maskGain.connect(tHp); tHp.connect(tap);
+              // a worklet with no output still needs a pull path — into the
+              // stream, never rawContext.destination (the one-audible-path rule)
+              const pull = raw.createGain(); pull.gain.value = 0;
+              tap.connect(pull); pull.connect(streamDest);
+              log('native tap on the TONE context (pre-MediaStream)');
+            } catch (e) {
+              log('tone-context tap failed (' + e.message + ') — tapping the bridge');
+              tap = null;
+            }
+            if (!tap) {
+              // FALLBACK: the old bridge tap (module must be registered there)
+              return bridge.audioWorklet.addModule(tapUrl()).then(() => {
+                const t2 = new AudioWorkletNode(bridge, 'bloops-tap');
+                bSrc.connect(t2);
+                const pull = bridge.createGain(); pull.gain.value = 0;
+                t2.connect(pull); pull.connect(bDest);
+                return t2;
+              });
+            }
+            return tap;
+          }).then((tap) => {
+            if (!tap) return;
             // the element's copy drops to −74 dB: keep-alive, not speaker
             try {
               // −40 dB, NOT lower: WebKit's audible-playback test is what
@@ -395,24 +471,216 @@
               // suspended and the native feed starved. At −40 the copy still
               // counts as audible while sitting far beneath the native mix;
               // whatever the element pipeline does to it at the lock is buried.
-              const quiet = bridge.createGain(); quiet.gain.value = 0.01;
+              // NO MIX COPY AT ALL NOW (2026-09-28) — the MSE path's answer, applied
+              // here. The −40 dB copy was the only thing playing while the ring
+              // primed after Play, so every start was heard as "very quiet, then
+              // suddenly normal volume"; and with a deep ring it ran up to 2 s AHEAD
+              // of the real output as a faint pre-echo. A 25 Hz tone at −26 dB is
+              // numerically loud for WebKit's audible-playback test (the keep-alive)
+              // and acoustically nothing on a phone speaker.
+              // bSrc MUST STAY CONSUMED: the tone context's MediaStream being pulled
+              // is what keeps WebKit from suspending it at lock (mode B), so it keeps
+              // a zero-gain path to the element instead of being cut loose.
               bSrc.disconnect(bDest);
-              bSrc.connect(quiet); quiet.connect(bDest);
+              const pullStream = bridge.createGain(); pullStream.gain.value = 0;
+              bSrc.connect(pullStream); pullStream.connect(bDest);
+              const ka = bridge.createOscillator(); ka.frequency.value = 25;
+              const kaG = bridge.createGain(); kaG.gain.value = 0.05;
+              ka.connect(kaG); kaG.connect(bDest); ka.start();
+              log('keep-alive element carries a 25 Hz tone, no mix');
             } catch (e) {}
-            let chunks = 0, failed = 0;
+            let chunks = 0, failed = 0, engineUp = false;
             tap.port.onmessage = (ev) => {
+              // NOTHING BEFORE THE ENGINE IS UP. The worklet starts feeding the
+              // moment it is connected, but plug.start() is async — so ~9 s of
+              // audio piled into the ring ahead of the first render callback and
+              // was immediately discarded as stale (measured: writer 2.87x for
+              // one interval, 413440 frames dropped, then exactly 1.00x forever
+              // after). Harmless once the high-water mark exists, but it is a
+              // burst of stale audio racing the first sound you hear, and the
+              // fix is simply not to send it.
+              if (!engineUp) return;
+              // DELIVERY GAP: the ring's reserve is eaten at a lock by chunks
+              // arriving LATE (the main thread busy or throttled), so the
+              // longest gap between arrivals is the number to drive down.
+              try {
+                const now = performance.now();
+                if (window.__tapLast) { const g = now - window.__tapLast; if (g > (window.__tapGapMax || 0)) window.__tapGapMax = g; }
+                window.__tapLast = now;
+              } catch (e) {}
               // ArrayBuffer → base64 without blowing the stack on big args
               const u8 = new Uint8Array(ev.data);
               let bin = '';
               for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
               plug.write({ data: btoa(bin) }).then(() => { chunks++; }, () => { failed++; });
             };
-            plug.start({ sampleRate: bridge.sampleRate, bufferMs: 400 }).then(
-              () => log('NATIVE OUTPUT armed — AVAudioEngine is the speaker now'),
+            // FOUR numbers, four jobs — conflating any two has cost a regression:
+            //   RING_MS    capacity: headroom to absorb a delivery burst (the tap
+            //              posts to the MAIN THREAD, throttled to ~2 s once
+            //              hidden, so chunks can land seconds at a time). Free.
+            //   PRIME_MS   buffer before sound starts after a transport flush =
+            //              PRESS LATENCY. Both edges flush, so this is the whole
+            //              press-to-sound cost whatever the depth was.
+            //   TARGET_*   the depth the ring steers to = STALL TOLERANCE, and
+            //              the lag on a grid press while playing.
+            //   LAT_MS     hard ceiling, so nothing can run away (a 3 s ring once
+            //              sat full because in == out and nothing drained it).
+            // Measured stalls it must cover: 86-253 ms at a lock, and at the
+            // UNLOCK edge ctRate 0.466 for ~1 s (~530 ms never rendered).
+            // SPLICE RING (2026-09-28). The plugin no longer RESAMPLES to steer
+            // depth — every correction there was a pitch bend (rate 0.95 = most
+            // of a semitone flat, after every lock AND every Play press). It
+            // repeats or skips short waveform-matched segments instead, so depth
+            // can follow visibility freely: TARGET_VIS while visible (it is the
+            // grid-press lag, and it sits just inside the ring's deadband above
+            // the prime so steady visible playback never splices), TARGET_HID
+            // while hidden, where nobody can
+            // press anything and the unlock stall (~0.5-1 s never rendered) has to
+            // come out of the reserve. LAT is only a safety ceiling now; it must
+            // clear TARGET_HID plus a hidden-state delivery burst (~2 s).
+            // Play/Stop latency is untouched: both edges flush, so press-to-sound
+            // is PRIME_MS whatever the depth was.
+            const RING_MS = 6000, LAT_MS = 4500, PRIME_MS = 350, TARGET_VIS = 850, TARGET_HID = 2000;
+            plug.start({ sampleRate: bridge.sampleRate, bufferMs: RING_MS, latencyMs: LAT_MS, primeMs: PRIME_MS, targetMs: TARGET_VIS }).then(
+              () => {
+                engineUp = true;
+                // THE DISPLAY'S RENDER→SPEAKER LAG, for the native path too. Every
+                // play head, visualiser and audible clock reads it through
+                // `_bloopsMseOutLag` (07-playback-scheduler, 05-sequencer-core,
+                // 21-shape, 17-ambient) — and only the MSE path ever defined it, so
+                // on this path the display assumed zero and ran AHEAD of the sound by
+                // the ring's whole depth: 0.85 s normally, up to 2 s after a lock —
+                // "the play heads are a full bar ahead". The name is kept (label-only
+                // rule); the value is what the ring actually holds, polled twice a
+                // second, plus the engine's own output buffer.
+                {
+                  let ringLagS = PRIME_MS / 1000;
+                  const srL = bridge.sampleRate || 48000;
+                  setInterval(() => {
+                    try { const pr = plug.stats(); if (pr && pr.then) pr.then((st) => {
+                      if (st && Number.isFinite(st.buffered)) ringLagS = st.buffered / srL
+                        + (Number.isFinite(st.ioBufMs) ? st.ioBufMs / 1000 : 0.003);
+                    }, () => {}); } catch (e) {}
+                  }, 500);
+                  window._bloopsMseOutLag = () => ringLagS;
+                }
+                // NO RESUME-RAMP ON THE NATIVE PATH. The statechange handler
+                // snaps maskGain to 0 and fades it back over 80 ms at every
+                // context resume — i.e. at every lock, unlock and app switch —
+                // unless `nativeArmed`. Only the MSE branch ever set it, so when
+                // MSE went default-off this path ducked (a click, then a
+                // dropout) at every interruption, UPSTREAM of the ring and the
+                // tap: found in the ring's own INPUT capture, a 20 dB dip at each
+                // resume, after a day of tuning the ring for a fault it never had.
+                nativeArmed = true;
+                log('NATIVE OUTPUT armed — AVAudioEngine is the speaker now (splice ring ' + RING_MS
+                  + 'ms, prime ' + PRIME_MS + 'ms, target ' + TARGET_VIS + '/' + TARGET_HID
+                  + 'ms vis/hidden, ceiling ' + LAT_MS + 'ms)');
+                // MAIN-THREAD LAG PROBE for 3 s after every visibility change:
+                // a chain of MessageChannel pings (not timers — those throttle by
+                // design) whose worst turnaround is how long the main thread was
+                // unavailable, i.e. how long tap chunks sat undelivered.
+                try {
+                  document.addEventListener('visibilitychange', () => {
+                    const mc = new MessageChannel(), t0 = performance.now();
+                    let last = t0, worst = 0, worstAt = 0;
+                    mc.port1.onmessage = () => {
+                      const now = performance.now(), lag = now - last;
+                      if (lag > worst) { worst = lag; worstAt = now - t0; }
+                      last = now;
+                      if (now - t0 < 3000) setTimeout(() => { last = performance.now(); mc.port2.postMessage(0); }, 20);
+                      else log('MAINLAG after ' + document.visibilityState + ': worst ' + Math.round(worst) + 'ms at +' + Math.round(worstAt) + 'ms');
+                    };
+                    mc.port2.postMessage(0);
+                  });
+                } catch (e) {}
+                // DEPTH FOLLOWS VISIBILITY. Deepen BEFORE the stall, not after:
+                // the interruption fires ~150-250 ms ahead of visibilitychange,
+                // but either edge is early enough to matter and this is the one
+                // that always fires.
+                try {
+                  document.addEventListener('visibilitychange', () => {
+                    const vis = document.visibilityState === 'visible';
+                    try { plug.setLatency({ targetMs: vis ? TARGET_VIS : TARGET_HID }); } catch (e) {}
+                    log('native depth -> ' + (vis ? TARGET_VIS : TARGET_HID) + 'ms (' + document.visibilityState + ')');
+                  });
+                } catch (e) {}
+                // The lock-screen Pause (media session, below) is a transport
+                // edge too: it suspends the contexts, and without a flush the
+                // ring would play out its whole reserve — up to TARGET_HID of
+                // music AFTER the press — before going quiet.
+                window._bloopsNativeFlush = (fadeMs, discardMs) => {
+                  try { return plug.flush({ fadeMs: fadeMs, discardMs: discardMs || 0 }); } catch (e) { return null; }
+                };
+                // TRANSPORT EDGES OWN THE RING. Stop: the graph mutes in 12 ms
+                // but the ring still holds the buffered pre-mute audio, so
+                // without this the music ran on for the whole depth after the
+                // press. Play: while stopped the tap keeps writing SILENCE, so
+                // new music queued up behind a bufferful of it. Flushing both
+                // edges makes press-to-sound just the prime, and stop immediate.
+                // fadeMs ramps the frames about to play instead of cutting them
+                // mid-waveform, which would be a click.
+                let tOn = null;
+                setInterval(() => {
+                  let on = null;
+                  try { on = (typeof _vinylTransportOn === 'function') ? !!_vinylTransportOn() : null; } catch (e) {}
+                  if (on === null || on === tOn) return;
+                  const was = tOn; tOn = on;
+                  if (was === null) return;         // boot state, not an edge
+                  try {
+                    // discardMs on STOP: audio already in flight (the tap's
+                    // partial 100 ms chunk, the bridge queue, the MediaStream
+                    // hop) is PRE-STOP music and used to play ~350 ms after
+                    // Stop as a blip. What follows a stop is silence, so
+                    // dropping 200 ms of it costs nothing.
+                    plug.flush({ fadeMs: on ? 2 : 8, discardMs: on ? 0 : 200 }).then((r) => {
+                      log('native ring flushed on ' + (on ? 'PLAY' : 'STOP')
+                        + ' (dropped ' + ((r && r.dropped) || 0) + ' frames) w=' + (Date.now() % 1000000));
+                    }, () => {});
+                  } catch (e) {}
+                }, 40);
+              },
               (e) => log('native output start failed: ' + (e && e.message))
             );
             window._nativeAudio._pcm = () => ({ chunks, failed });
-            setInterval(() => { try { plug.stats(); } catch (e) {} }, 5000);
+            // THE STATS WERE ALWAYS THERE AND NEVER HARVESTED: the plugin
+            // resolves frames in/out, buffer depth and an underrun counter, and
+            // this poll threw the result away — it only reached NSLog, which the
+            // flight log does not capture. An underrun count is the difference
+            // between "the ring starved" and every other theory about a lock
+            // glitch, so it belongs in the log that survives to the Mac.
+            let lastUnder = 0;
+            setInterval(() => {
+              try {
+                const pr = plug.stats();
+                if (pr && pr.then) pr.then((st) => {
+                  if (!st) return;
+                  const sr2 = bridge.sampleRate || 48000;
+                  const d = (st.underrun || 0) - lastUnder;
+                  const gapNow = window.__tapGapMax || 0; window.__tapGapMax = 0;
+                  lastUnder = st.underrun || 0;
+                  log('NATIVE buf=' + ((st.buffered || 0) / sr2 * 1000).toFixed(0) + 'ms'
+                    + '/' + ((st.hwm || 0) / sr2 * 1000).toFixed(0) + 'ms'
+                    + ' under=' + (st.underrun || 0) + (d > 0 ? ' (+' + d + ' NEW)' : '')
+                    + ' drop=' + (st.dropped || 0)
+                    + ' rx=' + (st.received || 0) + ' play=' + (st.played || 0)
+                    + ' rate=' + (st.rate != null ? Number(st.rate).toFixed(4) : '?')
+                    + ' prod=' + (st.prod != null ? Number(st.prod).toFixed(3) : '?')
+                    + ' spl=+' + (st.splicesIn || 0) + '/-' + (st.splicesOut || 0)
+                    + ' cbw=' + Math.round(st.cbWorstUs || 0) + 'us cbover=' + (st.cbOver || 0)
+                    + ' stops=' + (st.engineStops || 0) + (st.lastStopWhy ? '(' + st.lastStopWhy + ')' : '')
+                    + ' poor=' + (st.poorSplices || 0) + ' gapmax=' + Math.round(gapNow) + 'ms'
+                    + ' tgt=' + ((st.target || 0) / sr2 * 1000).toFixed(0) + 'ms'
+                    + ' low=' + ((st.lowWater != null ? st.lowWater : 0) / sr2 * 1000).toFixed(0) + 'ms'
+                    + ' uev=' + (st.underrunEvents || 0)
+                    + ' lock=' + (st.locked ? 1 : 0)
+                    + ' io=' + (st.ioBufMs != null ? Number(st.ioBufMs).toFixed(1) : '?')
+                    + ' primed=' + st.primed + ' running=' + st.running
+                    + ' rms=' + (st.rms != null ? Number(st.rms).toFixed(4) : '?')
+                    + ' vis=' + document.visibilityState);
+                }, () => {});
+              } catch (e) {}
+            }, 5000);
           }, (e) => log('tap worklet failed: ' + e.message));
         }
       } catch (e) { log('native output setup failed: ' + e.message); }
@@ -1158,15 +1426,85 @@
       }, (e) => log('MIC watch denied: ' + e.name));
     }, 500);
 
+    // ENVELOPE METER — the instrument that should have existed first.
+    //
+    // Seven builds were aimed by ear at a reported "square wave tremolo",
+    // because nothing on the device measured amplitude modulation: every
+    // output-path counter (reserve, playbackRate, starvation) read CLEAN on
+    // builds that sounded bad. They describe the plumbing, not the sound.
+    //
+    // A tremolo is objectively measurable: take the amplitude ENVELOPE of the
+    // mix and look at its spectrum. A gate puts a sharp peak in it at the gate
+    // rate. This taps the BRIDGE SOURCE — the mix as it leaves the graph, BEFORE
+    // the AAC encode and the media element — so its verdict localises the fault:
+    //   peak here      -> the mix itself is modulated (engine/DSP)
+    //   nothing here   -> the mix is clean and the fault is BELOW: encode, MSE,
+    //                     or the iOS output stage
+    // `node test/probe-tremolo.js` asks exactly the same question of the desktop
+    // engine, so the two are directly comparable. Desktop, on the user's real
+    // project, measured a worst case of 7.8% (note rhythm); a real tremolo is
+    // tens of percent at one sharp frequency.
+    try {
+      const EH = 100;                     // envelope sample rate -> resolves to 50 Hz
+      const N = EH * 8;                   // 8 s window
+      const eAn = bridgeRefs.bridge.createAnalyser();
+      eAn.fftSize = 2048;
+      bridgeRefs.bSrc.connect(eAn);
+      const eBuf = new Float32Array(eAn.fftSize);
+      const env = new Float32Array(N);
+      let ei = 0, efull = false;
+      setInterval(() => {
+        eAn.getFloatTimeDomainData(eBuf);
+        let s2 = 0;
+        for (let i = 0; i < eBuf.length; i++) s2 += eBuf[i] * eBuf[i];
+        env[ei] = Math.sqrt(s2 / eBuf.length);
+        ei = (ei + 1) % N;
+        if (ei === 0) efull = true;
+      }, 1000 / EH);
+      setInterval(() => {
+        if (!efull) return;
+        let mean = 0;
+        for (let i = 0; i < N; i++) mean += env[i];
+        mean /= N;
+        if (mean < 1e-6) return;          // silence: nothing to report
+        // plain DFT over 0.3-25 Hz; N is 800 points so this is cheap
+        let bf = 0, bd = 0;
+        for (let f = 0.3; f <= 25; f += 0.1) {
+          let re = 0, im = 0;
+          for (let i = 0; i < N; i++) {
+            const ph = 2 * Math.PI * f * i / EH, v = env[i] - mean;
+            re += v * Math.cos(ph); im += v * Math.sin(ph);
+          }
+          const d = (2 * Math.sqrt(re * re + im * im) / N) / mean;
+          if (d > bd) { bd = d; bf = f; }
+        }
+        log('ENV peak=' + bf.toFixed(1) + 'Hz depth=' + (100 * bd).toFixed(1) + '%'
+          + ' mean=' + mean.toFixed(5) + ' sr=' + bridgeRefs.bridge.sampleRate
+          + ' vis=' + document.visibilityState);
+      }, 10000);
+      log('envelope meter armed (mix tap, pre-encode)');
+    } catch (e) { log('envelope meter failed: ' + e.message); }
+
     // Shell-only heartbeat over the USB console: enough to tell "JS alive,
     // context rendering" from every other failure without a probe build.
     // localStorage bloopsNativeAudioBeats='0' silences it.
 if (beatsOnRef.v) {
       setInterval(() => {
         try {
+          // brct = the BRIDGE context's clock, so a deficit can be placed on
+          // the heavy (tone) context or the light (bridge) one; the Bloom
+          // governor's own view (voice cost vs budget) says whether shedding
+          // voices is even the lever that could help.
+          let gov = '';
+          try {
+            const hl = window.__bloomHealthLog;
+            const L = hl && hl.length ? hl[hl.length - 1] : null;
+            if (L) gov = ' cost=' + L.cost + ' bud=' + (L.budget != null ? L.budget : '?') + ' act=' + L.act;
+          } catch (e) {}
           log('BEAT state=' + raw.state + ' br=' + (bridge ? bridge.state : '-') + ' sr=' + raw.sampleRate + ' ct=' + raw.currentTime.toFixed(2)
+            + ' brct=' + (bridge ? bridge.currentTime.toFixed(2) : '-')
             + ' media=' + (el.paused ? 'paused' : el.currentTime.toFixed(2))
-            + ' vis=' + document.visibilityState);
+            + gov + ' vis=' + document.visibilityState);
         } catch (e) {}
       }, 1000);
     }
@@ -1220,6 +1558,7 @@ if (beatsOnRef.v) {
           try { el.pause(); } catch (e) {}
           try { raw.suspend(); } catch (e) {}
           try { if (bridge) bridge.suspend(); } catch (e) {}
+          try { if (window._bloopsNativeFlush) window._bloopsNativeFlush(8, 200); } catch (e) {}
           try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
           log('lock-screen pause — broadcast held, context suspended, piece holds its place');
         });

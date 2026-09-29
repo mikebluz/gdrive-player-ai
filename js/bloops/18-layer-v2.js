@@ -1439,6 +1439,16 @@
     ins.voice = (ins.voice === 'kit' || ins.voice === 'speech' || ins.voice === 'loop') ? ins.voice : 'synth';
     if (typeof ins.loopId === 'string' && ins.loopId) ins.loopId = String(ins.loopId).slice(0, 300);
     else delete ins.loopId;
+    // ✂ SLICE — what a ◐ Loop layer's ⚙ Deep cuts the recording into (2026-09-29).
+    // Additive and ABSENT BY DEFAULT: no `slice` plays the loop whole, as before.
+    if (L.slice && typeof L.slice === 'object') {
+      const sc = L.slice, cl = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : d);
+      sc.n = cl(sc.n, 1, 32, 1);
+      sc.order = (sc.order === 'back' || sc.order === 'shuffle') ? sc.order : '';
+      sc.rev = cl(sc.rev, 0, 100, 0);
+      sc.skip = cl(sc.skip, 0, 100, 0);
+      sc.gate = cl(sc.gate, 10, 100, 100);
+    } else delete L.slice;
     // SPEECH. `voice` is the INSTRUMENT here, so the TTS voice needs its own
     // field — v1's `_ambVoiceChoices` reads `L.voice` meaning the TTS one, and
     // handing it a v2 layer would offer 'synth'/'kit'/'speech' as if they were
@@ -6768,10 +6778,15 @@
     // happen to a loop is being transposed by the note it is triggered with.
     if (L.instrument.voice === 'loop') {
       const lid = String(L.instrument.loopId || '');
-      let secs = 0, f0 = 261.6255653005986;    // C4, the sampler's own fallback root
+      let secs = 0, rate = 1, f0 = 261.6255653005986;    // C4, the sampler's own fallback root
       try {
         const meta = (lid && typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(lid) : null;
         if (meta && Number.isFinite(meta.seconds) && meta.seconds > 0) secs = meta.seconds;
+        // THE SAME RATE THE VOICE PLAYS AT (`_sampleLoopRate`, the one rule): a loop
+        // with a stated tempo is matched to the project, one without (`bpm: null`)
+        // runs free at rate 1. Repeating at the RECORDED length while the voice ran
+        // tempo-matched left a gap or an overlap on every pass.
+        if (meta && typeof _sampleLoopRate === 'function') rate = _sampleLoopRate(meta);
         if (typeof _ambSampleRootMidi === 'function' && typeof Tone !== 'undefined') {
           f0 = Tone.Frequency(_ambSampleRootMidi(lid), 'midi').toFrequency();
         }
@@ -6779,14 +6794,60 @@
       // NOTHING CHOSEN, OR A FILE THE LIBRARY DOES NOT KNOW: play nothing and say so
       // by playing nothing — a guessed substitute would be worse than silence.
       if (!lid || !(secs > 0)) { st.lastAt = to; return; }
-      let k = Math.max(0, Math.ceil((from - st.startAt) / secs - 1e-6));
-      for (let g = 0; g < 32; g++) {
-        const at0 = st.startAt + k * secs;
-        if (at0 >= to) break;
-        if (at0 >= from - 1e-6) {
+      const per = secs / (rate > 0 ? rate : 1);            // the length it actually PLAYS
+      const li = E.laneIdx ? E.laneIdx() : undefined, type = 'sample:' + lid;
+      // FULL LEVEL, SHORT TAIL. Unset, the note defaults (sustain 50%, 1.4 s
+      // release) sagged a held recording 6 dB a tenth of a second in, and would
+      // smear every slice into the next.
+      const env = { attack: 4, decay: 10, sustain: 100, release: 100 };
+      // ✂ SLICE (⚙ Deep): cut each pass into `n` equal pieces and play them in an
+      // order, some backwards, some dropped, each gated to a share of its length.
+      // Every draw comes from the TAKE's seed, so a pass repeats the one before it
+      // and only 🎲 New take re-cuts it (the Deep side of the Deep/Live rule).
+      const sc = L.slice || null;
+      const n = sc ? Math.max(1, Math.min(32, sc.n | 0)) : 1;
+      const gate = sc && Number.isFinite(sc.gate) ? Math.max(0.1, Math.min(1, sc.gate / 100)) : 1;
+      const plain = !sc || (n === 1 && !(sc.rev > 0) && !(sc.skip > 0) && gate >= 1);
+      if (plain) {
+        let k = Math.max(0, Math.ceil((from - st.startAt) / per - 1e-6));
+        for (let g = 0; g < 32; g++) {
+          const at0 = st.startAt + k * per;
+          if (at0 >= to) break;
+          if (at0 >= from - 1e-6) {
+            try { playNote(f0, Object.assign({ type, volume: lvl }, env), Math.round(per * 1000), at0, dest, undefined, li); } catch (e) {}
+          }
+          k++;
+        }
+        st.lastAt = to;
+        return;
+      }
+      let sd = ((seedIdOf(L) * 9176) ^ ((takeOf(L) | 0) * 2246822519) ^ 0x51CE) >>> 0;
+      const rnd = () => {                                   // mulberry32
+        sd = (sd + 0x6D2B79F5) >>> 0; let t = sd;
+        t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const ord = []; for (let j = 0; j < n; j++) ord.push(j);
+      if (sc.order === 'back') ord.reverse();
+      else if (sc.order === 'shuffle') {
+        for (let j = n - 1; j > 0; j--) { const r = Math.floor(rnd() * (j + 1)); const t = ord[j]; ord[j] = ord[r]; ord[r] = t; }
+      }
+      const revP = (sc.rev | 0) / 100, skipP = (sc.skip | 0) / 100;
+      const revs = ord.map(() => rnd() < revP), drops = ord.map(() => rnd() < skipP);
+      const pl = per / n;                                   // one piece, as heard
+      let k = Math.max(0, Math.floor((from - st.startAt) / per));
+      for (let g = 0; g < 256; g++) {
+        const passAt = st.startAt + k * per;
+        if (passAt >= to) break;
+        for (let j = 0; j < n; j++) {
+          const at0 = passAt + j * pl;
+          if (at0 >= to) break;
+          if (at0 < from - 1e-6 || drops[j]) continue;
+          // offset/length are OUTPUT seconds — the voice scales them by its rate
           try {
-            playNote(f0, { type: 'sample:' + lid, volume: lvl }, Math.round(secs * 1000), at0,
-                     dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
+            playNote(f0, Object.assign({ type, volume: lvl, sampleOffsetSec: ord[j] * pl, sliceDurSec: pl * gate,
+                                         reverse: revs[j] }, env),
+                     Math.round(pl * gate * 1000), at0, dest, undefined, li);
           } catch (e) {}
         }
         k++;
@@ -16455,7 +16516,7 @@
             // nothing on screen saying so — ✓ Done and ✕ Cancel would have
             // become decoration over edits already made.
             '<div class="v2-genhead"><span class="v2-gentitle">Generate</span>' +
-              '<span class="v2-genhbtns">' +
+              '<span class="v2-genhbtns" data-v2when="voice:synth,kit,speech">' +
                 '<button type="button" class="ambient-seg v2-ghb v2-ghb-quick" ' +
                   'title="Two presses, no knobs — chords that fill each change, or a single-voice melody over them.">\u2728 Quick</button>' +
                 '<button type="button" class="ambient-seg v2-ghb v2-ghb-key" ' +
@@ -16506,8 +16567,26 @@
             // Size and Feel did NOT move here instead: \u2699 Deep is what \ud83c\udfb2 New take
             // re-rolls, and Hold, Note length, Swing and Tight are deterministic
             // \u2014 filing them here would claim they are rolled.
-            '<div class="ambient-mod-sub v2-genzone v2-gzbar" data-gz="1" role="button" tabindex="0"><b class="v2-zonen">1</b>Material<span class="v2-zonefor v2-zone1for"></span><i class="v2-zcar">▸</i></div>' +
-            '<div class="v2-gzbody" data-gz="1">' +
+            // ✂ SLICE — ⚙ Deep for a ◐ Loop layer (2026-09-29, "the content is the
+            // fixed loop, but the user can chop it up"). The note rules below cannot
+            // act on a recording, so they gate to the three note voices and this
+            // takes their place. Labelled Slice, not Chop — Chop is FX's trance gate.
+            (function () {
+              const sc = L.slice || {};
+              return '<div class="v2-loopslice" data-v2when="voice:loop">' +
+                '<div class="ambient-mod-sub">\u2702 Slice <span class="v2-zonefor">\u2014 cut the recording into pieces</span></div>' +
+                st(L, 'slice.n', 'Slices', num(sc.n, 1), 1, 32, 'pieces per pass \u2014 1 plays it whole') +
+                sel(L, 'slice.order', 'Order', String(sc.order || ''),
+                    [['', 'In order'], ['back', 'Back to front'], ['shuffle', 'Shuffled']], '',
+                    'which piece plays in each slot \u2014 Shuffled holds for the take') +
+                sl(L, 'slice.rev', 'Reverse', num(sc.rev, 0), 0, 100, '% of pieces played backwards') +
+                sl(L, 'slice.skip', 'Drop', num(sc.skip, 0), 0, 100, '% of pieces left silent') +
+                sl(L, 'slice.gate', 'Gate', num(sc.gate, 100), 10, 100, '% of each piece that sounds') +
+                '<span class="ambient-hint">every pass plays the same cut \u2014 a new take re-cuts it</span>' +
+              '</div>';
+            })() +
+            '<div class="ambient-mod-sub v2-genzone v2-gzbar" data-gz="1" data-v2when="voice:synth,kit,speech" role="button" tabindex="0"><b class="v2-zonen">1</b>Material<span class="v2-zonefor v2-zone1for"></span><i class="v2-zcar">▸</i></div>' +
+            '<div class="v2-gzbody" data-gz="1" data-v2when="voice:synth,kit,speech">' +
             // ONE DROPDOWN, NOT FIVE BUTTONS (2026-09-17, user: "these can be
             // moved into a styled dropdown to conserve space"). Five doors took
             // two rows and a third of the panel. The BUTTONS STAY in the DOM,
@@ -16540,12 +16619,12 @@
             '</div>' +
             // WHAT ✓ DONE WILL WRITE — the staged part, drawn. Read-only: the
             // layer's own drawing is the one you edit notes on.
-            '<div class="v2-stageviz"><span class="v2-stagelab">\u2713 Done writes</span>' +
+            '<div class="v2-stageviz" data-v2when="voice:synth,kit,speech"><span class="v2-stagelab">\u2713 Done writes</span>' +
               '<canvas class="v2-stagecv" height="96"></canvas><canvas class="v2-stageph" aria-hidden="true"></canvas></div>' +
             // THE KNOBS THAT DECIDE WHAT THE SHAPE PRODUCES, gated to the
             // shape that reads each one — so the panel shows the handful
             // that apply rather than a wall that mostly does not.
-            '<div class="v2-genrows">' +
+            '<div class="v2-genrows" data-v2when="voice:synth,kit,speech">' +
               // ── IMPERATIVE: PICK, TUNE, FINE-TUNE (2026-09-16, user: "this
               // Generated menu is overloaded; simplify and make it more
               // imperative"). The shape above is the decision; these are the
@@ -17470,9 +17549,14 @@
                   (cur === o.value ? ' selected' : '') + '>' + esc(o.label || o.value) + '</option>').join('');
               }
             }
-            return '<div data-v2tab="Sound" class="ambient-ctrl"><label for="' + uid(L, t3.f) + '">Tone</label>' +
+            // A RECORDING HAS NO TONE — the ◐ Loop voice plays its file, so the row
+            // would offer a choice that changes nothing (hidden like every pitched row).
+            return '<div data-v2tab="Sound" class="ambient-ctrl" data-v2when="voice:synth,kit,speech"><label for="' + uid(L, t3.f) + '">Tone</label>' +
               '<select id="' + uid(L, t3.f) + '" class="ambient-select v2-f" data-f="' + t3.f + '">' + body + '</select>' +
-              '<span class="ambient-hint">' + esc(t3.hint) + '</span></div>';
+              '<span class="ambient-hint">' + esc(t3.hint) + '</span>' +
+              // ⚡ Core engine — the lead synth's A/B (v1 builds it; shown only on `mono`)
+              ((t3.f === 'instrument.tone' && typeof _ambCoreMonoBtnHtml === 'function')
+                ? _ambCoreMonoBtnHtml(uid(L, 'instrument.coremono'), i.tone) : '') + '</div>';
           })() +
           // ── MAKING A NEW VOICE ───────────────────────────────────────────
           // The four doors the grid's tone panel has always had, put where the
@@ -17573,12 +17657,15 @@
           // question is "which tone" — and the envelope is not a peer of the
           // voice, it is how that voice behaves.
           tb('Sound',
-            disc('env', 'Envelope', 'attack, decay, sustain, release') +
+            // Not on a ◐ Loop: its pieces carry their own fixed envelope (full level,
+            // short edges — see the loop emit), so these four would move nothing.
+            // Gated on the rows too, or an already-open disclosure keeps showing them.
+            disc('env', 'Envelope', 'attack, decay, sustain, release', 'voice:synth,kit,speech') +
             subrows('env',
-              sl(L, 'instrument.attack', 'Attack', i.attack, 0, 8000, 'ms') +
-              sl(L, 'instrument.decay', 'Decay', num(i.decay, 200), 0, 8000, 'ms') +
-              sl(L, 'instrument.sustain', 'Sustain', num(i.sustain, 70), 0, 100, '%') +
-              sl(L, 'instrument.release', 'Release', i.release, 0, 12000, 'ms')) +
+              sl(L, 'instrument.attack', 'Attack', i.attack, 0, 8000, 'ms', 'voice:synth,kit,speech') +
+              sl(L, 'instrument.decay', 'Decay', num(i.decay, 200), 0, 8000, 'ms', 'voice:synth,kit,speech') +
+              sl(L, 'instrument.sustain', 'Sustain', num(i.sustain, 70), 0, 100, '%', 'voice:synth,kit,speech') +
+              sl(L, 'instrument.release', 'Release', i.release, 0, 12000, 'ms', 'voice:synth,kit,speech')) +
             // FILTER, RESONANCE, FINE, GLIDE AND TRIM ARE THE VOICE, not the mix.
             // They sat in Mix, which is why that group held nine rows of two
             // different questions: how this layer SOUNDS and where it SITS.

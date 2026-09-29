@@ -1,6 +1,55 @@
 {
   "samples": [
     {
+      "id": "sounds/nature/loops/Forest_birds",
+      "file": "sounds/nature/loops/Forest_birds.m4a",
+      "name": "Forest birds",
+      "kind": "loop",
+      "seconds": 12.3
+    },
+    {
+      "id": "sounds/nature/loops/Frog_chorus",
+      "file": "sounds/nature/loops/Frog_chorus.m4a",
+      "name": "Frog chorus",
+      "kind": "loop",
+      "seconds": 21
+    },
+    {
+      "id": "sounds/nature/loops/Jungle_ambience",
+      "file": "sounds/nature/loops/Jungle_ambience.m4a",
+      "name": "Jungle ambience",
+      "kind": "loop",
+      "seconds": 33
+    },
+    {
+      "id": "sounds/nature/loops/Ocean_waves",
+      "file": "sounds/nature/loops/Ocean_waves.m4a",
+      "name": "Ocean waves",
+      "kind": "loop",
+      "seconds": 30
+    },
+    {
+      "id": "sounds/nature/loops/Pebble_beach",
+      "file": "sounds/nature/loops/Pebble_beach.m4a",
+      "name": "Pebble beach",
+      "kind": "loop",
+      "seconds": 31
+    },
+    {
+      "id": "sounds/nature/loops/Rain_on_a_window",
+      "file": "sounds/nature/loops/Rain_on_a_window.m4a",
+      "name": "Rain on a window",
+      "kind": "loop",
+      "seconds": 33
+    },
+    {
+      "id": "sounds/nature/loops/Stony_river",
+      "file": "sounds/nature/loops/Stony_river.m4a",
+      "name": "Stony river",
+      "kind": "loop",
+      "seconds": 15.1
+    },
+    {
       "id": "sounds/packs/Afro-House-Songstarters/Afrohouse_Song_Starters/loops/drums/DSP_ASR_130_drum_amaan",
       "file": "sounds/packs/Afro-House-Songstarters/Afrohouse_Song_Starters/loops/drums/DSP_ASR_130_drum_amaan.wav",
       "name": "DSP ASR 130 drum amaan",
@@ -321,14 +370,14 @@
       "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_07_v2",
       "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_07_v2.wav",
       "name": "ULTRA oberheim dx cymbal 07 v2",
-      "kind": "loop",
+      "kind": "tuned",
       "seconds": 1.728
     },
     {
       "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_08_v2",
       "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_cymbals/ULTRA_oberheim_dx_cymbal_08_v2.wav",
       "name": "ULTRA oberheim dx cymbal 08 v2",
-      "kind": "loop",
+      "kind": "tuned",
       "seconds": 2.773
     },
     {
@@ -503,7 +552,7 @@
       "id": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_18_v2",
       "file": "sounds/packs/Ultramajic-Sounds-Vol.-3/ultra_oberheim_dx/ULTRA_oberheim_dx_toms/ULTRA_oberheim_dx_tom_18_v2.wav",
       "name": "ULTRA oberheim dx tom 18 v2",
-      "kind": "loop",
+      "kind": "tuned",
       "seconds": 1.884
     }
   ]

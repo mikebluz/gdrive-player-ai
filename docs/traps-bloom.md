@@ -221,6 +221,11 @@
   When a repaint MUST reach every card (✺ Variation On/Off), wrap it in `_ambWithCfgHold(E, fn)`: one
   normalize for the whole synchronous repaint (1.9 s → 0.13 s). Only around code that WRITES nothing —
   inside the hold `getCfg()` returns the pinned object without re-normalizing.
+- **A VERSION SWITCH REPLACES THE PROGRESSION, so it must save first** (`_ambProgSwitchVersion`): the
+  current chords+parts go in as "Before …" unless an unchanged version already holds them, and at the
+  12-cap the switch is REFUSED. A version with no parts (a ❄ capture) keeps the current parts when its
+  chord count fits — it used to `delete prog.parts` and flatten an 8-part arrangement into one (reported,
+  unrecoverable in-app: the undo stack covers tracks only). Versions store WHOLE parts, not name/len.
 - **Deep or ✺ Live: trace the seed, not the label.** Anything drawn from `seedBase` is per TAKE (Deep)
   unless `part.vary` is on; per-pass means seeded on play time, chord occurrence, or the shared stream.
 

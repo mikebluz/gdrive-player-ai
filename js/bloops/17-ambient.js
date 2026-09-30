@@ -42933,7 +42933,9 @@
       if (prog.versions.length >= 12 || !Array.isArray(prog.chords) || !prog.chords.length) return;
       prog.versions.push({ name: String(prog.name || ('Version ' + (prog.versions.length + 1))).slice(0, 24),
         chords: prog.chords.map(_ambCloneChord),
-        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: prog.parts.map(p => ({ name: p.name, len: p.len })) } : {}),
+        // THE WHOLE PART, not its name and length: a version that kept only those
+        // came back with every part's key, salt, rubato, arc… reset.
+        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: JSON.parse(JSON.stringify(prog.parts)) } : {}),
         // A version stores its SALT too, so switching restores the whole state of
         // that progression rather than just its notes — a captured pass comes back
         // fixed, a salted one comes back salted.
@@ -42941,11 +42943,42 @@
         ...(prog.rubato ? { rubato: { amount: prog.rubato.amount | 0 } } : {}) });
       prog.versionIdx = prog.versions.length - 1;
     }
+    // What a progression IS, for "is this already saved?" — chords and part shape.
+    function _ambProgVerSig(chords, parts) {
+      return (Array.isArray(chords) ? chords : []).map(c => (c.root | 0) + ':' + (c.intervals || []).join('.') + '@' + (+c.bars || 0)).join(',') +
+        '|' + (Array.isArray(parts) ? parts.map(p => (p && p.name) + '=' + ((p && p.len) | 0)).join('/') : '');
+    }
     function _ambProgSwitchVersion(prog, vi) {
-      if (!Array.isArray(prog.versions) || !prog.versions[vi]) return;
+      if (!Array.isArray(prog.versions) || !prog.versions[vi]) return false;
       const v = prog.versions[vi];
+      // SAVE WHAT IS THERE FIRST (2026-09-29, user: "clicking one just creates one
+      // giant part, then i can't go back to the default separate parts"). A switch
+      // REPLACED the progression and nothing kept it: the only way back was a ＋
+      // pressed beforehand. Unless it already is one of the versions, unchanged, it
+      // is saved as "Before …" — and at the 12-version limit the switch is refused
+      // rather than losing it.
+      // a version with no parts of its own is the same progression if its CHORDS
+      // are (it keeps whatever parts are there), so it is compared on chords alone
+      const curSig = _ambProgVerSig(prog.chords, prog.parts), curCh = _ambProgVerSig(prog.chords, null);
+      if (!prog.versions.some(x => (Array.isArray(x.parts) && x.parts.length)
+            ? _ambProgVerSig(x.chords, x.parts) === curSig : _ambProgVerSig(x.chords, null) === curCh)) {
+        if (prog.versions.length >= 12) {
+          try { if (typeof showToast === 'function') showToast('12 versions saved \u2014 remove one first: switching now would lose the progression you have.', { ms: 5000 }); } catch (e) {}
+          return false;
+        }
+        prog.versions.push({ name: ('Before ' + v.name).slice(0, 24), chords: prog.chords.map(_ambCloneChord),
+          ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: JSON.parse(JSON.stringify(prog.parts)) } : {}),
+          ...(prog.salt ? { salt: { colors: prog.salt.colors | 0, scatter: prog.salt.scatter | 0 } } : {}),
+          ...(prog.rubato ? { rubato: { amount: prog.rubato.amount | 0 } } : {}) });
+      }
+      const curParts = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
       prog.chords = v.chords.map(_ambCloneChord);
-      if (Array.isArray(v.parts) && v.parts.length) prog.parts = v.parts.map(p => ({ name: p.name, len: p.len })); else delete prog.parts;
+      // PARTS: the version's own, whole. A version WITHOUT parts (a capture, or one
+      // saved before this) keeps the CURRENT part structure when its chords fit it —
+      // it used to delete `prog.parts` and flatten the arrangement into one part.
+      if (Array.isArray(v.parts) && v.parts.length) prog.parts = JSON.parse(JSON.stringify(v.parts));
+      else if (curParts && curParts.reduce((n, p) => n + ((p && !p.open) ? (p.len | 0) : 0), 0) === prog.chords.length) { /* keep them */ }
+      else delete prog.parts;
       // Absent salt on a version means "no salt" — normalize then deletes the
       // all-zero object, so a captured pass plays exactly as captured.
       if (v.salt) prog.salt = { colors: v.salt.colors | 0, scatter: v.salt.scatter | 0 };
@@ -42955,6 +42988,7 @@
       // captured pass would leave the previous version's timing running under it.
       if (v.rubato) prog.rubato = { amount: v.rubato.amount | 0 }; else delete prog.rubato;
       prog.versionIdx = vi;
+      return true;
     }
     // ---- PROGRESSION OVERVIEW STRIP -------------------------------------
     // A compact wrapping run of chord chips grouped under PART headers. Alt-bearing
@@ -43365,10 +43399,12 @@
                         'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
           (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span>' +
         '' + '</div>';
-      if (Array.isArray(prog.versions) && prog.versions.length) {
+      // ALWAYS THERE: a row that only appeared after the first capture was a door
+      // nobody could find (reported: "where is the Versions button").
+      {
         h += '<div class="ambient-pov-vers">' +
           '<span class="ambient-pov-verslbl">Versions</span>' +
-          prog.versions.map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) + '</span>').join('') +
+          (Array.isArray(prog.versions) ? prog.versions : []).map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) + '</span>').join('') +
           '<span role="button" tabindex="0" class="ambient-pov-ver ambient-pov-veradd" data-pov="veradd" title="Save the current progression as a new version">＋</span>' +
           '</div>';
       }
@@ -44106,7 +44142,11 @@
         const name = String(nm).trim().slice(0, 24) || _ambRandProgName();
         if (!Array.isArray(prog.versions)) prog.versions = [];
         if (prog.versions.length >= 12) { if (typeof showToast === 'function') showToast('12 versions is the limit — remove one first.'); return; }
-        prog.versions.push({ name: name, chords: chords.map(_ambCloneChord) });   // no `salt` ⇒ plays fixed
+        // no `salt` ⇒ plays fixed. The PARTS come along when the pass has the same
+        // number of chords — or switching to it later would flatten the arrangement.
+        const _pts = (Array.isArray(prog.parts) && prog.parts.length &&
+          prog.parts.reduce((n, p) => n + ((p && !p.open) ? (p.len | 0) : 0), 0) === chords.length) ? JSON.parse(JSON.stringify(prog.parts)) : null;
+        prog.versions.push({ name: name, chords: chords.map(_ambCloneChord), ...(_pts ? { parts: _pts } : {}) });
         if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it in Versions to loop it.');
         persist(); refresh(); return;
       }
@@ -45228,9 +45268,12 @@
       // opening a popover, and that render (a normalize per card drawing) was
       // 1.2 s of the 1.3 s between tapping ✺ Groove and the menu appearing —
       // several seconds on a phone (reported).
+      // …and ONE normalize for the whole refresh: it asks `getCfg()` ~560 times, and
+      // on a long arrangement each full normalize is what the ~1 s after the v2 fix
+      // was made of (reported: "still a 1 second delay").
       _ambSkipV2Render = true;
-      try { _ambSyncControls(E); } catch (e) {} finally { _ambSkipV2Render = false; }
-      try { _ambSaltReadoutSync(E, true); } catch (e) {}
+      try { _ambWithCfgHold(E, () => { _ambSyncControls(E); _ambSaltReadoutSync(E, true); }); } catch (e) {}
+      finally { _ambSkipV2Render = false; }
     }
     // ADVANCED PART EDIT AS A POPOVER. The per-layer schedules (Unit, Evolve,
     // phrase, seq chips) and the chord lane are a deep edit you visit, not a

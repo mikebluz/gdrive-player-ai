@@ -2178,16 +2178,37 @@
         }
       } catch (e) {}
     }
-    // A READ-ONLY REDRAW NORMALIZES ONCE. Every `getCfg()` runs the whole normalizer,
-    // and a full repaint asks once per layer drawing — measured ~1.9 s to repaint
-    // after ✺ Variation On/Off. `_ambWithCfgHold` pins ONE normalized result for the
-    // length of a synchronous repaint that writes nothing; everywhere else the
-    // normalizer still runs on every call (the one-chokepoint rule is untouched).
+    // A REDRAW NORMALIZES ONCE. Every `getCfg()` runs the whole normalizer, and a
+    // full repaint asks once per layer drawing — measured ~1.9 s to repaint after
+    // ✺ Variation On/Off. `_ambWithCfgHold` pins ONE normalized result for the
+    // length of a SYNCHRONOUS block; everywhere else the normalizer still runs on
+    // every call (the one-chokepoint rule is untouched).
+    //
+    // THE HOLD MUST NEVER SPAN AN AWAIT OR A TIMEOUT. It is a same-task pin: any
+    // suspension would leave every other caller reading a frozen config for as
+    // long as the gap lasts, which is the orphan bug with a much wider blast
+    // radius. Synchronous callers only.
     let _ambCfgHold = null;
     function _ambWithCfgHold(E, fn) {
       if (E !== _masterEng || _ambCfgHold) return fn();
       _ambCfgHold = E.getCfg();
       try { return fn(); } finally { _ambCfgHold = null; }
+    }
+    // …AND A BLOCK THAT WRITES GETS EXACTLY ONE MORE. The normalizer is what
+    // supplies defaults for structure an edit has just made reachable (set
+    // `rhythm.kind = 'euclid'` and the euclid block has to appear), so a write
+    // path cannot simply read a pin taken before the write. It needs the SAME
+    // one re-normalize the un-held code already did — no more. `_ambCfgRepin`
+    // is that single point: it drops the pin, normalizes, and re-pins.
+    //
+    // It REPLACES OBJECTS, exactly as a bare `getCfg()` does, so anything held
+    // across this call is an orphan — take layer references again afterwards.
+    // Outside a hold it is a plain `getCfg()`, so a lane engine is unaffected.
+    function _ambCfgRepin() {
+      if (!_ambCfgHold) return _masterEng ? _masterEng.getCfg() : null;
+      _ambCfgHold = null;
+      _ambCfgHold = _masterEng.getCfg();
+      return _ambCfgHold;
     }
     const _masterEng = _makeAmbientEngine({
       getCfg:  function () { if (_ambCfgHold) return _ambCfgHold; _masterBloomState(); return _normalizeAmbientCfg(masterAmbient); },   // masterAmbient = active area
@@ -7424,6 +7445,50 @@
         e._mixKey = sig;
         _ambMixRamp(e.levelGain.gain, g, dur);
       });
+    }
+    // …and back again, so the Mixer can SAY where a moved fader actually is.
+    function _ambLevelFromGain(g) {
+      let v = Number.isFinite(g) ? g : 0;
+      if (_ambMixWide && _AMB_MIX_HEADROOM) v /= _AMB_MIX_HEADROOM;
+      const L = (v <= _AMB_LEVEL_BASE)
+        ? (v / _AMB_LEVEL_BASE) * 70
+        : 70 + ((v - _AMB_LEVEL_BASE) / Math.max(1e-6, _AMB_LEVEL_MAX - _AMB_LEVEL_BASE)) * 30;
+      return Math.max(0, Math.min(100, Math.round(L)));
+    }
+    // ⇅ MIX IS INVISIBLE WITHOUT THIS. The Mixer fader shows the level you SET, and
+    // ⇅ Mix moves the gain underneath it — so while it plays, the strip states a
+    // number that is not what you are hearing, which is the frozen-readout trap this
+    // repo keeps paying for. The fader stays where you put it (it is still what you
+    // are editing, and moving it under a finger would break the drag); the VALUE says
+    // where the mix has taken it, and is marked while it is not your own number.
+    let _ambMixPaintAt = 0;
+    function _ambMixMovePaint(E) {
+      try {
+        const host = E && document.getElementById(E.hostId); if (!host) return;
+        const faders = host.querySelectorAll('.ambient-mix-slider[data-mixkey]');
+        if (!faders.length) return;
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const on = _ambMixMoveOn(cfg) && !!E._mixMoved;
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        if (on && now - _ambMixPaintAt < 80) return;           // ~12 fps is plenty for a fader
+        if (!on && !host._mixPainted) return;                  // nothing to undo
+        _ambMixPaintAt = now;
+        host._mixPainted = on;
+        faders.forEach((f) => {
+          const key = f.getAttribute('data-mixkey');
+          const el = f.parentNode && f.parentNode.querySelector('.ambient-mix-val'); if (!el) return;
+          const L = _ambLayerByKey(E, key);
+          const set = (L && Number.isFinite(L.level)) ? L.level : 70;
+          let txt = set + '%', moved = false;
+          if (on) {
+            const e = E.mod && E.mod[key];
+            const g = e && e.levelGain && e.levelGain.gain;
+            if (g) { const live = _ambLevelFromGain(g.value); if (Math.abs(live - set) >= 2) { txt = live + '%'; moved = true; } }
+          }
+          if (el.textContent !== txt) el.textContent = txt;
+          if (el.classList.contains('mix-moved') !== moved) el.classList.toggle('mix-moved', moved);
+        });
+      } catch (e) {}
     }
     // WHAT THIS FADER HAS EVER BEEN SET TO. Recorded on the two paths a PERSON moves
     // a level (the Mixer strip and a card's Level slider) — never on a programmatic
@@ -26500,7 +26565,21 @@
       try { if (window._v2 && typeof window._v2.render === 'function') window._v2.render(E); } catch (e) {}
     }
     // Refresh every layer header's unit readout in this engine's panel.
+    // THIS IS A REPAINT, SO IT NORMALIZES ONCE. It reads the config and writes
+    // only DOM text — but it opens with `_v2RenderSeam`, i.e. `V2.render`, which
+    // walks EVERY v2 card running `applyGate` + `drawPartViz`, and each of those
+    // asks for the config several times over. Measured: ~99 full normalizes per
+    // call on a six-layer project.
+    //
+    // That made it the real cost of a live edit, not the edit handler: a
+    // per-element `_unitRefresh` listener calls it on every `input` event, so a
+    // 122-move drag ran it 88 times for ~8,700 normalizes — OUTSIDE the edit
+    // handler's own hold, which is why holding the handler alone barely moved
+    // the number. Pinned here, every one of its callers gets the same saving.
     function _ambSyncLayerUnits(E) {
+      return _ambWithCfgHold(E, () => _ambSyncLayerUnitsInner(E));
+    }
+    function _ambSyncLayerUnitsInner(E) {
       _v2RenderSeam(E);
       try {
         const host = E && document.getElementById(E.hostId); if (!host) return;
@@ -27380,6 +27459,7 @@
         if (onB) { onB.classList.toggle('on', !!L.on); onB.classList.remove('queued'); }
         if (E._queuePending) delete E._queuePending[key];
         if (E.timer) _ambSyncOneLayerMod(E, key, L);
+        try { _ambSyncOnUI(E, key, L.on, false); } catch (e) {}   // the OTHER face of this field (Monitor chip / card toggle)
         if (typeof persist === 'function') persist();
         return;
       }
@@ -27431,6 +27511,7 @@
         E._queuePending[key] = { L, onB, desired, at, period };
         if (onB) onB.classList.add('queued');
       }
+      try { _ambSyncOnUI(E, key, L.on, !!(E._queuePending && E._queuePending[key])); } catch (e) {}
       if (typeof persist === 'function') persist();
     }
     // Flush every queued toggle IMMEDIATELY (ignoring boundaries). Called when
@@ -27444,6 +27525,7 @@
         it.L.on = !!it.desired;
         if (it.onB) { it.onB.classList.toggle('on', !!it.desired); it.onB.classList.remove('queued'); }
         try { _ambSyncOneLayerMod(E, key, it.L); } catch (e) {}
+        try { _ambSyncOnUI(E, key, it.L.on, false); } catch (e) {}
       });
       E._queuePending = {};
       E._queueAt = null;
@@ -28060,6 +28142,7 @@
       const _qFinalize = (key, it, val) => {
         it.L.on = val;
         if (it.onB) { it.onB.classList.toggle('on', val); it.onB.classList.remove('queued'); }
+        try { _ambSyncOnUI(E, key, val, false); } catch (e) {}   // the queued change LANDED — clear it on every face
         // Build (START) / tear down (STOP) the layer's mod chain. START builds
         // SYNCHRONOUSLY (not via _ambSyncOneLayerMod's rAF) so the very first
         // emit this same tick resolves the layer's destination — otherwise the
@@ -36896,7 +36979,9 @@
     let _ambHdrTicking = false;
     function _ambStartHeaderTicker() {
       if (_ambHdrTicking) return; _ambHdrTicking = true;
-      const tick = () => { try { _ambRenderHeader(); } catch (e) {} requestAnimationFrame(tick); };
+      const tick = () => { try { _ambRenderHeader(); } catch (e) {}
+        try { _ambMixMovePaint(_masterEng); } catch (e) {}
+        requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
     }
     if (typeof document !== 'undefined') {
@@ -38254,14 +38339,33 @@
     // Given {key: [rms per second]}, name any layer that goes quiet and comes
     // back — the signature of "cutting in and out", as distinct from a layer
     // that simply stops (which ends and never returns).
-    function _bloomLayerDropouts(map) {
+    // `skip` names the layers whose meter reading means nothing: the tap is on
+    // each layer's own DRY output (a core strip's slot, a node chain's panner),
+    // and a WET-ONLY layer mutes exactly that on purpose — all of its sound
+    // comes back through the reverb return, which this meter never sees. Its
+    // zero is the setting working, not a fault, so it must not be reported as
+    // one. (Found the same day as the send-bus bug, by the new silent report
+    // crying wolf on a healthy wet-only layer.)
+    function _bloomLayerDropouts(map, skip) {
       const out = [];
       Object.keys(map || {}).forEach((k) => {
+        if (skip && skip.has && skip.has(k)) return;
         const a = (map[k] || []).filter((v) => Number.isFinite(v));
         if (a.length < 6) return;
         const sorted = a.slice().sort((x, y) => x - y);
         const med = sorted[Math.floor(sorted.length / 2)];
-        if (!(med > 1e-5)) return;                       // layer never sounded — a different report
+        // A LAYER THAT NEVER SOUNDED AT ALL IS THE LOUDEST FAULT AND WAS THE
+        // ONE THIS FUNCTION DIDN'T REPORT. "A different report" was never
+        // written, so a wholly-silent layer passed every check: `missing: []`
+        // on a render where one layer contributed literally nothing (the
+        // 2026-09-30 wet-only bounce bug). Dips need a median to measure
+        // against; total silence needs none — say it plainly.
+        if (!(med > 1e-5)) {
+          if (sorted[sorted.length - 1] > 1e-5) return;  // sounded briefly — not this report
+          out.push({ key: k, quietAt: a.map((_, i) => i).slice(0, 8), inAndOut: false,
+                     secs: a.length, silent: true });
+          return;
+        }
         const quiet = [];
         for (let i = 0; i < a.length; i++) if (a[i] < med * 0.12) quiet.push(i);
         // ONE quiet second on a sparse layer is a musical rest, not a fault —
@@ -39021,6 +39125,10 @@
             (cap.cfg.extras || []).forEach((x) => {
               if (x && x.type != null && x.id != null) seeLayer(x, x.type + ':' + x.id, (x.label || x.type) + ' ' + x.id);
             });
+            // …and the v2 layers, which this audit never walked.
+            (cap.cfg.layers || []).forEach((L) => {
+              if (L && L.id != null) seeLayer(L, 'v2:' + (L.id | 0), L.name || ('layer ' + L.id));
+            });
             if (eng.length) _missing.push(...eng.slice(0, 6));
           } catch (e) {}
           // WHICH CHAIN DID EACH LAYER ACTUALLY TAKE? `res.core` only reports
@@ -39239,11 +39347,18 @@
       let wetRms = null;
       try { if (_wetMeter && _wetMeter.n) wetRms = Math.sqrt(_wetMeter.s / _wetMeter.n); } catch (e) {}
       let sendsWanted = 0;
+      // WET-ONLY LAYERS, BY METER KEY — see _bloomLayerDropouts(map, skip).
+      const _wetOnlyKeys = new Set();
       try {
         const c = cap.cfg;
         const see = (L) => { try { if (L && L.on !== false && L.present !== false && !L.mute) sendsWanted += (L.revSend | 0); } catch (e) {} };
-        ['bed', 'motif', 'texture', 'beat'].forEach((k) => see(c[k]));
-        (c.extras || []).forEach(see);
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => { see(c[k]); if (c[k] && c[k].wetOnly) _wetOnlyKeys.add(k); });
+        (c.extras || []).forEach((x) => { see(x); if (x && x.wetOnly && x.type != null && x.id != null) _wetOnlyKeys.add(x.type + ':' + x.id); });
+        // V2 LAYERS COUNT TOO. This walk knew only the classic layer set, so on
+        // a v2 project `sendsWanted` was 0 and the "the FX RETURNS carried NO
+        // signal" verdict below could never fire — which is precisely why the
+        // 2026-09-30 send-bus bug shipped with `missing: []`.
+        (c.layers || []).forEach((L) => { see(L); if (L && L.wetOnly) _wetOnlyKeys.add('v2:' + (L.id | 0)); });
         (typeof _ambSeqList === 'function' ? _ambSeqList(c) : []).forEach(see);
         (typeof _ambSampleList === 'function' ? _ambSampleList(c) : []).forEach(see);
         const bs = (c && c.buses) || {};
@@ -39271,10 +39386,19 @@
           }
           return out;
         };
-        const _dr = _bloomLayerDropouts(_layerRms);
+        const _dr = _bloomLayerDropouts(_layerRms, _wetOnlyKeys);
         _dr.slice(0, 4).forEach((d) => {
           const nps = _npsOf(d.key);
           const withNotes = d.quietAt.filter((i) => (nps[i] | 0) > 0).length;
+          if (d.silent) {
+            const total = nps.reduce((s, v) => s + (v | 0), 0);
+            _missing.unshift('layer ' + d.key + ' rendered SILENT for the whole take'
+              + (total > 0
+                  ? ' even though ' + total + ' note' + (total === 1 ? '' : 's')
+                    + ' were delivered to it — the AUDIO path, not the material'
+                  : ' and generated NO notes — the material, not the audio'));
+            return;
+          }
           const verdict = withNotes >= Math.ceil(d.quietAt.length / 2)
             ? ' — notes ARE delivered there, so the AUDIO path is dropping them'
             : (withNotes === 0
@@ -39303,7 +39427,7 @@
                peakVoices: _peakVoices,
                svoicePeak: _svoicePeak, lookahead: CHUNK + LOOK,
                sampStats: _sampStats,
-               layerRms: _layerRms, dropouts: _bloomLayerDropouts(_layerRms),
+               layerRms: _layerRms, dropouts: _bloomLayerDropouts(_layerRms, _wetOnlyKeys),
                core: coreOn, coreNotes: coreTaken, samplers: samplerCount, checkpoints: checkpointsFired };
     }
     // NAME THE EXPORTS DIFFERENTLY. This file's top level is SCRIPT scope, so a
@@ -41466,10 +41590,19 @@
           const l = row && row.querySelector('label'); return (l && l.textContent.trim()) || 'value'; };
         document.addEventListener('pointerdown', (ev) => {
           if (ev.pointerType === 'mouse') return;                       // desktop keeps native click-to-position
-          const el = ev.target && ev.target.closest && ev.target.closest('input.ambient-sl');
+          // …AND THE MIXER FADERS, the same control stood on end. They never got
+          // this handler, so on a phone they kept the native behaviour: a vertical
+          // drag inside a horizontally-scrolling strip is ambiguous and the page
+          // scroller usually won it — reported as "finicky and hard to move".
+          const el = ev.target && ev.target.closest && ev.target.closest('input.ambient-sl, input.ambient-mix-slider');
           if (!el || el.disabled) return;
           ev.preventDefault();                                          // stop the native jump-to-tap
-          D.el = el; D.sx = ev.clientX; D.lastX = ev.clientX; D.sy = ev.clientY; D.moved = false; D.acc = parseFloat(el.value) || 0;
+          D.el = el; D.sx = ev.clientX; D.lastX = ev.clientX; D.sy = ev.clientY; D.lastY = ev.clientY;
+          D.moved = false; D.acc = parseFloat(el.value) || 0;
+          // WHICH WAY THIS ONE RUNS, measured rather than assumed — a fader is
+          // `writing-mode: vertical-lr`, so its own box is the only honest answer.
+          const r0 = el.getBoundingClientRect();
+          D.vert = r0.height > r0.width * 1.5;
           try { el.setPointerCapture(ev.pointerId); } catch (e) {}
           clear();
           D.lp = setTimeout(() => {
@@ -41484,6 +41617,17 @@
             el2.dispatchEvent(new Event('change', { bubbles: true }));
           }, 480);
         }, { passive: false });
+        // WHILE WE OWN THE DRAG, THE BROWSER MUST NOT ALSO DRIVE THE INPUT. Its
+        // native range handling ran alongside this one — two drivers on one value,
+        // measured as 18 `input` events for 12 moves and a track that jumped
+        // BACKWARDS mid-drag. `touch-action` does not stop that (it governs
+        // panning, not the control's own default) and `preventDefault` on
+        // pointerdown does not reach the later touch moves. This does, and only
+        // while a drag of ours is live.
+        document.addEventListener('touchmove', (ev) => {
+          if (!D.el) return;
+          try { ev.preventDefault(); } catch (e) {}
+        }, { passive: false });
         document.addEventListener('pointermove', (ev) => {
           const el = D.el; if (!el) return;
           // Arm on CUMULATIVE travel from the press, not the per-move delta — a slow
@@ -41493,15 +41637,21 @@
             D.moved = true; clear();
           }
           const dx = ev.clientX - D.lastX, dy = ev.clientY - D.sy;
-          D.lastX = ev.clientX;
+          const dyStep = ev.clientY - D.lastY;
+          D.lastX = ev.clientX; D.lastY = ev.clientY;
           const mn = parseFloat(el.min) || 0, mx = isFinite(parseFloat(el.max)) ? parseFloat(el.max) : 100;
           const step = Math.abs(parseFloat(el.step)) || 1;
-          const w = Math.max(140, el.getBoundingClientRect().width || 140);
+          const rr = el.getBoundingClientRect();
+          // A FADER RUNS UP: its track is `direction: rtl` on a vertical writing
+          // mode, so low is at the BOTTOM and dragging up must RAISE the value.
+          const w = D.vert ? Math.max(60, rr.height || 104) : Math.max(140, rr.width || 140);
           // Vertical distance divides the travel: at the control it is 1:1 across
           // its width, 120px away it is a quarter speed. Accumulated INCREMENTALLY
           // so changing precision mid-drag does not re-scale what you already did.
-          const fine = 1 / (1 + Math.abs(dy) / 45);
-          D.acc += dx * ((mx - mn) / w) * fine;
+          // …and the CROSS axis is the fine-tune on both: sideways on a fader,
+          // up-and-down on a slider.
+          const fine = 1 / (1 + (D.vert ? Math.abs(ev.clientX - D.sx) : Math.abs(dy)) / 45);
+          D.acc += (D.vert ? -dyStep : dx) * ((mx - mn) / w) * fine;
           D.acc = Math.max(mn, Math.min(mx, D.acc));
           const v = Math.max(mn, Math.min(mx, Math.round(D.acc / step) * step));
           if (String(v) !== el.value) { el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -48646,10 +48796,165 @@
         strip.appendChild(ch);
       });
       try { _ambRenderScheduler(E); } catch (e) {}   // the Scheduler mirrors the same layer set
+      try { _ambRenderMonitor(E); } catch (e) {}     // …and so does Monitor — one chip per channel
       // Groove push rows track the layer set. The PANE this asked about is gone
       // (Groove is a card in Arrangement now), so it asks the card — a stale element
       // reference here is a repaint that silently stops happening.
       try { const gb = _ambGet(E, 'ambient-proggrp-groove'); if (gb && gb.classList.contains('open')) _ambRenderGroove(E); } catch (e) {}
+    }
+    // ================= MONITOR (🎧) ===================================
+    // One chip per layer: tap to play or silence it. The fast way to hear what
+    // each part is contributing without opening its card — silence everything,
+    // then bring parts back in one at a time.
+    //
+    // IT WRITES NOTHING ITSELF. Every press goes through `_ambToggleLayer`, the
+    // same function the layer cards use, so it inherits click-free gate ramps,
+    // the reverb-send fade, Queue mode and the fresh-layer rule instead of
+    // restating any of them. A second implementation of "turn a layer off"
+    // would be a second set of those rules to get wrong.
+    function _ambMonChipTitle(name, on, queued) {
+      return name + (queued ? ' — change queued to the next boundary'
+                            : (on ? ' — playing. Tap to silence it.'
+                                  : ' — silent. Tap to play it.'));
+    }
+    // The all-on/off face. A VERB, because a one-word face is read as the
+    // current STATE (see docs/traps-ui.md) — "All off" would say everything is
+    // already off. The count lives beside it as a readout, never in the face.
+    function _ambMonAllFace(E, layers) {
+      const nOn = layers.filter(({ layer }) => !!layer.on).length;
+      const mem = (E && Array.isArray(E._monRestore)) ? E._monRestore.length : 0;
+      if (nOn > 0) {
+        return { label: '⏻ Silence all', act: 'off',
+                 title: 'Silence every layer at once and remember which were playing, so they can be brought back.' };
+      }
+      if (mem > 0) {
+        return { label: '⏻ Bring back ' + mem, act: 'restore',
+                 title: 'Play the ' + mem + ' layer' + (mem === 1 ? '' : 's') + ' that were on when everything was silenced.' };
+      }
+      return { label: '⏻ Play all', act: 'on', title: 'Play every layer.' };
+    }
+    function _ambMonPaintAll(E) {
+      const btn = _ambGet(E, 'ambient-monitor-all'); if (!btn) return;
+      const cfg = E.getCfg(); const layers = cfg ? _ambMixerLayers(cfg) : [];
+      const f = _ambMonAllFace(E, layers);
+      const nOn = layers.filter(({ layer }) => !!layer.on).length;
+      btn.textContent = f.label;
+      btn.title = f.title;
+      btn.dataset.monact = f.act;
+      btn.classList.toggle('active', nOn > 0);
+      const rd = _ambGet(E, 'ambient-monitor-count');
+      if (rd) rd.textContent = layers.length ? (nOn + ' of ' + layers.length + ' playing') : '';
+    }
+    function _ambRenderMonitor(E) {
+      const host = _ambGet(E, 'ambient-monitor-body'); if (!host) return;
+      const cfg = E.getCfg();
+      const layers = cfg ? _ambMixerLayers(cfg) : [];
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const pend = E._queuePending || {};
+      const chips = layers.map(({ key, name, layer }) => {
+        const on = !!layer.on, q = !!pend[key];
+        // The mixer's own colour keys, so a layer reads the same in both places.
+        let attrs = '';
+        try { attrs += ' data-ltype="' + esc(_ambLayerTypeOf(key)) + '"';
+              const lv = _ambLayerVarOf(layer); if (lv) attrs += ' data-lvar="' + esc(lv) + '"'; } catch (e) {}
+        return '<span role="button" tabindex="0" class="ambient-mon-chip' + (on ? ' on' : '') + (q ? ' queued' : '') + '"'
+          + ' data-monkey="' + esc(key) + '"' + attrs
+          + ' aria-pressed="' + on + '" title="' + esc(_ambMonChipTitle(name, on, q)) + '">'
+          + esc(name) + '</span>';
+      }).join('');
+      host.innerHTML =
+        '<button type="button" class="ambient-var-toggle ambient-mon-all" id="' + _ambTrId(E, 'ambient-monitor-all') + '"></button>' +
+        '<div class="ambient-mon-head">' +
+          '<span class="ambient-hint ambient-mon-count" id="' + _ambTrId(E, 'ambient-monitor-count') + '"></span>' +
+        '</div>' +
+        (layers.length
+          ? '<div class="ambient-mon-chips">' + chips + '</div>'
+          : '<span class="ambient-hint">No layers yet.</span>');
+      _ambMonPaintAll(E);
+      if (!host._wired) {
+        host._wired = true;
+        // `pointerdown`, not click: these chips repaint themselves on press, and
+        // a repaint between mousedown and mouseup drops a click (see the
+        // live-readout rule in docs/traps-ui.md).
+        host.addEventListener('pointerdown', (ev) => { try { _ambMonitorAct(E, ev.target); } catch (e) {} });
+        host.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter' && ev.key !== ' ') return;
+          const t = ev.target && ev.target.closest && ev.target.closest('.ambient-mon-chip, .ambient-mon-all');
+          if (!t) return;
+          ev.preventDefault();
+          try { _ambMonitorAct(E, t); } catch (e) {}
+        });
+      }
+    }
+    function _ambMonitorAct(E, target) {
+      if (!target || !target.closest) return;
+      const all = target.closest('.ambient-mon-all');
+      if (all) { _ambMonitorAll(E, all.dataset.monact || 'off'); return; }
+      const chip = target.closest('.ambient-mon-chip'); if (!chip) return;
+      const key = chip.getAttribute('data-monkey'); if (!key) return;
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      // No paint here: `_ambToggleLayer` calls `_ambSyncOnUI` in every branch it
+      // has, and a second call from the caller is a second writer over one field.
+      _ambToggleLayer(E, key, L, chip, () => { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} });
+    }
+    // ALL OFF remembers what was playing, because silencing everything to audition
+    // one part is only useful if the arrangement comes back. The memory is engine
+    // state, never the saved config: it is a listening gesture, not a setting.
+    function _ambMonitorAll(E, act) {
+      const cfg = E.getCfg(); const layers = cfg ? _ambMixerLayers(cfg) : [];
+      if (!layers.length) return;
+      let want;
+      if (act === 'off') {
+        E._monRestore = layers.filter(({ layer }) => !!layer.on).map(({ key }) => key);
+        want = () => false;
+      } else if (act === 'restore') {
+        const keep = new Set(E._monRestore || []);
+        E._monRestore = null;
+        want = (key) => keep.has(key);
+      } else {
+        E._monRestore = null;
+        want = () => true;
+      }
+      const persist = () => {};   // once, at the end — not per layer
+      layers.forEach(({ key, layer }) => {
+        const desired = want(key);
+        const pend = E._queuePending && E._queuePending[key];
+        const live = pend ? !!pend.desired : !!layer.on;
+        if (live === desired) return;
+        _ambToggleLayer(E, key, layer, _ambMonChipEl(E, key), persist);
+      });
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      _ambMonPaintAll(E);
+    }
+    function _ambMonChipEl(E, key) {
+      const host = E && document.getElementById(E.hostId); if (!host || key == null) return null;
+      try { return host.querySelector('.ambient-mon-chip[data-monkey="' + key + '"]'); } catch (e) { return null; }
+    }
+    // A layer's on/off now has TWO faces — its card toggle and its Monitor chip —
+    // over ONE field, which is exactly the shape `_ambSyncLevelUI` exists for.
+    // One function writes both, so neither can go stale; a chip with no second
+    // writer would be a confident wrong answer about what is playing.
+    function _ambSyncOnUI(E, key, on, queued) {
+      const host = E && document.getElementById(E.hostId); if (!host || key == null) return;
+      const chip = _ambMonChipEl(E, key);
+      if (chip) {
+        chip.classList.toggle('on', !!on);
+        chip.classList.toggle('queued', !!queued);
+        chip.setAttribute('aria-pressed', String(!!on));
+        chip.title = _ambMonChipTitle(chip.textContent || '', !!on, !!queued);
+      }
+      // The layer card's own head toggle (card located via its `data-phkey`, the
+      // same lookup _ambSyncLevelUI uses).
+      const cards = host.querySelectorAll('.ambient-layer');
+      for (let i = 0; i < cards.length; i++) {
+        const ph = cards[i].querySelector('[data-phkey]');
+        if (!ph || ph.getAttribute('data-phkey') !== key) continue;
+        const hd = cards[i].querySelector('.ambient-layer-head');
+        const b = hd && hd.querySelector('.ambient-toggle');
+        if (b) { b.classList.toggle('on', !!on); b.classList.toggle('queued', !!queued); }
+        break;
+      }
+      try { _ambMonPaintAll(E); } catch (e) {}
     }
     // ================= SCHEDULER (⏱) ==================================
     // The per-layer TIME matrix between Configure and the Mixer: one row per
@@ -55616,7 +55921,18 @@
                 if (bEl) { bEl.style.display = mOn ? '' : 'none';
                   if (document.activeElement !== bEl) bEl.value = String(Number.isFinite(mv.bars) ? (mv.bars | 0) : 16); }
                 const lb = document.getElementById(tr('ambient-mixmove-learn'));
-                if (lb) lb.style.display = mOn ? '' : 'none';
+                if (lb) {
+                  lb.style.display = mOn ? '' : 'none';
+                  // ONE BUTTON, TWO HONEST STATES — a learned range with no way back
+                  // is a dead end, and a second button for "undo that" is chrome.
+                  let learned = 0;
+                  try { _ambMixerLayers(cfg).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L && L.mixRange) learned++; }); } catch (e) {}
+                  const txt = learned ? ('\u21ba Clear ' + learned + ' learned') : '\u2913 From my mixing';
+                  if (lb.textContent !== txt) lb.textContent = txt;
+                  lb.title = learned
+                    ? ('Put those ' + learned + ' layer' + (learned === 1 ? '' : 's') + ' back on the shared \u201cdown to\u201d. What you have set the faders to is remembered either way.')
+                    : 'Take each layer\u2019s range from the levels you have actually used on it \u2014 the quietest and loudest you have set that fader to. Ride the faders while it plays, then press this.';
+                }
               } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
@@ -56011,6 +56327,11 @@
             // had no answer. See the merged pane below.
 
             '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
+            // 🎧 MONITOR — one chip per layer, tap to play or silence it. The
+            // Mixer answers "how loud"; this answers "what is playing", which
+            // is a different question and was two presses per layer away (open
+            // the card, find the head toggle, close it again).
+            '<button type="button" class="ambient-tabsec-tab" data-tab="monitor" role="tab" title="Monitor — one chip per layer: tap to play or silence it. Silence everything and bring parts back in one at a time.">🎧 Monitor</button>' +
           '</div>' +
           (E.isLane ? '' :
           '<div class="ambient-tabsec-pane ambient-progsec" data-pane="progsec" id="ambient-progsec">' +
@@ -56449,6 +56770,11 @@
             '</div>' +
           '</details>' +
         '</div>' +        // end mixer pane
+        // 🎧 MONITOR pane — built entirely by _ambRenderMonitor (the layer set
+        // changes, so nothing here is static).
+        '<div class="ambient-tabsec-pane ambient-monitor" data-pane="monitor" id="ambient-monitor">' +
+          '<div class="ambient-mon-body" id="ambient-monitor-body"></div>' +
+        '</div>' +
         '</div>' +        // end .ambient-tabsec
         // CURRENT PART — the editing context, between the tabs and the layers.
         // Painted by _ambRenderCurPart; hidden while there are no changes.
@@ -56608,6 +56934,7 @@
                   try { _ambRenderGroove(E); } catch (e) {}
                 }
                 else if (name === 'mixer') _ambRenderMixer(E);
+                else if (name === 'monitor') _ambRenderMonitor(E);
               } catch (e) {}
             }
           });
@@ -58781,6 +59108,16 @@
         { const lb = G('ambient-mixmove-learn');
           if (lb) lb.addEventListener('click', () => {
             _E = E; const c = E.getCfg(); if (!c) return;
+            // ALREADY LEARNED → this is the way back.
+            let had = 0;
+            try { _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L && L.mixRange) had++; }); } catch (e) {}
+            if (had) {
+              try { _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L) delete L.mixRange; }); } catch (e) {}
+              persist();
+              try { _ambSyncControls(E); } catch (e) {}
+              try { if (typeof showToast === 'function') showToast('\u21ba ' + had + ' layer' + (had === 1 ? '' : 's') + ' back on the shared \u201cdown to\u201d \u2014 what you set the faders to is still remembered.', { ms: 4000 }); } catch (e) {}
+              return;
+            }
             let n = 0, skipped = 0;
             try {
               _ambMixerLayers(c).forEach(({ key }) => {

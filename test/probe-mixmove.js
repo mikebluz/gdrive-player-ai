@@ -242,6 +242,33 @@ const ok = (name, cond, detail) => {
   ok('…move and fade edit it', /"amount":65/.test(ui.edited || '') && /"glide":10/.test(ui.edited || ''), ui.edited);
   ok('…and switching it off stores nothing at all', !!ui.offClears);
 
+  // ---- the Mixer says where the mix has taken a fader ----------------------
+  const seen = await page.evaluate(async () => {
+    const w = (ms) => new Promise((r) => setTimeout(r, ms)); const E = _masterEng;
+    const host = document.getElementById(E.hostId);
+    const faders = host ? host.querySelectorAll('.ambient-mix-slider[data-mixkey]') : [];
+    if (!faders.length) return { noStrip: true };
+    (E.getCfg().layers || []).forEach((L) => { delete L.mixRange; }); E.getCfg();
+    E.getCfg().prog.mixmove = { amount: 95, glide: 5, depth: 60, bars: 2 }; E.getCfg();
+    _ambStartGenerator(E); await w(2200);
+    const txt = () => [...host.querySelectorAll('.ambient-mix-val')].map((e) => e.textContent).join(' ');
+    const marked = () => host.querySelectorAll('.ambient-mix-val.mix-moved').length;
+    const o = { during: txt(), markedDuring: marked() };
+    _ambStopGenerator(E);
+    delete E.getCfg().prog.mixmove; E.getCfg(); await w(900);
+    o.after = txt(); o.markedAfter = marked();
+    o.set = (E.getCfg().layers || []).map((L) => (Number.isFinite(L.level) ? L.level : 70) + '%').join(' ');
+    return o;
+  });
+  console.log('\n  the Mixer, while it moves');
+  if (seen.noStrip) ok('the Mixer value follows the live mix', false, 'no Mixer strip in this view');
+  else {
+    ok('a moved fader says where the mix has taken it', seen.markedDuring > 0,
+      'during: ' + seen.during + ' (marked ' + seen.markedDuring + ')');
+    ok('…and it says your own number again once it is off',
+      seen.markedAfter === 0 && seen.after === seen.set, 'after: ' + seen.after + ' / set: ' + seen.set);
+  }
+
   ok('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
   console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
   await browser.close();

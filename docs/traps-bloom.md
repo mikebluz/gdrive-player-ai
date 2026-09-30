@@ -387,6 +387,49 @@
   `_ambEmitCutoff`) asking whether it should apply.
 - **An UNKEYED core post kills the worklet, and a dead worklet is TOTAL SILENCE** — not NaN, it simply
   stops producing, and every core-rendered layer goes quiet for the session.
+- **`getCfg()` IS NOT A GETTER — IT IS THE 687-LINE NORMALIZER, O(layers), WITH `normLayer` THREE
+  TIMES PER v2 LAYER.** Treat every call as expensive. `_ambWithCfgHold(E, fn)` pins ONE result for
+  a synchronous block; `_ambCfgRepin()` is the single re-normalize a block that WRITES may take
+  (structure an edit just made reachable needs its defaults). Neither may span an await or a
+  timeout — a suspended hold freezes the config for every other caller.
+  **THE COST IS RARELY WHERE THE EDIT IS.** A 122-move drag ran 14,441 normalizes, ~118 per control
+  move; holding the whole `.v2-f` input sweep removed only 12% of them. The real source was
+  `_ambSyncLayerUnits` — a *repaint* that opens with `_v2RenderSeam` → `V2.render` → `applyGate` +
+  `drawPartViz` on EVERY card, ~99 normalizes a call — reached by a per-element `_unitRefresh`
+  listener that fires on every `input`, outside the sweep's hold. **Find the caller by sampling
+  stacks, not by reading the handler**; the handler was 176 of 8,925 calls. Holding the repaint
+  took the drag to 851 calls (17×) and halved `V2.render`'s worst call, 23.9 → 11.1 ms.
+  Gate: `node test/probe-liveedit-perf.js`.
+- **THE SCHEDULING RUNWAY IS THE JITTER BUDGET — A LIVE EDIT MUST NOT SPEND IT.** Each tick commits
+  `now+0.3` → `now+1.4`, about 1.1 s ahead. A note's start time is absolute, but a NODE voice still
+  has to be BUILT before it (`_vqPump`, main thread), so the runway is the only thing standing
+  between a busy main thread and a late note. v2's `.v2-f` commit retracted the lot on EVERY `input`
+  event — `cancelBloomFutureVoices(key, Tone.now())` plus `delete _v2Phase[key]`, which drops
+  `lastAt` so the emitter resumes from `now`. Measured on a 122-move drag: the edited layer's runway
+  collapsed **1294 ms → 46 ms** and it re-emitted **132 notes instead of 12**, while every other
+  layer kept its full 1269 ms — "audio slippage when live editing", and it reproduces on any layer
+  you touch. Three rules, all of which v1's `_ambReanchorLayer` already followed:
+  **(a)** never cut closer than the tick's own emit lead (0.3 s); **(b)** move `lastAt`, never
+  `delete` the phase store — deleting re-derives `startAt`, and a FREE-clock layer anchors at
+  `s0 = lead`, so every input event WALKED its phase; **(c)** coalesce to one re-anchor per gesture
+  (v1 gets this free by binding to `change`; an `input` sweep must debounce and flush on `change`).
+  Gate: `node test/probe-liveedit-perf.js` — poison-verified, lead 0 + no debounce reproduces
+  123 cuts inside the runway and the 46 ms collapse exactly.
+- **THE CORE'S REVERB-SEND BUS IS THE LAST OUTPUT, NOT OUTPUT 16.** The live node is 16 slots + 1
+  send, so the two were the same thing until the bounce started narrowing the offline node to
+  `layers + 1` outputs. A 6-layer render then had 8 outputs, `voice-processor.js`'s
+  `if (outputs.length > 16)` never wrote the send, `connectSend`'s `Tone.connect(off.node, …, SLOTS)`
+  threw into its catch, and EVERY per-layer Reverb send vanished from the fast bounce — a wet-only
+  layer rendered pure silence with all its notes correctly delivered and `missing: []`. Anything
+  indexing the core node must use `off.cap`, never `SLOTS`. Gate: `node test/probe-bounce-wet.js`.
+- **The per-layer bounce meter taps each layer's DRY output** (a core strip's slot, a node chain's
+  panner). A WET-ONLY layer mutes exactly that, so its `layerRms` is legitimately zero — pass it in
+  `_bloomLayerDropouts(map, skip)` or the silence report cries wolf. To ask "is it in the mix",
+  render twice with it on and off.
+- **The bounce's self-audits only knew the CLASSIC layer set** (`bed/motif/texture/beat` + `extras`),
+  so on a v2 project `sendsWanted` was 0 and the "the FX RETURNS carried NO signal" verdict could
+  never fire — which is why the send-bus bug above shipped with nothing reported. Any new walk over
+  "every layer" in `_ambRenderOffline` must include `cfg.layers`.
 - **Every emitter must stamp `_ambKeyTime = at` per note** — `_ambVelJitter01` and the key/part/section
   resolvers read it, and both fail silently without it.
 - **`_ambApplyAdsr` is the one params builder** all 13 emits go through (humanize, velVar, envelope,

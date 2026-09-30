@@ -474,7 +474,10 @@
         if (offline()) {
           if (!dest) return;
           try {
-            if (!off.sendVia) { off.sendVia = Tone.getContext().rawContext.createGain(); Tone.connect(off.node, off.sendVia, SLOTS, 0); }
+            // …from THIS render's send output, which is `off.cap`, not SLOTS.
+            // A narrowed node has no output 16, so the connect threw into the
+            // catch below and the whole wet path was lost silently.
+            if (!off.sendVia) { off.sendVia = Tone.getContext().rawContext.createGain(); Tone.connect(off.node, off.sendVia, (off.cap | 0) || SLOTS, 0); }
             try { off.sendVia.disconnect(); } catch (e) {}
             Tone.connect(off.sendVia, dest);
           } catch (e) {}
@@ -801,10 +804,14 @@
           }
           return have;
         }
-        if (off.slots.size >= SLOTS) return null;   // out of slots → node chain
+        // …against THIS session's width. Handing out slot 9 on a node built
+        // with 7 slot outputs makes the connect throw and drops the layer to
+        // the node chain — same class of bug as the send bus above.
+        const _cap = (off.cap | 0) || SLOTS;
+        if (off.slots.size >= _cap) return null;   // out of slots → node chain
         const used = new Set(off.slots.values());
         let slot = -1;
-        for (let i = 0; i < SLOTS; i++) if (!used.has(i)) { slot = i; break; }
+        for (let i = 0; i < _cap; i++) if (!used.has(i)) { slot = i; break; }
         if (slot < 0) return null;
         try { off.node.disconnect(slot); } catch (e) {}
         try { Tone.connect(off.node, bus, slot, 0); } catch (e) { return null; }

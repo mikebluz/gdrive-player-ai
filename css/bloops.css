@@ -3524,6 +3524,7 @@
        group already frames it (avoids a box-in-a-box). */
     .ambient-tabsec-pane.ambient-mixer,
     .ambient-tabsec-pane.ambient-sched,
+    .ambient-tabsec-pane.ambient-monitor,
     .ambient-tabsec-pane.ambient-groove {
       border: 0; background: none; padding: 0; border-radius: 0;
     }
@@ -4278,7 +4279,7 @@
     }
     .ambient-mix-ch {
       flex: 0 0 auto; display: flex; flex-direction: column; align-items: center;
-      gap: 4px; width: 46px;
+      gap: 4px; width: 54px;
     }
     .ambient-mix-val {
       font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; color: #cbd5e0;
@@ -4286,8 +4287,26 @@
     .ambient-mix-slider {
       writing-mode: vertical-lr; direction: rtl;        /* standard: low at bottom */
       -webkit-appearance: slider-vertical;              /* WebKit fallback */
-      width: 22px; height: 104px; accent-color: #9f7aea; cursor: pointer;
+      width: 34px; height: 116px; accent-color: #9f7aea; cursor: pointer;
+      /* THE VERTICAL AXIS IS THE FADER'S. Without this the strip's own
+         horizontal scroller and the page's vertical one both bid for the drag,
+         and the page usually won — the fader moved a little and stopped, which
+         is what "finicky, hard to move" is. `pan-x` leaves the strip its
+         sideways scroll and gives us the up-and-down. `pinch-zoom` — the same
+         value the card sliders use — because `pan-x` left the NATIVE range drag
+         running alongside our handler: two drivers on one value, measured as 18
+         input events for 12 moves and a track that jumped backwards mid-drag.
+         17-ambient's pointer handler owns touch/pen; mouse stays native. The
+         strip still scrolls sideways by its labels and the gaps between faders. */
+      touch-action: pinch-zoom;
     }
+    /* A REAL TOUCH TARGET: 22px of track was a third of a fingertip. */
+    .ambient-mix-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+      width: 30px; height: 26px; border-radius: 7px; background: #cbb7f5;
+      border: 2px solid #2a2a40; cursor: grab; }
+    .ambient-mix-slider::-moz-range-thumb { width: 28px; height: 24px; border-radius: 7px;
+      background: #cbb7f5; border: 2px solid #2a2a40; cursor: grab; }
+    .ambient-mix-slider:active::-webkit-slider-thumb { background: #e9dcff; cursor: grabbing; }
     .ambient-mix-label {
       font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; color: #a0aec0;
       max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -15211,6 +15230,39 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
     .ambient-mix-ch[data-ltype] { border-top: 2px solid var(--lt, #4a5568); }
     .ambient-mix-ch[data-ltype] .ambient-mix-label { color: var(--lt, #cbd5e0); }
 
+    /* ── 🎧 MONITOR ──────────────────────────────────────────────────────────
+       One chip per layer: the layer's NAME on the face and its state in the
+       FILL, which is the on/off-toggle rule in docs/traps-ui.md. The fill is
+       #48bb78 — the palette's RESERVED "sounding" colour, declared a few rules
+       down — so "what is playing" reads without decoding anything, and the
+       layer's own type hue stays on the left edge so a chip and its mixer
+       channel are recognisably the same layer.
+       Chips size to their CONTENT with a min (a short name still reads as a
+       button) and `max-width: 100%` (a long one cannot push its row-mates off
+       the line) — the `.ambient-toggle` lesson. The row WRAPS; it never
+       scrolls sideways. */
+    .ambient-mon-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 2px; min-width: 0; }
+    .ambient-mon-all { width: 100%; min-height: 34px; font-size: 0.78rem; }
+    .ambient-mon-head { display: flex; justify-content: flex-end; min-width: 0; }
+    .ambient-mon-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+    .ambient-mon-chip {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 34px; min-width: 72px; max-width: 100%; padding: 4px 12px;
+      border: 1px solid #2d2d3f; border-left: 3px solid var(--lt, #4a5568);
+      border-radius: 8px; background: transparent; cursor: pointer;
+      touch-action: manipulation; -webkit-user-select: none; user-select: none;
+      font: 600 0.74rem 'Segoe UI', sans-serif; color: #8b7fa8; text-align: center;
+      white-space: normal; overflow-wrap: anywhere;
+    }
+    .ambient-mon-chip.on {
+      color: #0d0d18; background: #48bb78; border-color: #48bb78;
+      border-left-color: var(--lt, #48bb78);
+    }
+    /* queued = Queue mode has armed this change for the layer's next boundary.
+       Amber is the panel's "armed, not yet applied" throughout. */
+    .ambient-mon-chip.queued { border-color: #f6ad55; box-shadow: inset 0 0 0 1px rgba(246,173,85,0.45); }
+    @media (hover: hover) { .ambient-mon-chip:not(.on):hover { color: #cbb8ee; border-color: #4a3d6b; } }
+
     /* THE PALETTE, and it was MEASURED rather than eyeballed. First pass had
        Riff/Arp/Texture within ΔE 19 of each other (CIELab) — adjacent enough to
        be unreadable at a 3px edge. These clear ΔE 30 across the eight types you
@@ -17757,3 +17809,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 /* ✕ on a version chip — deletes that version (the chip itself switches to it) */
 .ambient-pov-ver .ambient-pov-verdel { margin-left: 7px; padding: 0 3px; opacity: 0.55; font-weight: 700; border-radius: 4px; }
 @media (hover: hover) { .ambient-pov-ver .ambient-pov-verdel:hover { opacity: 1; background: rgba(255,255,255,0.08); } }
+
+/* ⇅ Mix — the Mixer value says where the mix has taken a fader, marked while that
+   is not the number you set (the fader itself stays where you put it) */
+.ambient-mix-val.mix-moved { color: #8fd0c8; font-style: italic; }

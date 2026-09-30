@@ -148,14 +148,23 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
       }
     }
     this.wasm.process(currentTime, frames);
-    for (let s = 0; s < outputs.length && s < 16; s++) {
+    // THE SEND BUS IS THE LAST OUTPUT, NOT OUTPUT 16. The live node is built
+    // 16 slots + 1 send, so "output 16" and "the last output" were the same
+    // thing — until offline renders started narrowing the node to
+    // layers+1 outputs (a smaller allocation for a phone to refuse). A 6-layer
+    // bounce then had 8 outputs, `outputs.length > 16` was false, and the
+    // reverb-send bus was NEVER WRITTEN: every per-layer Reverb send vanished
+    // from the fast bounce, and a wet-only layer rendered as pure silence with
+    // its notes all correctly delivered. Keyed off the last output, both
+    // widths are the same contract.
+    const nSlots = Math.min(16, Math.max(0, outputs.length - 1));
+    for (let s = 0; s < nSlots; s++) {
       const o = outputs[s];
       o[0].set(this.views[s][0].subarray(0, frames));
       if (o[1]) o[1].set(this.views[s][1].subarray(0, frames));
     }
-    // 17th output (when configured): the shared reverb-send bus
-    if (outputs.length > 16) {
-      const o = outputs[16];
+    if (outputs.length > nSlots) {
+      const o = outputs[nSlots];
       o[0].set(this.sendViews[0].subarray(0, frames));
       if (o[1]) o[1].set(this.sendViews[1].subarray(0, frames));
     }

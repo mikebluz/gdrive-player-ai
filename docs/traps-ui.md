@@ -414,6 +414,25 @@
 - **Sliders need `.ambient-sl`** or they get no touch handling at all (delegated `pointerdown`: grab
   anywhere, move by DELTA never jump, vertical distance = fine adjust, tap = numeric entry). Arm on
   CUMULATIVE travel, never a per-move delta.
+- **On touch, the NATIVE range control drives the input alongside our handler, and `touch-action`
+  does NOT stop it.** Measured on the ⇅ Mix faders: 12 finger moves produced 18 `input` events and
+  values that jumped BACKWARDS — "finicky and hard to move". `touch-action: pinch-zoom` narrows what
+  the browser scrolls, it does not surrender the control. The fix is a `touchmove` listener with
+  `{passive: false}` that `preventDefault()`s **only while a drag is live** (`D.el` set): 12 moves →
+  12 events, 30px → 26 units, symmetric both ways. Gate: `node test/probe-mix-faders.js`.
+- **A vertical slider is detected from its RECT, not its class** (`height > width * 1.5`), and its
+  delta is `-dy`; the fine-adjust axis swaps with it. Reading orientation from the markup means every
+  new vertical fader has to remember to announce itself.
+- **A LAYER'S `on` HAS TWO FACES — the card head toggle and its 🎧 Monitor chip — and ONE writer,
+  `_ambSyncOnUI`.** Same shape as `_ambSyncLevelUI` (mixer fader ↔ card slider) and the same failure
+  if you skip it: a chip that goes on claiming a layer is playing after the card silenced it. The
+  Monitor presses through **`_ambToggleLayer`**, never `L.on = !L.on` — that is where the click-free
+  gate ramp, the reverb-send fade, Queue mode and the fresh-layer rule live, and a second
+  implementation of "turn a layer off" is a second set of those to get wrong. `_ambToggleLayer`
+  syncs in every branch, so a caller that paints again afterwards is the second writer it was
+  avoiding. Gate: `node test/probe-monitor.js` (poison either direction → the matching check fails).
+  NOTE the v2 card's `.v2-on` handler still flips `L.on` directly (no ramp, no queue) and only calls
+  the sync — routing it through `_ambToggleLayer` needs `V2.render` to carry the `queued` class first.
 - **A "keep this?" question belongs on the press that DESTROYS the thing, not beside it.** 💾 Save this
   take stood next to 🎲 New take for months and was rarely pressed — nobody knows a take was worth
   keeping until it is about to go. It is now the first answer inside the gate 🎲 and the Bank's own

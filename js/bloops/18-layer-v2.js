@@ -22680,24 +22680,95 @@
         const L = (c2.layers || []).find(x => x && (x.id | 0) === id);
         return L ? { L, card } : null;
       };
-      const commit = (ctx) => {
-        try { E.getCfg(); } catch (e) {}
-        applyGate(ctx.card, ctx.L);
-        // APPLY NOW, NOT WHEN THE SCHEDULE RUNS DRY — v1's own re-anchor idiom
-        // is CANCEL + drop phase, and this commit only had the second half:
-        // while playing, notes scheduled with the OLD settings (a full
-        // lookahead, and for a long cycle the whole cycle) kept sounding the
-        // old instrument, and the re-anchored emit then DOUBLED the overlap.
-        // Reported as "changing Instrument tone does not update the content".
-        // Sounding notes ring out — only the un-started future is retracted.
-        // a STAGED edit changes nothing that plays — leave the transport alone
-        if (V2.isStaged(ctx.L)) return;
+      // ── A LIVE EDIT MUST NOT SPEND THE SCHEDULING RUNWAY ─────────────────
+      // Every tick commits ~1.1 s of audio ahead of the clock (emit lead
+      // `now+0.3` → horizon `now+1.4`). That runway is the ONLY thing absorbing
+      // main-thread jitter: a note's start time is absolute, but a node voice
+      // still has to be BUILT before that time, and the build runs on a
+      // main-thread pump (`_vqPump`).
+      //
+      // This commit used to retract the whole runway on EVERY `input` event —
+      // `cancelBloomFutureVoices(key, Tone.now())` plus `delete _v2Phase[key]`,
+      // which drops `lastAt` so the emitter resumes from `now` instead of from
+      // a lead. MEASURED on a 122-move slider drag: the edited layer's runway
+      // collapsed 1294 ms → 46 ms and it re-emitted 132 notes instead of 12,
+      // while every other layer kept its full 1269 ms. On a phone 46 ms is less
+      // than a voice build, so Tone clamps the trigger to `now` and the note
+      // lands late — the reported "audio slippage when live editing".
+      //
+      // Three changes, one per half of the fault:
+      //  (a) FLOOR — never retract or resume closer than the engine's own
+      //      minimum emit lead. The edit still lands within a third of a
+      //      second, which is immediate at any tempo.
+      //  (b) KEEP THE PHASE — move `lastAt`, never delete the store. Deleting
+      //      it re-derives `startAt`, and for a FREE-clock layer that anchor is
+      //      wherever the tick happened to be (`s0 = lead`), so every input
+      //      event WALKED the layer's phase. v1's `_ambReanchorLayer` has
+      //      always moved `lastAt` and kept the store, for this reason.
+      //  (c) COALESCE — one re-anchor per gesture, not one per input event. v1
+      //      gets this free by binding to `change`; this sweep is on `input`, so
+      //      it debounces (TRAILING, so a paused finger still hears the change
+      //      mid-drag) and `change` flushes whatever is pending.
+      // Gate: `node test/probe-liveedit-perf.js` — the edited layer's runway
+      // must stay above the floor through a drag.
+      const V2_EDIT_LEAD = 0.30;     // == the tick's own `lead` (17-ambient `_ambTick`)
+      const V2_EDIT_COALESCE_MS = 90;
+      const reanchorLive = (id) => {
+        const key = 'v2:' + (id | 0);
         try {
-          if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
-            cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
-          }
+          if (!E.timer || typeof Tone === 'undefined' || !Tone.now) return;
+          const at = Tone.now() + V2_EDIT_LEAD;
+          // Sounding notes ring out; only the un-started future is retracted.
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, at);
+          const st = E._v2Phase && E._v2Phase[key];
+          if (st) st.lastAt = at;    // re-emit from the floor, on the SAME grid
         } catch (e) {}
-        try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}   // re-anchor on the next tick
+      };
+      const reanchorSoon = (id) => {
+        if (!E.timer) return;
+        const key = 'v2:' + (id | 0);
+        const T = E._v2ReTimer || (E._v2ReTimer = Object.create(null));
+        try { clearTimeout(T[key]); } catch (e) {}
+        T[key] = setTimeout(() => { try { delete T[key]; } catch (e) {} reanchorLive(id); }, V2_EDIT_COALESCE_MS);
+      };
+      const reanchorFlush = () => {
+        const T = E._v2ReTimer; if (!T) return;
+        Object.keys(T).forEach((key) => {
+          try { clearTimeout(T[key]); } catch (e) {}
+          delete T[key];
+          reanchorLive(key.slice(3) | 0);
+        });
+      };
+      // ── ONE NORMALIZE PER EDIT, NOT ~120 ─────────────────────────────────
+      // `getCfg()` runs the whole 687-line normalizer, and that normalizer is
+      // itself O(layers) with `normLayer` three times per v2 layer. One `.v2-f`
+      // edit asks for the config a dozen times directly — `layerOf`, `commit`,
+      // three `_cfgOf()` inside `applyGateCard`, `drawPartViz` — and every one
+      // of those fans out again through whatever render the arm triggers.
+      // MEASURED on a 122-move drag: 14,441 normalize calls, ~118 per single
+      // control move, 860 ms of a 7 s drag spent re-deriving the same object.
+      //
+      // Nothing WRITES between those reads, so all but two are recomputing an
+      // identical answer. The hold pins one result for the synchronous length
+      // of the handler; `commit` then takes the ONE re-normalize a write path
+      // genuinely needs (`_ambCfgRepin`), because that is what supplies
+      // defaults for structure the edit just made reachable. Same two
+      // normalizes the un-held code did — the rest were redundant.
+      const editHold = (fn) => (typeof _ambWithCfgHold === 'function') ? _ambWithCfgHold(E, fn) : fn();
+      const commit = (ctx) => {
+        // …and this is that one re-normalize. It replaces objects exactly as
+        // the bare `getCfg()` here always did, so `ctx.L` is as stale (or not)
+        // after it as it has always been.
+        try { if (typeof _ambCfgRepin === 'function') _ambCfgRepin(); else E.getCfg(); } catch (e) {}
+        applyGate(ctx.card, ctx.L);
+        // APPLY PROMPTLY, NOT WHEN THE SCHEDULE RUNS DRY — while playing, notes
+        // scheduled with the OLD settings (a full lookahead, and for a long
+        // cycle the whole cycle) would otherwise keep sounding the old
+        // instrument. Reported as "changing Instrument tone does not update the
+        // content". a STAGED edit changes nothing that plays — leave the
+        // transport alone.
+        if (V2.isStaged(ctx.L)) return;
+        reanchorSoon(ctx.L.id);
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
       // A `<select>` DOES NOT RELIABLY FIRE `input` EVERYWHERE. `fxPick` — the
@@ -22712,11 +22783,20 @@
       // implementation, and both arms are idempotent so the forward costs
       // nothing when `input` did fire as well.
       h.addEventListener('change', (ev) => {
+        // END OF GESTURE. `change` is the pointer-up, so any re-anchor the drag
+        // coalesced away lands HERE rather than waiting out the debounce — the
+        // last value the finger left is heard at once. Flushing before the
+        // forward below means the forwarded `input` re-arms only if it actually
+        // changes something.
+        try { reanchorFlush(); } catch (e) {}
         const t0 = ev.target;
         if (!t0 || !t0.closest || !t0.closest('.v2-spreadmode, .v2-figpick')) return;
         t0.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      h.addEventListener('input', (ev) => {
+      // THE HOLD WRAPS THE WHOLE SWEEP (see `editHold` above), so every read
+      // inside it — including the renders the arms trigger — shares one
+      // normalized config instead of re-deriving it.
+      h.addEventListener('input', (ev) => editHold(() => {
         // A DICE MACRO writes the three fields it stands for, live under the
         // finger: the row is updated in place (never a re-render — that
         // replaces the slider mid-drag, the documented Humanize bug) and the
@@ -23319,7 +23399,7 @@
           try { applyGate(ctx.card, ctx.L); } catch (e) {}
         }
         if (!staged0 && (path.indexOf('chg.') === 0 || path === 'ahead' || path === 'saltUpTo' || path === 'saltShare' || path.indexOf('part.pitch.harm.') === 0)) { try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {} }
-      });
+      }));
 
       // KNOB DRAG — delegated once, so knobs are pure markup that any rebuild
       // can recreate with nothing to double-bind. Delta-based from the press
@@ -26563,7 +26643,12 @@
           return;
         }
         const on = t.closest('.v2-on');
-        if (on) { const ctx = layerOf(on); if (ctx) { ctx.L.on = !ctx.L.on; h._sig = ''; V2.render(E); } return; }
+        // …and tell the 🎧 Monitor chip, which is this field's OTHER face. One
+        // call, not a copy of the paint: a chip with no second writer goes on
+        // claiming the layer is playing after the card silenced it.
+        if (on) { const ctx = layerOf(on); if (ctx) { ctx.L.on = !ctx.L.on;
+          try { if (typeof _ambSyncOnUI === 'function') _ambSyncOnUI(E, 'v2:' + ctx.L.id, ctx.L.on, false); } catch (e) {}
+          h._sig = ''; V2.render(E); } return; }
         // NO stepper handling here. `__ambStepperWired` in 17 already delegates
         // every `.ambient-step-btn` at DOCUMENT level — it nudges the sibling
         // `.ambient-step-inp` and dispatches 'input', which our own input

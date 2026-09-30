@@ -3245,6 +3245,19 @@
           if (!Object.keys(vo).length) delete prog.varOff;
         }
       }
+      // ⇅ MIX MOVE (additive, 2026-09-30): the arrangement rides its own faders.
+      // `amount` 0 / absent = off, so an untouched project stays byte-identical.
+      if (prog.mixmove != null) {
+        const mm = prog.mixmove;
+        if (!mm || typeof mm !== 'object' || Array.isArray(mm)) delete prog.mixmove;
+        else {
+          mm.amount = Math.max(0, Math.min(100, mm.amount | 0));
+          mm.glide = Math.max(0, Math.min(100, Number.isFinite(mm.glide) ? (mm.glide | 0) : 50));
+          mm.depth = Math.max(0, Math.min(100, Number.isFinite(mm.depth) ? (mm.depth | 0) : 40));
+          mm.bars = Math.max(2, Math.min(128, Number.isFinite(mm.bars) ? (mm.bars | 0) : 16));
+          if (!mm.amount) delete prog.mixmove;
+        }
+      }
       // ✺ VARIATION MASTER BYPASS (additive, 2026-09-29): present = every Variation
       // setting is parked in it and the live ones are neutral. Malformed = dropped.
       if (prog.varBypass != null && !(typeof prog.varBypass === 'object' && !Array.isArray(prog.varBypass) &&
@@ -7305,6 +7318,122 @@
       } catch (e) {}
       return area;
     }
+    // ── ⇅ MIX MOVE — the arrangement rides its own faders (2026-09-30) ───────
+    // user: "a Novelty param that live mixes parts up and down, raising and lowering
+    // parts, also should be a fade quotient to determine how gradual or instant the
+    // level changes should be".
+    //
+    // 🌒 Arc already shapes how much is PLAYING by dropping layers in and out; this is
+    // its continuous twin — it moves the LEVELS, on Arc's own slice grid so the two
+    // read as one idea rather than two clocks. Deterministic per (layer, slice), like
+    // every other die here, so a take replays.
+    //
+    // THE FADE QUOTIENT IS A RAMP TIME, issued ONCE per target change (per slice),
+    // not per tick. 0 = 30 ms — never 0, because an abrupt gain step is a click, the
+    // rule this repo states for every gain-like change; 100 = four bars.
+    // `rampTo`, NOT `setTargetAtTime`: with core strips on, `levelGain.gain` is the
+    // strip SHIM (03b `makeShimParam`), which has value / setValueAtTime /
+    // linearRampToValueAtTime / rampTo and NO setTargetAtTime — so that call threw
+    // into the catch and set `.value`, i.e. a hard step every tick on the default
+    // path. `rampTo` is the one method both the Tone param and the shim answer.
+    //
+    // THE RANGE IS THE SUBJECTIVE PART, so nothing has to be typed: the level you
+    // already set is the CEILING, one `depth` says how far down the mix may pull, and
+    // a layer can state its own `mixRange` — by hand, or from `mixSeen`, which simply
+    // remembers the quietest and loudest you have ever set that fader to.
+    // ITS OWN PACE, not 🌒 Arc's. They share the shape of the idea — one span cut
+    // into `_AMB_ARC_SLICES`, a value held for a whole slice — but Arc's span only
+    // exists while Arc is ON, so borrowing it would leave ⇅ Mix with no pace of its
+    // own the moment Arc was switched off.
+    function _ambMixSliceAt(E, atSec, cfg) {
+      const m = cfg && cfg.prog && cfg.prog.mixmove;
+      const mbars = Math.max(2, Math.min(128, (m && (m.bars | 0)) || 16));
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const anchor = (E && Number.isFinite(E._progAnchor)) ? E._progAnchor : ((E && Number.isFinite(E._playStartAt)) ? E._playStartAt : 0);
+      const bars = Math.max(0, (+atSec || 0) - anchor) / barSec;
+      return Math.floor(bars / (mbars / _AMB_ARC_SLICES));
+    }
+    function _ambMixMoveOn(cfg) {
+      const m = cfg && cfg.prog && cfg.prog.mixmove;
+      return !!(m && (m.amount | 0) > 0);
+    }
+    function _ambMixMoveTarget(E, L, cfg, atSec) {
+      const base = (L && Number.isFinite(L.level)) ? Math.max(0, Math.min(100, L.level)) : 70;
+      const m = cfg && cfg.prog && cfg.prog.mixmove;
+      const amt = m ? Math.max(0, Math.min(100, m.amount | 0)) : 0;
+      if (!amt || !L) return base;
+      const r = (L.mixRange && typeof L.mixRange === 'object') ? L.mixRange : null;
+      const drop = Math.max(0, Math.min(100, (r && Number.isFinite(r.drop)) ? (r.drop | 0) : ((m.depth | 0) || 40)));
+      const lift = Math.max(0, Math.min(100, (r && Number.isFinite(r.lift)) ? (r.lift | 0) : 0));
+      if (!drop && !lift) return base;
+      const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
+      const lid = (_lb + 1) * 53 + 29;                  // its own stream — never in step with 🌒 Arc
+      const slice = _ambMixSliceAt(E, atSec, cfg);
+      const v = _ambChordHash01(slice + 1, lid) * 2 - 1;   // −1 … +1
+      const move = (v >= 0) ? v * lift : v * drop;
+      return Math.max(0, Math.min(100, base + (amt / 100) * move));
+    }
+    // One ramp, whichever kind of param this is.
+    function _ambMixRamp(par, g, dur) {
+      if (!par) return;
+      try { if (typeof par.rampTo === 'function') { par.rampTo(g, Math.max(0.005, dur)); return; } } catch (e) {}
+      try {
+        if (typeof par.linearRampToValueAtTime === 'function') {
+          const t = Tone.getContext().rawContext.currentTime;
+          if (typeof par.setValueAtTime === 'function') par.setValueAtTime(par.value, t);
+          par.linearRampToValueAtTime(g, t + Math.max(0.005, dur));
+          return;
+        }
+      } catch (e) {}
+      try { par.value = g; } catch (e) {}
+    }
+    function _ambMixMoveTick(E, cfg, now) {
+      if (!E || !E.mod) return;
+      const on = _ambMixMoveOn(cfg);
+      if (!on) {
+        // SWITCHED OFF PUTS EVERY FADER BACK, once — leaving a layer parked at a
+        // moved level is the stale-state trap, and it would look like the mix broke.
+        if (E._mixMoved) {
+          E._mixMoved = false;
+          Object.keys(E.mod).forEach((key) => {
+            const e = E.mod[key]; if (!e || !e.levelGain || !e.levelGain.gain) return;
+            const L = _ambLayerByKey(E, key);
+            _ambMixRamp(e.levelGain.gain, _ambLevelGain((L && Number.isFinite(L.level)) ? L.level : 70), 0.08);
+            e._mixKey = null;
+          });
+        }
+        return;
+      }
+      E._mixMoved = true;
+      const m = cfg.prog.mixmove;
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const q = Math.max(0, Math.min(100, Number.isFinite(m.glide) ? (m.glide | 0) : 50)) / 100;
+      const dur = 0.03 + q * q * (barSec * 4);          // squared: the low end stays fine-grained
+      const slice = _ambMixSliceAt(E, now, cfg);
+      Object.keys(E.mod).forEach((key) => {
+        const e = E.mod[key]; if (!e || !e.levelGain || !e.levelGain.gain) return;
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const g = _ambLevelGain(_ambMixMoveTarget(E, L, cfg, now));
+        // ONE RAMP PER TARGET CHANGE, not per tick: re-issuing it every tick would
+        // restart the ramp from wherever it had got to, so a long fade could never
+        // arrive — and on the strip shim every call is a message to the worklet.
+        const sig = slice + ':' + Math.round(g * 10000) + ':' + Math.round(dur * 100);
+        if (e._mixKey === sig) return;
+        e._mixKey = sig;
+        _ambMixRamp(e.levelGain.gain, g, dur);
+      });
+    }
+    // WHAT THIS FADER HAS EVER BEEN SET TO. Recorded on the two paths a PERSON moves
+    // a level (the Mixer strip and a card's Level slider) — never on a programmatic
+    // write, or ⇅ Mix's own movement would widen the range it is moving inside.
+    function _ambMixSeen(L, v) {
+      if (!L || !Number.isFinite(v)) return;
+      const s0 = (L.mixSeen && typeof L.mixSeen === 'object') ? L.mixSeen : (L.mixSeen = { lo: v, hi: v });
+      s0.lo = Math.max(0, Math.min(100, Math.min(Number.isFinite(s0.lo) ? s0.lo : v, v)));
+      s0.hi = Math.max(0, Math.min(100, Math.max(Number.isFinite(s0.hi) ? s0.hi : v, v)));
+    }
     function _ambArcGateOK(E, L, atSec, cfg, hard) {
       if (hard) return true;
       const cfg0 = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
@@ -7503,6 +7632,24 @@
           if (v) q.arc = { amount: v, bars: (q.arc && q.arc.bars) || _AMB_ARC_BARS,
                            shape: X > 70 ? 'drift' : (X > 35 ? 'wave' : 'build') };
           else delete q.arc; } });
+      // ⇅ MIX — 🌒 Arc's continuous twin: Arc decides WHETHER a layer plays, this
+      // decides HOW LOUD, on the same slice grid. Always live for the same reason —
+      // it counts bars, not chords. The fade and the floor are kept where they are:
+      // Novelty states how much the mix MOVES, not how it should sound settling.
+      {
+        const mmAmt = Math.round(X * 0.6);
+        const mm0 = p.mixmove || null;
+        out.push({ label: '\u21c5 Mix', axis: 'x', live: true,
+          from: (mm0 && mm0.amount | 0) || 0, to: mmAmt,
+          write: (q) => {
+            if (!mmAmt) { delete q.mixmove; return; }
+            const prev = q.mixmove || null;
+            q.mixmove = { amount: mmAmt,
+              glide: (prev && Number.isFinite(prev.glide)) ? (prev.glide | 0) : 55,
+              depth: (prev && Number.isFinite(prev.depth)) ? (prev.depth | 0) : 40,
+              bars: (prev && Number.isFinite(prev.bars)) ? (prev.bars | 0) : 16 };
+          } });
+      }
       // \ud83c\udf12 ARC AT THE PART RUNG \u2014 the other half of \u00a75b's Orchestration
       // macro. The area's depth says how hard the whole PIECE breathes;
       // `parts[i].arc.amount` says how hard THIS part does, and \u00a74d shipped that store
@@ -7631,7 +7778,7 @@
       const p = cfg.prog;
       return JSON.stringify({
         vary: p.vary, tension: p.tension, reroll: p.reroll, salt: p.salt, order: p.order,
-        rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc,
+        rubato: p.rubato, arrOrder: p.arrOrder, arc: p.arc, mixmove: p.mixmove,
         // PER-PART KEYS, one entry per part, `null` where the part had none — Apply
         // writes both of these across every part, so both have to come back.
         chance: Array.isArray(p.parts) ? p.parts.map(x => (x && Number.isFinite(x.chance)) ? (x.chance | 0) : null) : null,
@@ -7692,7 +7839,7 @@
     function _ambNovRestore(E, cfg, snapStr) {
       let was = null; try { was = JSON.parse(snapStr); } catch (e) { return false; }
       const p = cfg.prog;
-      ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc'].forEach((k) => {
+      ['vary', 'tension', 'reroll', 'salt', 'order', 'rubato', 'arrOrder', 'arc', 'mixmove'].forEach((k) => {
         if (was[k] == null) delete p[k]; else p[k] = was[k];
       });
       // [snapshot key, part key] \u2014 they differ for the arc; see the snapshot above.
@@ -27773,6 +27920,7 @@
         else if (!E._everRan) return;
       } catch (e) {}
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      try { _ambMixMoveTick(E, cfg, now); } catch (e) {}
       // Arm the per-tick windowed-emitter horizon budget (see _ambBudgetHorizon). Off
       // during silent/dry capture so the note battery is byte-identical.
       _ambTickBudgetOn = (typeof performance !== 'undefined') && !(typeof window !== 'undefined' && window._ambSilentCapture);
@@ -48442,6 +48590,7 @@
       const L = _ambLayerByKey(E, key); if (!L) return;
       v = Math.max(0, Math.min(100, Math.round(v)));
       L.level = v;
+      _ambMixSeen(L, v);
       _ambSyncLevelUI(E, key, v);
       if (persistNow && typeof persistWorkspace === 'function') persistWorkspace();
     }
@@ -48482,6 +48631,7 @@
         sld.addEventListener('input', () => {
           const v = Math.max(0, Math.min(100, parseInt(sld.value, 10) || 0));
           layer.level = v;
+          _ambMixSeen(layer, v);
           val.textContent = v + '%';
           _ambSyncLevelUI(E, key, v);   // mirror into the layer card's Level slider
           if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -55446,6 +55596,27 @@
                   if (document.activeElement !== bSel) bSel.value = String((av.bars | 0) || _AMB_ARC_BARS); }
                 if (amtEl) { amtEl.parentElement && (amtEl.parentElement.style.display = aOn ? '' : 'none');
                   if (document.activeElement !== amtEl) amtEl.value = String(aAmt); }
+              }
+              // ⇅ Mix, the same idiom
+              {
+                const mv = (cfg.prog && cfg.prog.mixmove) || {};
+                const mOn = (mv.amount | 0) > 0;
+                const mTog = document.getElementById(tr('ambient-mixmove-toggle'));
+                if (mTog) { mTog.classList.toggle('active', mOn);
+                  mTog.title = mOn
+                    ? '\u21c5 Mix is ON \u2014 click to turn off (every fader stays where you put it)'
+                    : '\u21c5 Mix \u2014 raise and lower the layers as the piece plays. OFF = flat. Click to turn on.'; }
+                [['ambient-mixmove-amt', mv.amount | 0, 0], ['ambient-mixmove-glide', mv.glide, 55],
+                 ['ambient-mixmove-depth', mv.depth, 40]].forEach((pr) => {
+                  const el = document.getElementById(tr(pr[0])); if (!el) return;
+                  if (el.parentElement) el.parentElement.style.display = mOn ? '' : 'none';
+                  if (document.activeElement !== el) el.value = String(Number.isFinite(pr[1]) ? (pr[1] | 0) : pr[2]);
+                });
+                const bEl = document.getElementById(tr('ambient-mixmove-bars'));
+                if (bEl) { bEl.style.display = mOn ? '' : 'none';
+                  if (document.activeElement !== bEl) bEl.value = String(Number.isFinite(mv.bars) ? (mv.bars | 0) : 16); }
+                const lb = document.getElementById(tr('ambient-mixmove-learn'));
+                if (lb) lb.style.display = mOn ? '' : 'none';
               } }
             try { _ambSaltReadoutSync(E, true); } catch (e) {}
           } }
@@ -56077,6 +56248,35 @@
               'the same take replays it exactly. This is the <b>orchestration</b> twin of <b>\ud83c\udf21 Tension</b>: that one ramps ' +
               'the harmony across a cycle, this one ramps how much is playing across the bars. It needs no changes \u2014 ' +
               'it counts bars, so it works on an area with no progression at all.</span>' +
+            '</div>' +
+            // ⇅ MIX — Arc's continuous twin, in Arc's own group because they are one
+            // idea on one clock: Arc decides WHETHER a layer plays its slice, this
+            // decides HOW LOUD. Same ↻ Order idiom — the label is the switch, off
+            // stores nothing, on seeds a musical middle.
+            '<div class="ambient-row ambient-prog-salt ambient-prog-mixmove" id="ambient-prog-mixmoverow" title="\u21c5 Mix \u2014 the arrangement rides its own faders as it plays.">' +
+              '<button type="button" class="ambient-sched-lbl salt-lbl ambient-var-toggle ambient-mixmove-toggle" id="ambient-mixmove-toggle" ' +
+                'title="\u21c5 Mix \u2014 raise and lower the layers as the piece plays. OFF = every fader stays where you put it. Click to turn on.">\u21c5 Mix</button>' +
+              '<span class="ambient-sched-grp ambient-mixmove-grp"><span class="ambient-sched-lbl">move</span>' +
+                '<input type="number" class="ambient-salt-in ambient-mixmove-amt" id="ambient-mixmove-amt" min="0" max="100" step="5" value="0" ' +
+                  'title="How much the mix moves. 0 = not at all; 100 = the full range below is used.">' +
+              '</span>' +
+              '<span class="ambient-sched-grp ambient-mixmove-grp"><span class="ambient-sched-lbl">fade</span>' +
+                '<input type="number" class="ambient-salt-in ambient-mixmove-glide" id="ambient-mixmove-glide" min="0" max="100" step="5" value="55" ' +
+                  'title="How gradual a level change is. 0 = as good as instant (still ramped, so it cannot click); 100 = about four bars to settle.">' +
+              '</span>' +
+              '<select id="ambient-mixmove-bars" class="ambient-select ambient-mixmove-bars" ' +
+                'title="How long one full sweep of the mix is. It is divided into 8 slices, and a layer holds its level for a whole slice \u2014 so a shorter span moves the mix more often.">' +
+                '<option value="4">every 4 bars</option><option value="8">every 8 bars</option><option value="16">every 16 bars</option>' +
+                '<option value="32">every 32 bars</option><option value="64">every 64 bars</option></select>' +
+              '<span class="ambient-sched-grp ambient-mixmove-grp"><span class="ambient-sched-lbl">down to</span>' +
+                '<input type="number" class="ambient-salt-in ambient-mixmove-depth" id="ambient-mixmove-depth" min="0" max="100" step="5" value="40" ' +
+                  'title="How far BELOW its own level a layer may be pulled, for layers that have no range of their own. The level you set stays the ceiling.">' +
+              '</span>' +
+              '<button type="button" class="ambient-seg ambient-mixmove-learn" id="ambient-mixmove-learn" ' +
+                'title="Take each layer\u2019s range from the levels you have actually used on it \u2014 the quietest and loudest you have set that fader to. Ride the faders while it plays, then press this.">\u2913 From my mixing</button>' +
+              '<span class="ambient-hint">The level you set is the CEILING and \u201cdown to\u201d is how far the mix may pull below it \u2014 ' +
+              'so nothing ever gets louder than the balance you chose. Which layer moves when is decided per slice and per layer, ' +
+              'deterministically, on \ud83c\udf12 Arc\u2019s own grid. Give one layer its own range with \u2913 From my mixing.</span>' +
             '</div>' +
             _ambProgGrpClose() +
             // \ud83d\udd7a GROOVE — the SIXTH card, and no longer a tab (2026-09-27, user:
@@ -58546,6 +58746,65 @@
             try { _ambRenderProgOverview(E); } catch (e) {}
           });
         });
+        // ⇅ Mix — the ↻ Order idiom again. ON seeds a musical middle (45 over a
+        // 40-point floor, a little over a bar to settle); OFF deletes the key, and
+        // `_ambMixMoveTick` puts every fader back the moment it sees it gone.
+        { const mTog = G('ambient-mixmove-toggle');
+          if (mTog) mTog.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            if (c.prog.mixmove && (c.prog.mixmove.amount | 0) > 0) delete c.prog.mixmove;
+            else c.prog.mixmove = { amount: 45, glide: 55, depth: 40, bars: 16 };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+          }); }
+        // Three faces of one object — rebuilt from all three, never patched, because
+        // the normalizer replaces `prog.mixmove` wholesale on every getCfg.
+        [['ambient-mixmove-amt', 'input'], ['ambient-mixmove-glide', 'input'],
+         ['ambient-mixmove-depth', 'input'], ['ambient-mixmove-bars', 'change']].forEach((pr) => {
+          const el = G(pr[0]); if (!el) return;
+          el.addEventListener(pr[1], () => {
+            _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
+            const num = (k, d) => { const q = G(k); const v = parseInt(q && q.value, 10); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : d; };
+            const v = num('ambient-mixmove-amt', 0);
+            if (!v) delete c.prog.mixmove;
+            else c.prog.mixmove = { amount: v, glide: num('ambient-mixmove-glide', 55), depth: num('ambient-mixmove-depth', 40),
+              bars: (function () { const q = G('ambient-mixmove-bars'); const b = parseInt(q && q.value, 10); return Number.isFinite(b) ? Math.max(2, Math.min(128, b)) : 16; })() };
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+          });
+        });
+        // ⤓ FROM MY MIXING — the answer to "the range is subjective". Nothing has to
+        // be typed and no new gesture is learned: every hand move of a fader is
+        // already remembered (`mixSeen`), so this simply turns what you have actually
+        // used into each layer's own floor and ceiling. Layers you never rode keep
+        // following the shared "down to".
+        { const lb = G('ambient-mixmove-learn');
+          if (lb) lb.addEventListener('click', () => {
+            _E = E; const c = E.getCfg(); if (!c) return;
+            let n = 0, skipped = 0;
+            try {
+              _ambMixerLayers(c).forEach(({ key }) => {
+                const L = _ambLayerByKey(E, key); if (!L) return;
+                const s0 = L.mixSeen, base = Number.isFinite(L.level) ? L.level : 70;
+                if (!s0 || !Number.isFinite(s0.lo) || !Number.isFinite(s0.hi) || (s0.hi - s0.lo) < 4) { skipped++; return; }
+                const drop = Math.max(0, Math.min(100, Math.round(base - s0.lo)));
+                const lift = Math.max(0, Math.min(100, Math.round(s0.hi - base)));
+                if (!drop && !lift) { skipped++; return; }
+                L.mixRange = { drop, lift };
+                n++;
+              });
+            } catch (e) {}
+            persist();
+            try { _ambSyncControls(E); } catch (e) {}
+            try {
+              if (typeof showToast === 'function') {
+                showToast(n
+                  ? ('\u2913 ' + n + ' layer' + (n === 1 ? '' : 's') + ' now move' + (n === 1 ? 's' : '') + ' inside the range you have actually used' +
+                     (skipped ? (' \u00b7 ' + skipped + ' still follow the shared \u201cdown to\u201d \u2014 ride those faders and press again.') : '.'))
+                  : 'Nothing to take yet \u2014 move some layer faders (in the Mixer, or a card\u2019s Level) and press this again.', { ms: 5000 });
+              }
+            } catch (e) {}
+          }); }
         // ⚄ Generate — popover: pick Length + Unique with steppers, PREVIEW the
         // rolled chords as chips (roman numeral + name), reroll, then Apply.
         const _pgGenerate = (aOpts) => {

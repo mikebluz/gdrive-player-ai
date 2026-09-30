@@ -256,6 +256,25 @@
 - **`offsetParent` IS NULL INSIDE A POPOVER**, whose wrapper is `position: fixed` — so a control you can see
   and press measures as hidden, and a reachability probe fails on working UI. Test the RECT plus
   `document.elementFromPoint` at its centre (what `test/ui-lifecycle.js`'s `tap` does), never `offsetParent`.
+- **⇅ MIX MOVES `e.levelGain`, NOT the note** (`_ambMixMoveTick`, from `_ambTick`) — so it sweeps the
+  whole layer including notes already sounding, which is what a fader does and what a per-note volume
+  could never do. It has its OWN span (`mixmove.bars`), because 🌒 Arc's only exists while Arc is on.
+  One ramp per TARGET change (per slice), never per tick: re-issuing a ramp every tick restarts it from
+  wherever it reached, so a long fade could never arrive — and on the strip shim every call is a message
+  to the worklet. Switched off it puts every fader back once (`E._mixMoved`), or a layer stays parked at
+  a moved level and the mix looks broken. The level you set is the CEILING; the range is learned from
+  `mixSeen`, recorded ONLY on the two paths a person moves a fader — record ⇅ Mix's own movement there
+  and the range would widen itself every pass.
+- **"SWITCHED OFF" MEANS INDISTINGUISHABLE FROM NEVER SET** — `probe-variation-audit` measures every
+  ✺ Variation switch that way (never set → set hard → off, and the third must equal the first, note for
+  note). It caught ⏸/✦ still playing under 🕺 Groove's bypass: a control's switch is the one on the CARD
+  IT IS EDITED ON, so anything added to a card must join that card's bypass. Two harness traps it also
+  caught, both of which read as "everything is already fine": cases that inherit the previous case's
+  settings (reset between them, and assert the slate was clean), and calling `notesFor` without
+  `_ambSyncControls` first — `_ambGroove()` reads `_E._cfg`, so with `_E` unset every Groove macro
+  measures as INERT. Ghost / Rolls / Streak / Couple / Arc / Salt-scatter do NOT show up in a v2
+  `notesFor` signature (they act at emit, on the anchor, or need chords) — they are unmeasured there,
+  not proven.
 - **Deep or ✺ Live: trace the seed, not the label.** Anything drawn from `seedBase` is per TAKE (Deep)
   unless `part.vary` is on; per-pass means seeded on play time, chord occurrence, or the shared stream.
 

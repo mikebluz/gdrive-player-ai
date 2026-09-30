@@ -93,6 +93,13 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
 - **Core-eligible Bloom notes BYPASS the deferred build queue** (`playNote` → `_playNoteNow` before
   `_vqShouldDefer`): they cost ~nothing to start, and queueing them behind node builds is what let a
   hidden page (timers throttled) drop notes. Only node voices queue.
+- **A CORE-STRIP PARAM IS A SHIM, NOT A Tone PARAM — it has NO `setTargetAtTime`.** `03b makeShimParam`
+  answers `value` / `cancelScheduledValues` / `setValueAtTime` / `linearRampToValueAtTime` / `rampTo`,
+  so a `setTargetAtTime` call on `e.levelGain.gain` (or any strip param) throws into the caller's catch
+  and degrades to `.value = x` — a HARD STEP, i.e. a click, on the DEFAULT path, while the node path
+  sounds fine. **`rampTo(v, dur)` is the one method both kinds answer**; reach for it for any gain-like
+  move. Nor can you measure the curve by reading `gain.value`: a scheduled ramp reports its TARGET
+  there, so two very different fades read identically — spy on the param's own method instead.
 - **The worklet must always stay pulled** (keep-pull sink on output 16) and `init()` must reset ALL
   core globals, or golden loses determinism. That send bus is GLOBAL — one summed send feeding ONE
   reverb, re-claimed by whichever engine builds strips.

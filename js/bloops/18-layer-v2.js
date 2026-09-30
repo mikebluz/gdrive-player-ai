@@ -1224,6 +1224,20 @@
       q.where = (BREATH_WHERE.indexOf(q.where) >= 0) ? q.where : '';
       if (!q.amount && q.wild === 50 && !q.where) delete L.flourish;
     } else delete L.flourish;
+    // ⇅ MIX — this layer's own floor/ceiling for the live mix, and what its fader has
+    // ever been set to (which ⤓ From my mixing turns into the first). Both additive.
+    if (L.mixRange && typeof L.mixRange === 'object') {
+      const q = L.mixRange;
+      q.drop = clamp(q.drop | 0, 0, 100); q.lift = clamp(q.lift | 0, 0, 100);
+      if (!q.drop && !q.lift) delete L.mixRange;
+    } else delete L.mixRange;
+    if (L.mixSeen && typeof L.mixSeen === 'object') {
+      const q = L.mixSeen, lv = Number.isFinite(L.level) ? L.level : 70;
+      q.lo = clamp(Number.isFinite(q.lo) ? (q.lo | 0) : lv, 0, 100);
+      q.hi = clamp(Number.isFinite(q.hi) ? (q.hi | 0) : lv, 0, 100);
+      if (q.hi < q.lo) { const t = q.lo; q.lo = q.hi; q.hi = t; }
+      if (q.lo === q.hi) delete L.mixSeen;          // one value is not a range
+    } else delete L.mixSeen;
     L.restProb = clamp(Number.isFinite(L.restProb) ? L.restProb : 0, 0, 100);
     L.ghosts = clamp(Number.isFinite(L.ghosts) ? L.ghosts : 0, 0, 100);
     L.lenVary = clamp(Number.isFinite(L.lenVary) ? L.lenVary : 0, 0, 100);
@@ -4301,6 +4315,12 @@
     return 1;
   }
   function breathStage(L, ctx, ns) {
+    // 🕺 GROOVE BYPASS COVERS THESE. They are edited on the Groove card, so the
+    // switch a person reaches for to hear the piece without the groove is that one
+    // — and with ⏸/✦ still running it did not sound bypassed at all (reported:
+    // "Groove on/off … doesn't seem to be bypassed"). ✺ Novelty writes them now, so
+    // a plain Apply could leave a layer breathing with no obvious way to stop it.
+    try { if (ctx && ctx.cfg && ctx.cfg.groove && ctx.cfg.groove.bypass) return ns; } catch (e) {}
     const b = (L && L.breath) || null, f = (L && L.flourish) || null;
     const bAmt = b ? clamp(b.amount | 0, 0, 100) : 0;
     const fAmt = f ? clamp(f.amount | 0, 0, 100) : 0;

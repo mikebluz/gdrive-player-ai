@@ -22605,9 +22605,15 @@
         }
         return L;
       };
+      // …and this one is bound to the mod sliders' `input`, so it is the fourth
+      // per-pixel caller of the O(all-layers) mod walk. `_ambSyncModsSoon` runs
+      // the first call of a burst synchronously and collapses the repeats.
       const resync = () => {
         try { E.getCfg(); } catch (e) {}
-        try { if (typeof _ambSyncMods === 'function') _ambSyncMods(); } catch (e) {}
+        try {
+          if (typeof _ambSyncModsSoon === 'function') _ambSyncModsSoon(E);
+          else if (typeof _ambSyncMods === 'function') _ambSyncMods();
+        } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       };
       // SYNC EVERY PASS, BIND ONCE — they are different jobs and only the second

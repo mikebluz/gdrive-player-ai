@@ -423,6 +423,16 @@
 - **A vertical slider is detected from its RECT, not its class** (`height > width * 1.5`), and its
   delta is `-dy`; the fine-adjust axis swaps with it. Reading orientation from the markup means every
   new vertical fader has to remember to announce itself.
+- **A PANEL-WIDE `input` LISTENER PAYS FOR EVERY CONTROL IN THE PANEL.** `_unitRefresh` exists to
+  keep the header unit readouts current, and it is bound to the HOST — so it fires on every slider
+  anywhere, and it called `_ambSyncLayerUnits`, which opens with `V2.render` over every card
+  (`applyGate` + a `drawPartViz` that runs a real `notesFor` generation). Measured: 139 renders and
+  1035 ms on one 138-move drag, for a text readout. Debounced (trailing on `input`, immediate on
+  `change`, the gesture rule): **1 render, 11.8 ms**. The same handler already debounced its seed
+  preview for exactly this reason — when you add work to a shared sweep, ask what the CHEAPEST
+  control on the panel will now cost. Likewise `_ambSyncMods` (O(all layers) DSP walk) fired per
+  `input` from three v1/v2 `sync()` closures while v1 PRIMARIES correctly deferred to `change`;
+  `_ambSyncModsSoon` throttles it leading-edge, so "after sync() the chain exists" stays true.
 - **A LAYER'S `on` HAS TWO FACES — the card head toggle and its 🎧 Monitor chip — and ONE writer,
   `_ambSyncOnUI`.** Same shape as `_ambSyncLevelUI` (mixer fader ↔ card slider) and the same failure
   if you skip it: a chip that goes on claiming a layer is playing after the card silenced it. The

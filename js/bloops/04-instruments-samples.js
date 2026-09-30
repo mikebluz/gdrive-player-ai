@@ -4440,8 +4440,16 @@
       // branch in `_playNoteNow` makes, on the same default type; a note the core
       // then declines (cold start, no slot) falls through to a node build here,
       // exactly as an interactive note does.
+      // …AND SAMPLES ARE CORE NOTES (2026-09-30). The audit above covered only
+      // SYNTH kinds, because `eligible` is keyed off `kindFor`, which has no
+      // entry for `sample:*` — so every sample note kept going through the
+      // queue although `sampleNoteOn` takes it with one postMessage, exactly
+      // like a synth. Measured on a six-layer project: 13% of notes at rest and
+      // 37% while editing, ALL of them sample voices, and that was the whole of
+      // that project's exposure to a main-thread stall.
       if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
-          && _coreVoices.eligible(params.type || 'sine', params)) {
+          && (_coreVoices.eligible(params.type || 'sine', params)
+              || (_coreVoices.eligibleSample && _coreVoices.eligibleSample(params.type, params)))) {
         return _playNoteNow(freq, params, durationMs, startTime, destination, trackIdx, laneIdx);
       }
       if (_vqShouldDefer(startTime)) {

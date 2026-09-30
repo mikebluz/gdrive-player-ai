@@ -56,6 +56,8 @@ await page.evaluate(() => {
     leads: [],         // {lead, at} per scheduled note
     longs: [],         // {start, dur} long tasks
     cancels: [],       // {key, at, lead} per future-voice retraction
+    deferred: 0,       // notes that went to the node build queue (see below)
+    deferKeys: {},     // …and which layer / voice they belonged to
     t0: performance.now(),
   });
   const rec = (name, ms) => {
@@ -109,6 +111,7 @@ await page.evaluate(() => {
       window.playNote = function (freq, params, durationMs, startTime, ...rest) {
         const lead = (typeof startTime === 'number' && window.Tone && Tone.now)
           ? (startTime - Tone.now()) * 1000 : null;
+        try { window.__LE._voice = (params && (params.type || params.voice)) || '?'; } catch (e) {}
         const r = f.call(this, freq, params, durationMs, startTime, ...rest);
         // `_ambEmitKey` is stamped by the capture-sink tee INSIDE playNote, so
         // it must be read after calling through (docs/traps-bloom.md).
@@ -133,6 +136,32 @@ await page.evaluate(() => {
       };
     }
   }
+  // CORE vs NODE. A note handed to the WASM core is scheduled on the render
+  // thread and CANNOT slip. A node voice is deferred and BUILT later by
+  // `_vqPump` on the main thread — if the build misses the note's start time,
+  // Tone clamps to `now` and it lands late. So "how much of this project is
+  // core-rendered" is the phone's whole exposure to main-thread stalls.
+  // `_vqShouldDefer` returning true is the tell: that note went node-side.
+  {
+    const f = window._vqShouldDefer;
+    if (typeof f === 'function') {
+      window._vqShouldDefer = function (...a) {
+        const r = f.apply(this, a);
+        try { M.deferred++;
+          if (r) { const k = (window._ambEmitKey || '?') + ' ' + (window.__LE._voice || '?');
+                   M.deferKeys[k] = (M.deferKeys[k] || 0) + 1; }
+        } catch (e) {}
+        return r;
+      };
+    }
+    const g = window._vqPump;
+    if (typeof g === 'function') {
+      window._vqPump = function (...a) {
+        const s = performance.now();
+        try { return g.apply(this, a); } finally { rec('_vqPump', performance.now() - s); }
+      };
+    }
+  }
   try {
     new PerformanceObserver((l) => { for (const e of l.getEntries()) M.longs.push({ start: e.startTime, dur: e.duration }); })
       .observe({ entryTypes: ['longtask'] });
@@ -144,7 +173,8 @@ const snap = () => page.evaluate(() => {
   const M = window.__LE;
   return { fn: JSON.parse(JSON.stringify(M.fn)), nTicks: M.ticks.length,
            ticks: M.ticks.slice(), leads: M.leads.slice(), longs: M.longs.slice(),
-           cancels: M.cancels.slice() };
+           cancels: M.cancels.slice(), deferred: M.deferred,
+           deferKeys: JSON.parse(JSON.stringify(M.deferKeys)) };
 });
 const mark = async () => { const s = await snap(); return { s, t: Date.now() }; };
 
@@ -173,6 +203,7 @@ const analyse = (a, b, label, wallMs) => {
   });
   const worstKeys = Object.entries(byKey).sort((x, y) => x[1].min - y[1].min).slice(0, 4)
     .map(([k, v]) => k + ' min ' + v.min.toFixed(0) + 'ms (' + v.n + ')');
+  const nDefer = (b.deferred|0) - (a.deferred|0);
   const cancels = b.cancels.slice(a.cancels.length);
   const shallow = cancels.filter((c) => c.lead !== null && c.lead < 250);
   const longs = b.longs.slice(a.longs.length);
@@ -182,7 +213,8 @@ const analyse = (a, b, label, wallMs) => {
            minLead: leads.length ? +Math.min(...leads.map((l) => l.lead)).toFixed(1) : null,
            medLead: leads.length ? +leads.map((l) => l.lead).sort((x, y) => x - y)[Math.floor(leads.length / 2)].toFixed(1) : null,
            nLong: longs.length, longMs: +longMs.toFixed(0), worstKeys,
-           nCancel: cancels.length, nShallow: shallow.length,
+           nCancel: cancels.length, nShallow: shallow.length, nDefer,
+           deferKeys: Object.entries(b.deferKeys).map(([k,v])=>k+' ×'+v).slice(0,6),
            minCancelLead: cancels.length ? +Math.min(...cancels.filter((c)=>c.lead!==null).map((c) => c.lead)).toFixed(0) : null,
            worstLong: longs.length ? +Math.max(...longs.map((l) => l.dur)).toFixed(0) : 0 };
 };
@@ -192,6 +224,9 @@ const report = (r) => {
   console.log('     ticks ' + r.nTicks + '  median gap ' + r.medGap + ' ms  WORST GAP ' + r.maxGap + ' ms');
   console.log('     notes ' + r.nNotes + '  median lead ' + r.medLead + ' ms  min lead ' + r.minLead + ' ms'
     + '  LATE(<=0) ' + r.nLate + '  tight(<20ms) ' + r.nTight);
+  console.log('     notes to the NODE build queue: ' + r.nDefer + ' of ' + r.nNotes
+    + (r.nNotes ? '  (' + Math.round(r.nDefer / r.nNotes * 100) + '% exposed to main-thread stalls)' : ''));
+  if (r.deferKeys && r.deferKeys.length) console.log('       node-side: ' + r.deferKeys.join('  ·  '));
   console.log('     re-anchors ' + r.nCancel + '  shallowest cut ' + r.minCancelLead + ' ms ahead'
     + (r.nShallow ? '  \u26a0 ' + r.nShallow + ' INSIDE the runway' : ''));
   if (r.worstKeys && r.worstKeys.length) console.log('     tightest runway by layer: ' + r.worstKeys.join('  ·  '));

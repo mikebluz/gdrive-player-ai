@@ -27559,6 +27559,34 @@
       });
       return want;
     }
+    // THE UI'S DOOR TO `_ambSyncMods`, THROTTLED. The function below is an
+    // O(all layers) walk — `_ambWantSet` over every layer list, then
+    // `_ambBuildMod` + `_ambApplyLayerFx` per key, then a teardown sweep over
+    // `_E.mod` — and three UI `sync()` closures (v1 extras, sample layers, v2
+    // mod sliders) call it on EVERY `input` event, where v1's PRIMARY layers
+    // correctly defer to `change`. That asymmetry is an oversight, not a design.
+    //
+    // LEADING EDGE, deliberately: the first call in a burst runs SYNCHRONOUSLY,
+    // so "after sync() the chain exists" stays true for any caller that reads
+    // `E.mod[key]` on the next line. Only the repeats inside the window are
+    // collapsed, with a trailing call so the last value always lands.
+    let _ambSyncModsAt = 0, _ambSyncModsT = null;
+    const _AMB_SYNCMODS_MS = 60;
+    function _ambSyncModsSoon(E) {
+      if (!E || !E.timer) return;
+      const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      if (nowMs - _ambSyncModsAt >= _AMB_SYNCMODS_MS) {
+        _ambSyncModsAt = nowMs;
+        try { _ambSyncMods(); } catch (e) {}
+        return;
+      }
+      if (_ambSyncModsT) return;
+      _ambSyncModsT = setTimeout(() => {
+        _ambSyncModsT = null;
+        _ambSyncModsAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        try { if (E.timer) _ambSyncMods(); } catch (e) {}
+      }, _AMB_SYNCMODS_MS);
+    }
     function _ambSyncMods() {
       const cfg = _ambPlayCfg(_E);   // build chains for the PLAYING area (≠ viewed area while editing during play)
       if (!cfg) return;
@@ -51176,7 +51204,7 @@
       const getL = () => _ambSampleById(E.getCfg(), id);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
-      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
+      const sync = () => _ambSyncModsSoon(E);   // throttled: this fires per `input`
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L[key] = parseInt(e.value, 10) || 0; if (key === 'level') _ambSyncLevelUI(E, 'samp:' + L.id, L.level); sync(); persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; L[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
@@ -52814,7 +52842,7 @@
       const get = () => { const c = E.getCfg(); return (c && Array.isArray(c.extras)) ? c.extras.find(x => x.id === id && x.type === type) : null; };
       const el = (suf) => _ambGet(E, p + suf);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
-      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
+      const sync = () => _ambSyncModsSoon(E);   // throttled: this fires per `input`
       const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
       // P0: per-chord-voice tones on an EXTRAS Bed (structured Chords/Monk
       // modes) — populate, load + bind the 6 voice selects, writing this
@@ -55739,7 +55767,19 @@
       cl.textContent = txt;
       cl.title = 'How long ONE full pass of the changes takes at ' + ((cfg.bpm | 0) || _ambBpm()) + ' BPM';
     }
+    // ~495 LINES OF UNGUARDED SWEEP, SO IT NORMALIZES ONCE. It has no signature
+    // guard and every call is a full pass — ten `['bed','motif','texture','beat']`
+    // sweeps, four card re-renders (`_ambRenderSeqLayers` / `_ambRenderSampleLayers`
+    // / `_ambRenderExtras` / `_ambSyncLayerUnits`) and a document-wide
+    // `input.ambient-sl` walk. A guard would be the bigger win and the bigger
+    // risk: the thing it would skip is a repaint, and a repaint that stops
+    // happening is a readout with no second writer. Pinning the config is the
+    // safe half — same treatment as `_ambSyncLayerUnits`, and it reaches every
+    // one of those four nested renders.
     function _ambSyncControls(E) {
+      return _ambWithCfgHold(E, () => _ambSyncControlsInner(E));
+    }
+    function _ambSyncControlsInner(E) {
       _E = E;
       const cfg = E.getCfg();
       if (!cfg) return;
@@ -57997,7 +58037,21 @@
         // REBUILDS the euclid grid — destroying the inspector slider mid-drag ("sliders
         // don't slide"). Skip the refresh for those.
         if (ev && ev.target && ev.target.closest && ev.target.closest('.ambient-improv-sl, .ambient-step-fx-sl, .ambient-step-fx-ratcount, .ambient-step-fx-ratd, .ambient-stepscope-btn, .ambient-stepmode, .ambient-step-fx-clear, .ambient-step-fx-trig, .ambient-step-fx-solo')) return;
-        try { _ambSyncLayerUnits(E); } catch (e) {}
+        // A HEADER READOUT IS NOT WORTH A FULL CARD RENDER PER PIXEL. This is a
+        // panel-wide `input` listener, and `_ambSyncLayerUnits` opens with the
+        // v2 render seam — `V2.render` over EVERY card, each one an `applyGate`
+        // plus a `drawPartViz` that runs a real `notesFor` generation. Measured
+        // on a 138-move drag: 139 renders, 1035 ms. The same reasoning already
+        // debounces the seed preview two lines down ("a slider drag fires per
+        // pixel; the silent seed render is too heavy to run per event") — the
+        // readout was simply never given the same treatment.
+        // TRAILING on `input` so a paused finger still sees it, IMMEDIATE on
+        // `change` so the gesture always ends with the true value. Debouncing
+        // also makes the euclid-grid rebuild inside it RARER, which is the very
+        // thing the skip-list above exists to avoid mid-drag.
+        clearTimeout(E._unitSyncT);
+        if (ev && ev.type === 'change') { E._unitSyncT = null; try { _ambSyncLayerUnits(E); } catch (e) {} }
+        else E._unitSyncT = setTimeout(() => { E._unitSyncT = null; try { _ambSyncLayerUnits(E); } catch (e) {} }, 90);
         E.seedPv = {};
         // Debounced (a slider drag fires per pixel; the silent seed render is
         // too heavy to run per event) — refresh any open seed roll shortly after
@@ -58460,7 +58514,7 @@
       // "bed pan does nothing" report; extras always passed a sync).
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const get = () => { const c = cfg0(); return c ? c[layer] : null; };
-        const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
+        const sync = () => _ambSyncModsSoon(E);   // throttled: this fires per `input`
         _ambWireSpread(E, 'ambient-' + layer, get, persist, sync);
         // Primaries RENDER from _AMB_LAYER_SCHEMA but WIRE from this hardcoded
         // list, so a new shared token is inert on bed/motif/texture/beat until it

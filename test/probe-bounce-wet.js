@@ -37,7 +37,12 @@ const ok = (name, cond, detail) => {
 // A project of our own: three sample layers, one of them wet-only. Small
 // enough that the offline node narrows to 4 outputs — which is the whole
 // point, since 4 < 16 is what broke.
+// The Bloom master's config lives under `masterAmbient` in the workspace, not
+// at its root — a bare cfg loads as a project with NO layers, and then every
+// check here passes or fails vacuously against an empty render.
 const WS = JSON.stringify({
+  version: 1,
+  masterAmbient: {
   seed: 12345, bpm: 84, key: 'C', scale: 'minor',
   reverb: { size: 60, damp: 50, type: 'hall' },
   layers: [
@@ -46,6 +51,7 @@ const WS = JSON.stringify({
     { id: 2, name: 'Dry', on: true, kind: 'live', level: 60, revSend: 0, wetOnly: 0,
       instrument: { voice: 'sample:piano' } },
   ],
+  },
 });
 
 const browser = await puppeteer.launch({

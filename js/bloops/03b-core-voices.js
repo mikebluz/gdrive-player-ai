@@ -533,6 +533,26 @@
         if (p._detuneMod) return false;
         return _noPerNoteFx(p);
       }
+      // …AND A SAMPLE NOTE IS A CORE NOTE TOO. `eligible` answers for SYNTH
+      // kinds only — `kindFor('sample:violin')` is null — so playNote's
+      // "a core note is not built, so it is not queued" short-circuit never
+      // covered samples, and every one of them went through the main-thread
+      // build queue although `sampleNoteOn` takes it with a single postMessage.
+      // MEASURED on a six-layer project: 13% of notes at rest and 37% while
+      // editing, every one of them a `sample:*` voice — that was the project's
+      // ENTIRE exposure to a main-thread stall, since a queued note must be
+      // built before its own start time or Tone clamps it to `now`.
+      //
+      // Deliberately does NOT touch the buffer: this answers "can the core take
+      // a sample note right now", and a note it then declines falls through to
+      // a node build exactly as a declined synth does. The readiness checks
+      // mirror `sampleNoteOn`'s own guards, so a cold or strip-less core keeps
+      // the queue's pacing instead of building synchronously for nothing.
+      function eligibleSample(type, p) {
+        if (typeof type !== 'string' || type.indexOf('sample:') !== 0) return false;
+        if (!stripsEnabled() || failed || !ready || !_running()) return false;
+        return _noPerNoteFx(p);
+      }
       // Marshal Design params into the core's staging layout (see dsp lib.rs).
       function designParams(p) {
         if (!_hasDesign(p)) return null;
@@ -880,7 +900,7 @@
         return true;
       }
       return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, keys, init, designParams,
-               stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node,
+               stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node, eligibleSample,
                offlineBegin, offlineEnd, offlineFlush, offlineStats, offlineNode, offlineActive: () => !!off };
     })();
     // Live A/B toggles from the console.

@@ -400,6 +400,21 @@
   stacks, not by reading the handler**; the handler was 176 of 8,925 calls. Holding the repaint
   took the drag to 851 calls (17×) and halved `V2.render`'s worst call, 23.9 → 11.1 ms.
   Gate: `node test/probe-liveedit-perf.js`.
+- **A SAMPLE NOTE IS A CORE NOTE, AND `eligible()` DOES NOT KNOW THAT.** `eligible` is keyed off
+  `kindFor`, which has no entry for `sample:*`, so playNote's "a core note is not built, so it is
+  not queued" short-circuit covered SYNTHS ONLY — every sample note went through the main-thread
+  build queue although `sampleNoteOn` takes it with one postMessage. Measured on a six-layer
+  project: 13% of notes at rest, 37% while editing, **all of them sample voices**, and that was the
+  project's entire exposure to a main-thread stall (a queued note must be BUILT before its own
+  start time or Tone clamps it to `now`). `eligibleSample` fixes it — 0% queued. **The cost is
+  real and belongs in the tick:** worst `_ambTick` call 7.4 → 13.1 ms on desktop, inside the 22 ms
+  `_AMB_TICK_BUDGET_MS` but worth watching on a phone, where the budget's horizon-clamp is the
+  designed relief valve. Measure it with `node test/probe-liveedit-perf.js`, which reports the
+  queued fraction and names the voices.
+- **A PROBE FIXTURE PUTS THE BLOOM CONFIG UNDER `masterAmbient`, NOT AT THE WORKSPACE ROOT.** A bare
+  cfg loads as a project with NO layers, and then every layer check passes or fails VACUOUSLY — it
+  bit `probe-monitor` and `probe-bounce-wet` the same week. If a fixture-driven probe reports
+  "0 chips for 0 layers", suspect the fixture before the product.
 - **THE SCHEDULING RUNWAY IS THE JITTER BUDGET — A LIVE EDIT MUST NOT SPEND IT.** Each tick commits
   `now+0.3` → `now+1.4`, about 1.1 s ahead. A note's start time is absolute, but a NODE voice still
   has to be BUILT before it (`_vqPump`, main thread), so the runway is the only thing standing

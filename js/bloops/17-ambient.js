@@ -7409,6 +7409,42 @@
       // \u2014\u2014 Time \u2014\u2014
       num('\u2194 Rubato', 't', (q) => (q.rubato && q.rubato.amount | 0) || 0,
         (q, v) => { if (v) q.rubato = { amount: v }; else delete q.rubato; }, Math.round(T * 0.6));
+      // ⏸ BREATH / ✦ FLOURISH — silence and rate, the two TIME axes that are not a
+      // number on `prog`: the fields live PER LAYER (18-layer-v2's `breathStage`), so
+      // these rows take the planned cfg from the closure and ignore their argument,
+      // exactly as ◇ Tone set does. Dead with no v2 layer to write to — a row is live
+      // or dead as a whole, and a key stored where nothing reads it is the trap.
+      {
+        const brL = _ambBreathLayers(cfg);
+        const brWord = (a, n, extra) => n
+          ? (n + ' layer' + (n === 1 ? '' : 's') + ' \u00b7 ' + (a ? (a + (extra ? (' \u00b7 ' + extra) : '')) : 'off'))
+          : 'none';
+        const brNow = (k) => { let m = 0; brL.forEach((L) => { const q = L[k]; if (q && (q.amount | 0) > m) m = q.amount | 0; }); return m; };
+        // A BREATH IS A PHRASE MARK at any real amount, so the placement moves with the
+        // dial rather than being a second thing to set: it finds phrase ends as the
+        // piece gets freer, and pairs into a fill at the top.
+        const bAmt = Math.round(T * 0.45);
+        const bWhere = (T >= 50) ? 'end' : '';
+        const bPair = (T >= 70) ? 'fill' : '';
+        const fAmt = Math.round(T * 0.4);
+        const fWild = Math.round(T * 0.7);
+        out.push({ label: '\u23f8 Breath', axis: 't', live: brL.length > 0,
+          why: brL.length ? null : 'needs a layer',
+          from: brWord(brNow('breath'), brL.length),
+          to: brWord(bAmt, brL.length, bAmt ? (bWhere === 'end' ? 'at phrase ends' : 'anywhere') : ''),
+          write: () => { _ambBreathLayers(cfg).forEach((L) => {
+            if (!bAmt) { delete L.breath; return; }
+            L.breath = { amount: bAmt, len: 'bar', where: bWhere, pair: bPair };
+          }); } });
+        out.push({ label: '\u2726 Flourish', axis: 't', live: brL.length > 0,
+          why: brL.length ? null : 'needs a layer',
+          from: brWord(brNow('flourish'), brL.length),
+          to: brWord(fAmt, brL.length, fAmt ? ('size ' + fWild) : ''),
+          write: () => { _ambBreathLayers(cfg).forEach((L) => {
+            if (!fAmt) { delete L.flourish; return; }
+            L.flourish = { amount: fAmt, wild: fWild, where: bWhere };
+          }); } });
+      }
       // —— Form ——
       // NOTHING TO REORDER WITH ONE PART, and the row says so rather than offering a
       // write that cannot act.
@@ -7612,6 +7648,15 @@
         // onto layer 2 the moment one is removed between Apply and ↶ Undo.
         // Every layer that HAD a set is recorded, not only the ones written — `null`
         // where a dial was absent, so the restore can delete rather than guess.
+        // ⏸ / ✦ PER LAYER, BY ID for the same reason `tset` is keyed by layer: a
+        // positional record restores layer 3's breathing onto layer 2 the moment one
+        // is deleted between Apply and ↶ Undo. `null` where a layer had none, so the
+        // restore can DELETE rather than guess — which is also what makes the master
+        // ✺ Variation bypass able to neutralise them.
+        breath: (function () { const m = {}; try { _ambBreathLayers(cfg).forEach((L) => {
+          m['' + (L.id | 0)] = L.breath ? JSON.parse(JSON.stringify(L.breath)) : null; }); } catch (e) {} return m; })(),
+        flourish: (function () { const m = {}; try { _ambBreathLayers(cfg).forEach((L) => {
+          m['' + (L.id | 0)] = L.flourish ? JSON.parse(JSON.stringify(L.flourish)) : null; }); } catch (e) {} return m; })(),
         tset: (function () {
           const m = {};
           try { _ambToneSetLayers(cfg).forEach(e => { const q = e.L.toneSeq;
@@ -7659,6 +7704,16 @@
       });
       // …and the layer rung. Resolved through `_ambLayerByKey`, so a layer that has
       // since been deleted is simply skipped rather than throwing the whole undo away.
+      ['breath', 'flourish'].forEach((k) => {
+        const w = was[k]; if (!w || typeof w !== 'object') return;
+        try {
+          _ambBreathLayers(cfg).forEach((L) => {
+            const v = w['' + (L.id | 0)];
+            if (v === undefined) return;
+            if (v == null) delete L[k]; else L[k] = JSON.parse(JSON.stringify(v));
+          });
+        } catch (e) {}
+      });
       if (was.tset && typeof was.tset === 'object') {
         Object.keys(was.tset).forEach((k) => {
           let L = null;
@@ -10712,7 +10767,11 @@
         try { _ambProgChainLenSync(E); } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
         if (typeof showToast === 'function') showToast('Deleted "' + nm0 + '" — ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + ' removed.');
-        _ambPeRender(); return;
+        // CLOSE ON DELETE (user: "deleting here should close the edit progression
+        // popover after user confirms right away") — the part you opened it for is
+        // gone, so reopening on a neighbour was editing something you did not pick.
+        try { _ambSyncControls(E); } catch (e) {}
+        _ambPeClose(); return;
       }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
@@ -42905,9 +42964,18 @@
       const saveHint = _ambProgPosHint, saveOv = _ambProgStepOverride, saveE = _E;
       _E = E;
       const out = [];
+      // WHICH PART each slot of the pass belongs to — so the capture keeps the
+      // arrangement's parts instead of one flat list (reported: "these consolidated
+      // versions are useless"). Salt can split one chord into several, so a part's
+      // captured LENGTH is its own count, and chords never merge across a part edge.
+      const parts0 = (Array.isArray(prog.parts) && prog.parts.length) ? prog.parts : null;
+      const slotPart = new Array(len).fill(-1), counts = parts0 ? parts0.map(() => 0) : null;
+      if (parts0) { let at = 0; parts0.forEach((pt, pi) => { if (!pt || pt.open) return;
+        for (let k = 0; k < (pt.len | 0) && at < len; k++) slotPart[at++] = pi; }); }
       try {
         for (let i = 0; i < len; i++) {
           const ci = perm ? perm[i] : i;
+          const curPi = slotPart[i];
           const step = cyc * len + i;
           const salt = _ambPartSaltAt(cfg, step);
           const nSeg = (salt && (salt.colors | 0) > 0) ? _ambProgSaltSegCount(salt, step, seed) : 1;
@@ -42920,13 +42988,32 @@
             const bars = slotBars / nSeg;
             const last = out[out.length - 1];
             const same = last && !last.transition && ((last.root | 0) === (ch.root | 0)) &&
-              (last.intervals || []).join(',') === (ch.intervals || []).join(',');
+              (last.intervals || []).join(',') === (ch.intervals || []).join(',') && last._pi === curPi;
             if (same) last.bars = +(last.bars + bars).toFixed(6);
-            else out.push({ root: ((ch.root | 0) % 12 + 12) % 12, intervals: (ch.intervals || [0]).slice(), bars: +bars.toFixed(6) });
+            else { out.push({ root: ((ch.root | 0) % 12 + 12) % 12, intervals: (ch.intervals || [0]).slice(), bars: +bars.toFixed(6), _pi: curPi });
+                   if (counts && curPi >= 0) counts[curPi]++; }
           }
         }
       } finally { _ambProgPosHint = saveHint; _ambProgStepOverride = saveOv; _E = saveE; }
+      out.forEach((c) => { delete c._pi; });
+      if (parts0 && out.length && counts.reduce((n, x) => n + x, 0) === out.length) {
+        // the parts, whole — minus what the capture has already BAKED IN (their salt
+        // and timing live in the chords now, and would otherwise apply twice)
+        out.parts = parts0.map((pt, pi) => { const q = JSON.parse(JSON.stringify(pt));
+          if (!q.open) q.len = counts[pi]; delete q.salt; delete q.passSalt; delete q.rubato; return q; })
+          .filter((q) => q.open || q.len > 0);
+      }
       return out.length ? out : null;
+    }
+    // THE ARRANGEMENT AS IT WAS, kept before the first version is ever made — so a
+    // capture can never be the only thing left (it was, and the parts were lost).
+    function _ambProgEnsureOriginal(prog) {
+      if (Array.isArray(prog.versions) && prog.versions.length) return;
+      if (!Array.isArray(prog.chords) || !prog.chords.length) return;
+      prog.versions = [{ name: 'Original', chords: prog.chords.map(_ambCloneChord),
+        ...(Array.isArray(prog.parts) && prog.parts.length ? { parts: JSON.parse(JSON.stringify(prog.parts)) } : {}),
+        ...(prog.salt ? { salt: { colors: prog.salt.colors | 0, scatter: prog.salt.scatter | 0 } } : {}),
+        ...(prog.rubato ? { rubato: { amount: prog.rubato.amount | 0 } } : {}) }];
     }
     function _ambProgAddVersion(prog) {
       if (!Array.isArray(prog.versions)) prog.versions = [];
@@ -43404,7 +43491,10 @@
       {
         h += '<div class="ambient-pov-vers">' +
           '<span class="ambient-pov-verslbl">Versions</span>' +
-          (Array.isArray(prog.versions) ? prog.versions : []).map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) + '</span>').join('') +
+          (Array.isArray(prog.versions) ? prog.versions : []).map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) +
+            // ✕ its own `data-pov`, so the strip's closest() finds IT, not the switch
+            '<span role="button" tabindex="0" class="ambient-pov-verdel" data-pov="verdel:' + vi + '" title="Delete “' + esc(v.name) + '”" aria-label="Delete version">\u2715</span>' +
+            '</span>').join('') +
           '<span role="button" tabindex="0" class="ambient-pov-ver ambient-pov-veradd" data-pov="veradd" title="Save the current progression as a new version">＋</span>' +
           '</div>';
       }
@@ -44124,6 +44214,17 @@
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
       if (op === 'veradd') { _ambProgAddVersion(prog); persist(); refresh(); return; }
+      // ✕ DELETE A VERSION (user: "versions need to be able to be deleted"). The
+      // progression playing now is untouched — removing a version only forgets it.
+      if (op === 'verdel') {
+        const vi = a[1] | 0; if (!Array.isArray(prog.versions) || !prog.versions[vi]) return;
+        let ok = true; try { if (typeof confirm === 'function') ok = confirm('Delete the version \u201c' + prog.versions[vi].name + '\u201d? The progression playing now is not changed.'); } catch (e) {}
+        if (!ok) return;
+        prog.versions.splice(vi, 1);
+        if (Number.isFinite(prog.versionIdx)) { if (prog.versionIdx === vi) delete prog.versionIdx; else if (prog.versionIdx > vi) prog.versionIdx--; }
+        if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
+        persist(); refresh(); return;
+      }
       // ❄ CAPTURE — resolve the pass currently sounding into literal chords and
       // store it as a version with salt cleared, so it replays exactly. The LIVE
       // progression is untouched and keeps varying; switching versions is how you
@@ -44144,8 +44245,9 @@
         if (prog.versions.length >= 12) { if (typeof showToast === 'function') showToast('12 versions is the limit — remove one first.'); return; }
         // no `salt` ⇒ plays fixed. The PARTS come along when the pass has the same
         // number of chords — or switching to it later would flatten the arrangement.
-        const _pts = (Array.isArray(prog.parts) && prog.parts.length &&
-          prog.parts.reduce((n, p) => n + ((p && !p.open) ? (p.len | 0) : 0), 0) === chords.length) ? JSON.parse(JSON.stringify(prog.parts)) : null;
+        _ambProgEnsureOriginal(prog);
+        if (prog.versions.length >= 12) { if (typeof showToast === 'function') showToast('12 versions is the limit — remove one first.'); return; }
+        const _pts = Array.isArray(chords.parts) ? chords.parts : null;
         prog.versions.push({ name: name, chords: chords.map(_ambCloneChord), ...(_pts ? { parts: _pts } : {}) });
         if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it in Versions to loop it.');
         persist(); refresh(); return;
@@ -45067,6 +45169,29 @@
       return true;
     }
     function _ambVarOptToggle(c, k) { return _ambVarOptSet(c, k, !(_ambVarOptLive(c, k) > 0)); }
+    // ⏸ BREATH / ✦ FLOURISH, from the ✺ Groove card (2026-09-30). The fields live
+    // PER LAYER (`L.breath` / `L.flourish`, read by 18-layer-v2's `breathStage`),
+    // so the card WRITES THROUGH to every v2 layer rather than holding a second
+    // copy — the same move ✺ Novelty makes, and it leaves no store that could
+    // disagree with the per-layer rows in ⚙ Deep ▸ Fine-tune ▸ Rhythm.
+    // v2 LAYERS ONLY: the v1 emitters do not run that stage, and a field written
+    // where nothing reads it is the stored-but-ignored trap this file keeps
+    // weeding out. The head says so.
+    function _ambBreathLayers(cfg) { return (cfg && Array.isArray(cfg.layers)) ? cfg.layers.filter(Boolean) : []; }
+    function _ambBreathSetAll(cfg, path, v) {
+      const i = String(path).indexOf('.'), grp = String(path).slice(0, i), fld = String(path).slice(i + 1);
+      const ls = _ambBreathLayers(cfg);
+      ls.forEach((L) => { const o = (L[grp] && typeof L[grp] === 'object') ? L[grp] : (L[grp] = {}); o[fld] = v; });
+      return ls.length;
+    }
+    // What the card SHOWS: the first layer that states it (the normalizer prunes an
+    // all-default object, so an untouched layer simply has none).
+    function _ambBreathGet(cfg, path, dflt) {
+      const i = String(path).indexOf('.'), grp = String(path).slice(0, i), fld = String(path).slice(i + 1);
+      const ls = _ambBreathLayers(cfg);
+      for (let k = 0; k < ls.length; k++) { const o = ls[k][grp]; if (o && o[fld] !== undefined) return o[fld]; }
+      return dflt;
+    }
     // ✺ VARIATION: ON / OFF — ONE switch over the whole card bank (2026-09-29, user:
     // "a master Variation on/off toggle … that can just bypass all Variation settings
     // so user can see difference it makes"). OFF parks EVERYTHING the six cards can
@@ -45092,6 +45217,8 @@
         const neutral = { tset: {} };
         ['chance', 'playsTo', 'partArc'].forEach((k) => { if (Array.isArray(nv[k])) neutral[k] = nv[k].map(() => null); });
         Object.keys(nv.tset || {}).forEach((k) => { neutral.tset[k] = { pal: null, dub: null }; });
+        ['breath', 'flourish'].forEach((k) => { if (nv[k] && typeof nv[k] === 'object') {
+          neutral[k] = {}; Object.keys(nv[k]).forEach((id) => { neutral[k][id] = null; }); } });
         try { _ambNovRestore(E, c, JSON.stringify(neutral)); } catch (e) {}
         if (g) _AMB_VARM_GROOVE.forEach((k) => { g[k] = 0; });
         c.startVary = 0;
@@ -50357,6 +50484,43 @@
         macro('streak', 'Streaks', g.streak, 'scattered \u2192 notes and rests in runs') +
         macro('couple', 'Couple', g.couple, 'layers pull together, then slip apart') +
         '</div>';
+      // ── ⏸ BREATH & ✦ FLOURISH ────────────────────────────────────────────
+      // Every macro above is a per-ONSET die; these two work in WINDOWS of the
+      // cycle, which is what makes a rest read as phrasing and a burst as a fill.
+      {
+        const nL = _ambBreathLayers(cfg).length;
+        const brSl = (path, label, hint) => {
+          const v = _ambBreathGet(cfg, path, 0) | 0;
+          return '<div class="ambient-groove-macro">' +
+            '<span class="ambient-sched-lbl">' + label + '</span>' +
+            '<input type="range" class="ambient-sl ambient-groove-brs" data-brs="' + path + '" min="0" max="100" step="1" value="' + v + '">' +
+            '<span class="ambient-groove-val" data-brv="' + path + '">' + v + '</span>' +
+            '<span class="ambient-sched-lbl">' + hint + '</span></div>';
+        };
+        const brSel = (path, label, opts, dflt) => {
+          const cur = String(_ambBreathGet(cfg, path, dflt));
+          return '<div class="ambient-groove-macro">' +
+            '<span class="ambient-sched-lbl">' + label + '</span>' +
+            '<select class="ambient-select ambient-groove-brsel" data-brsel="' + path + '">' +
+              opts.map((o) => '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') +
+            '</select></div>';
+        };
+        const WHERE = [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']];
+        html += '<div class="ambient-groove-push ambient-groove-breath">' +
+          '<div class="ambient-groove-pushhead"><span class="ambient-sched-lbl">' +
+            '\u23f8 breath &amp; \u2726 flourish \u2014 holding back, and sudden changes of rate. ' +
+            (nL ? ('Sets all ' + nL + ' layer' + (nL === 1 ? '' : 's') + '; one layer\u2019s own are in \u2699 Deep \u25b8 Fine-tune \u25b8 Rhythm.')
+                : 'Add a layer to use these.') +
+          '</span></div>' +
+          brSl('breath.amount', '\u23f8 Breath', 'how much of the time a layer holds back') +
+          brSel('breath.len', 'Breath length', [['beat', 'A beat'], ['bar', 'A bar'], ['chg', 'A change'], ['pass', 'A whole pass']], 'bar') +
+          brSel('breath.where', 'Breath where', WHERE, '') +
+          brSl('flourish.amount', '\u2726 Flourish', 'how much of the time the rate jumps') +
+          brSl('flourish.wild', 'Flourish size', 'low doubles, high runs') +
+          brSel('flourish.where', 'Flourish where', WHERE, '') +
+          brSel('breath.pair', 'Pair them', [['', 'Independent'], ['fill', 'Flourish, then rest'], ['enter', 'Rest, then come back with one']], '') +
+          '</div>';
+      }
       // \u273a JITTER — the CHARACTER of the Humanize slider above (and of every
       // layer's Vel var): white = each onset lands independently, pink = 1/f, the
       // same depth arriving as slow drift with fine detail on top. Placed directly
@@ -56266,6 +56430,15 @@
         if (grBody) {
           grBody.addEventListener('input', (ev) => {
             _E = E;
+            // ⏸ / ✦ — write through to every v2 layer. Readout only while dragging:
+            // a re-render replaces the input under the finger (the documented
+            // Humanize-drag failure), so the redraw waits for `change` below.
+            const brs = ev.target.closest && ev.target.closest('.ambient-groove-brs');
+            if (brs) { const c = cfg0(); if (!c) return;
+              const path = brs.getAttribute('data-brs'), v = Math.max(0, Math.min(100, parseInt(brs.value, 10) || 0));
+              _ambBreathSetAll(c, path, v);
+              const vo = grBody.querySelector('[data-brv="' + path + '"]'); if (vo) vo.textContent = v;
+              return; }
             const mac = ev.target.closest('.ambient-groove-mac');
             if (mac) { const c = _grCfg(); if (!c) return; const gm = mac.getAttribute('data-gm'), v = Math.max(0, Math.min(100, parseInt(mac.value, 10) || 0));
               if (gm === 'humanize') c.startVary = v; else c.groove[gm] = v;
@@ -56319,6 +56492,20 @@
           // which the Configure "Area start" slider and the bed/motif inherit
           // cues shadow). Doing this on `input` is what killed the drag.
           grBody.addEventListener('change', (ev) => {
+            const br = ev.target.closest && (ev.target.closest('.ambient-groove-brsel') || ev.target.closest('.ambient-groove-brs'));
+            if (br) {
+              _E = E; const c = cfg0(); if (!c) return;
+              const sel2 = br.classList.contains('ambient-groove-brsel');
+              const path = br.getAttribute(sel2 ? 'data-brsel' : 'data-brs');
+              _ambBreathSetAll(c, path, sel2 ? br.value : Math.max(0, Math.min(100, parseInt(br.value, 10) || 0)));
+              try { E.getCfg(); } catch (e) {}
+              // heard at each layer's next unit boundary, like every Groove change
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambReanchorLayer(E, key)); _ambSyncMods(); } catch (e) {} }
+              try { _ambSyncControls(E); } catch (e) {}     // the layer cards redraw with it
+              _ambRenderGroove(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const mac2 = ev.target.closest && ev.target.closest('.ambient-groove-mac');
             if (mac2 && mac2.getAttribute('data-gm') === 'humanize') {
               try { _ambSyncControls(E); } catch (e) {}

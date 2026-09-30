@@ -1205,6 +1205,25 @@
     // are, which is why they sit here and not in the part. Kept beside
     // `humanize`/`velVar` (which `_ambNormalizeSpread` already gives us) so the
     // whole Performance/Variance family lives in one place.
+    // ⏸ BREATH / ✦ FLOURISH — additive, ABSENT BY DEFAULT, pruned at amount 0 so
+    // a project that never touched them stays byte-identical.
+    if (L.breath && typeof L.breath === 'object') {
+      const q = L.breath;
+      q.amount = clamp(q.amount | 0, 0, 100);
+      q.len = (BREATH_LENS.indexOf(q.len) >= 0) ? q.len : 'bar';
+      q.where = (BREATH_WHERE.indexOf(q.where) >= 0) ? q.where : '';
+      q.pair = (BREATH_PAIR.indexOf(q.pair) >= 0) ? q.pair : '';
+      // DROPPED ONLY WHEN IT IS ENTIRELY DEFAULT — not merely at amount 0, or
+      // setting Length before Amount would be thrown away between the two presses.
+      if (!q.amount && q.len === 'bar' && !q.where && !q.pair) delete L.breath;
+    } else delete L.breath;
+    if (L.flourish && typeof L.flourish === 'object') {
+      const q = L.flourish;
+      q.amount = clamp(q.amount | 0, 0, 100);
+      q.wild = clamp(Number.isFinite(q.wild) ? (q.wild | 0) : 50, 0, 100);
+      q.where = (BREATH_WHERE.indexOf(q.where) >= 0) ? q.where : '';
+      if (!q.amount && q.wild === 50 && !q.where) delete L.flourish;
+    } else delete L.flourish;
     L.restProb = clamp(Number.isFinite(L.restProb) ? L.restProb : 0, 0, 100);
     L.ghosts = clamp(Number.isFinite(L.ghosts) ? L.ghosts : 0, 0, 100);
     L.lenVary = clamp(Number.isFinite(L.lenVary) ? L.lenVary : 0, 0, 100);
@@ -3347,11 +3366,22 @@
       // the way `toneSetAt` asks it (never a second table).
       const chordPcs = set.ivs.map((iv) => (((set.root + iv) % 12) + 12) % 12);
       let keyPcs = chordPcs;
+      // AT THIS ONSET'S TIME, the way `toneSetAt` asks. `_ambNotesOf` follows the
+      // CURRENT chord when the layer's Notes follow the changes, and unpinned it
+      // answered for the moment the note was COMPUTED — seconds ahead in playback,
+      // the part's start in the drawing. So the edge onsets of every change sounded
+      // snapped to the neighbouring chord while the picture showed them all alike
+      // (reported: "sounds like the last chord of each bar is different but they
+      // all look the same"; measured F·G·C → F·A·C on the last onset of each bar).
+      const prevOv = (typeof _ambProgStepOverride !== 'undefined') ? _ambProgStepOverride : undefined;
       try {
-        const sc = (typeof _ambScaleIntervals === 'function') ? _ambScaleIntervals(_ambNotesOf(L)) : null;
-        const kr = (typeof _ambSrcRootPc === 'function') ? _ambSrcRootPc(_ambNotesOf(L)) : null;
+        try { _ambProgStepOverride = _ambProgStepAt(E, chgTime(at)); } catch (e) {}
+        const src = _ambNotesOf(L);
+        const sc = (typeof _ambScaleIntervals === 'function') ? _ambScaleIntervals(src) : null;
+        const kr = (typeof _ambSrcRootPc === 'function') ? _ambSrcRootPc(src) : null;
         if (Array.isArray(sc) && sc.length && Number.isFinite(kr)) keyPcs = sc.map((iv) => (((kr + iv) % 12) + 12) % 12);
       } catch (e) {}
+      finally { try { _ambProgStepOverride = prevOv; } catch (e) {} }
       const snap = (m, pcs) => {
         if (!pcs || !pcs.length) return m;
         let best = m, bd = 99;
@@ -3364,6 +3394,25 @@
         }
         return best;
       };
+      // BENT TOWARD THE NEXT CHANGE — the promise on the door, made real. On the
+      // last quarter-bar before a change the upper voices snap to the NEXT chord's
+      // tones while the bottom note holds the current root (never bent). Deliberate
+      // motion at the end of each bar, drawn and played alike — the motion this
+      // material used to have there was a bug (edge onsets snapped to the wrong
+      // chord), and fixing it left the default stack a plain triad on a pulse.
+      let bendPcs = null;
+      try {
+        if (strict > 0 && cfg && cfg.prog && cfg.prog.on && typeof _ambChordSpanAt === 'function') {
+          const sp = _ambChordSpanAt(E, cfg, chgTime(at));
+          const lead = barSec(cfg) / 4;
+          if (sp && sp.end > sp.start && sp.end - chgTime(at) <= lead + 1e-3) {
+            const nx = withKeyTime(sp.end + 1e-3, () => toneSetAt(E, cfg, sp.end + 1e-3, L));
+            if (nx && Array.isArray(nx.ivs) && (nx.root !== set.root || nx.ivs.join(',') !== set.ivs.join(','))) {
+              bendPcs = nx.ivs.map((iv) => (((nx.root + iv) % 12) + 12) % 12);
+            }
+          }
+        }
+      } catch (e) { bendPcs = null; }
       const rootBase = 12 * (reg + 1) + rootPc;
       let cur = rootBase;
       for (let i = 0; i < vN; i++) {
@@ -3378,7 +3427,17 @@
         // ignoring the changes. Measured before: part A 0,4,7 → part B 0,7
         // (should be 6,9,1). The root already followed; the snap undid it.
         if (i === 0) { out.push(clamp(note, 12, 120)); continue; }
-        if (mode === 'ladder') {
+        if (bendPcs) {
+          // each voice its OWN tone of the coming chord — two voices landing on one
+          // note (C F F) is a doubling, not a chord
+          note = snap(note, bendPcs);
+          if (out.indexOf(note) >= 0) {
+            const taken = out.map((m) => ((m % 12) + 12) % 12);
+            const free = bendPcs.filter((pc) => taken.indexOf(pc) < 0);
+            if (free.length) note = snap(cur, free);
+          }
+        }
+        else if (mode === 'ladder') {
           if (strict >= 67) note = snap(note, chordPcs);
           else if (strict >= 34) note = snap(note, keyPcs);
         } else if (mode === 'chord') {
@@ -4183,6 +4242,145 @@
   // notesFor(layer, ctx) → [{ at, freq, durMs }]
   // ONE contract, two implementations. Everything above is an implementation
   // detail of the live one; the emitter below knows only this signature.
+  // ── ⏸ BREATH & ✦ FLOURISH — silence and rate, PLACED (2026-09-30) ─────────
+  // user: "work silence (lack of notes) into the generation tooling; how can we
+  // allow the tasteful holding back of playing, and also flourishes (sudden
+  // changes in note rate, sometimes several in quick succession)".
+  //
+  // Everything the engine had for this was a PER-ONSET COIN FLIP (Sparse, Rest,
+  // Twist, Ratchet, Ghost), so silence arrived as random gaps and bursts landed
+  // at random moments. Restraint and flourish are PLACED: a phrase breathes at
+  // its end, a fill happens before a change. So this works in WINDOWS of the
+  // cycle — a beat, a bar, a change, the whole pass — and decides per window.
+  //
+  // ONE STAGE, because the two are one idea: ⏸ holds a window back (and clips a
+  // tail that would cover the silence — the note's own release still rings), ✦
+  // subdivides a window's onsets so the rate jumps, and `pair` chains them (a
+  // fill INTO a rest, or a rest then a re-entry). Both are seeded from the
+  // take's own seed (`ctx._seedBase`), so a pass replays until 🎲 New take —
+  // and `part.vary` folds the cycle into that seed, which makes them per-pass
+  // exactly as it does for every other die.
+  //
+  // IN THE `notesFor` PIPELINE, so the drawing and playback get the same answer
+  // — the one rule this file keeps paying for.
+  const BREATH_LENS = ['beat', 'bar', 'chg', 'pass'];
+  const BREATH_WHERE = ['', 'end', 'chg'];
+  const BREATH_PAIR = ['', 'fill', 'enter'];
+  // The windows of one cycle. `chg` follows the real chord spans (so a breath
+  // lands ON a change, not near it) and falls back to bars where there are none.
+  function breathUnits(L, ctx, cyc, cs, lenKind) {
+    const barsF = Math.max(0.125, +(L.part && L.part.bars) || 1);
+    const barLen = cyc / barsF;
+    const out = [];
+    if (lenKind === 'pass') return [[cs, cs + cyc]];
+    if (lenKind === 'chg') {
+      let t = cs + 1e-4, guard = 0;
+      while (t < cs + cyc - 1e-3 && guard++ < 64) {
+        let sp = null;
+        try { sp = _ambChordSpanAt(ctx.E, ctx.cfg, t); } catch (e) { sp = null; }
+        if (!sp || !(sp.end > sp.start)) break;
+        out.push([Math.max(cs, sp.start), Math.min(cs + cyc, sp.end)]);
+        t = sp.end + 1e-4;
+      }
+      if (out.length) return out;
+    }
+    const step = (lenKind === 'beat') ? barLen / 4 : barLen;
+    for (let t = cs; t < cs + cyc - 1e-6; t += step) out.push([t, Math.min(cs + cyc, t + step)]);
+    return out;
+  }
+  // WHERE weights rather than filters: a hard filter on a short cycle means the
+  // dial does nothing at all, which reads as broken. `end` favours the last
+  // quarter of the phrase, `chg` the window that ENDS on a chord change.
+  function breathWeight(where, w, cs, cyc, ctx) {
+    if (where === 'end') return ((w[0] - cs) / Math.max(0.001, cyc)) >= 0.75 ? 2.5 : 0.3;
+    if (where === 'chg') {
+      let e = null;
+      try { const sp = _ambChordSpanAt(ctx.E, ctx.cfg, w[0] + 1e-4); e = sp ? sp.end : null; } catch (x) {}
+      return (e != null && Math.abs(e - w[1]) < 1e-3) ? 2.5 : 0.3;
+    }
+    return 1;
+  }
+  function breathStage(L, ctx, ns) {
+    const b = (L && L.breath) || null, f = (L && L.flourish) || null;
+    const bAmt = b ? clamp(b.amount | 0, 0, 100) : 0;
+    const fAmt = f ? clamp(f.amount | 0, 0, 100) : 0;
+    if ((!bAmt && !fAmt) || !Array.isArray(ns) || !ns.length) return ns;
+    const cyc = Math.max(0.05, +ctx.cycleSec || 2), cs = +ctx.cycleStart || 0;
+    const seed = (Number.isFinite(ctx._seedBase) ? (ctx._seedBase | 0) : 0) ^ 0x42524541;
+    const units = breathUnits(L, ctx, cyc, cs, (b && b.len) || 'bar');
+    if (!units.length) return ns;
+    const pair = (b && b.pair) || '';
+    const isB = units.map((w, i) => bAmt > 0 &&
+      vRnd(seed, 101 + i * 7) * 100 < bAmt * breathWeight((b && b.where) || '', w, cs, cyc, ctx));
+    const isF = units.map((w, i) => fAmt > 0 &&
+      vRnd(seed ^ 0x51ed270b, 211 + i * 13) * 100 < fAmt * breathWeight((f && f.where) || '', w, cs, cyc, ctx));
+    // PAIRED: the fill and the silence are one gesture, so one decides the other
+    if (pair === 'fill') for (let i = 0; i < units.length - 1; i++) if (isF[i]) { isB[i + 1] = true; isF[i + 1] = false; }
+    if (pair === 'enter') for (let i = 0; i < units.length - 1; i++) if (isB[i]) { isF[i + 1] = true; isB[i + 1] = false; }
+    for (let i = 0; i < units.length; i++) if (isB[i]) isF[i] = false;   // never flourish into silence
+    // THE LAYER ALWAYS SAYS SOMETHING. Holding back the WHOLE pass is not a
+    // breath, it is the layer disappearing — and a dial that can do that reads as
+    // a bug. The window that least wanted to rest keeps playing.
+    if (units.length && isB.every(Boolean)) {
+      let best = 0, bv = -1;
+      for (let i = 0; i < units.length; i++) { const v = vRnd(seed, 101 + i * 7); if (v > bv) { bv = v; best = i; } }
+      isB[best] = false;
+    }
+    const bWin = [];
+    for (let i = 0; i < units.length; i++) if (isB[i]) bWin.push(units[i]);
+    // ── ⏸ hold back, and clip a tail that would cover the silence ──────────
+    let out = [];
+    for (let k = 0; k < ns.length; k++) {
+      const n = ns[k];
+      if (!n || !Number.isFinite(n.at)) { out.push(n); continue; }
+      let held = false;
+      for (let i = 0; i < bWin.length; i++) { const w = bWin[i]; if (n.at >= w[0] - 1e-6 && n.at < w[1] - 1e-6) { held = true; break; } }
+      if (held) continue;
+      let cut = null;
+      if (n.durMs > 0) {
+        const end = n.at + n.durMs / 1000;
+        for (let i = 0; i < bWin.length; i++) { const w = bWin[i]; if (n.at < w[0] - 1e-6 && end > w[0]) { cut = w[0]; break; } }
+      }
+      // CLONE rather than mutate: these objects can be the drawing's and the
+      // emitter's at once, and a clipped length must not leak between them.
+      out.push(cut == null ? n : Object.assign({}, n, { durMs: Math.max(20, Math.round((cut - n.at) * 1000)) }));
+    }
+    // ── ✦ FLOURISH: the rate jumps inside the window ───────────────────────
+    if (fAmt > 0 && isF.some(Boolean) && out.length) {
+      const wild = clamp(Number.isFinite(f.wild) ? (f.wild | 0) : 50, 0, 100);
+      const times = [];
+      out.forEach((n) => { if (n && Number.isFinite(n.at)) { const t = Math.round(n.at * 1000) / 1000; if (times.indexOf(t) < 0) times.push(t); } });
+      times.sort((x, y) => x - y);
+      let maxOi = 0; out.forEach((n) => { if (n && Number.isFinite(n.oi) && n.oi > maxOi) maxOi = n.oi; });
+      const add = [], shorter = new Map();
+      for (let i = 0; i < units.length; i++) {
+        if (!isF[i]) continue;
+        const w0 = units[i][0], w1 = units[i][1];
+        const inWin = times.filter((t) => t >= w0 - 1e-6 && t < w1 - 1e-6);
+        for (let k = 0; k < inWin.length; k++) {
+          const t = inWin[k];
+          const nxt = (k + 1 < inWin.length) ? inWin[k + 1] : w1;
+          const slot = nxt - t;
+          if (!(slot > 0.02)) continue;
+          // EACH ONSET DRAWS ITS OWN RATE, which is what makes "several in quick
+          // succession" — ×2 into ×4 rather than one even tremolo.
+          const maxR = 2 + Math.round((wild / 100) * 3);                      // 2..5
+          const rate = 2 + Math.floor(vRnd(seed ^ 0x9e3779b9, 307 + i * 29 + k * 11) * (maxR - 1));
+          const sub = slot / rate;
+          if (!(sub > 0.012)) continue;                                        // never a machine-gun
+          const dm = Math.max(20, Math.round(sub * 1000 * 0.9));
+          for (let z = 0; z < out.length; z++) {
+            const g = out[z]; if (!g || Math.abs(g.at - t) > 1e-3) continue;
+            if (!(g.durMs > 0) || g.durMs > dm) shorter.set(z, dm);
+            for (let j = 1; j < rate; j++) add.push(Object.assign({}, g, { at: t + j * sub, durMs: dm, oi: ++maxOi, fl: 1 }));
+          }
+        }
+      }
+      if (shorter.size) shorter.forEach((dm, z) => { out[z] = Object.assign({}, out[z], { durMs: dm }); });
+      if (add.length) { out = out.concat(add); out.sort((x, y) => (x && x.at || 0) - (y && y.at || 0)); }
+    }
+    return out;
+  }
   function notesFor(L, ctx) {
     // ◐ A LOOP'S NOTES ARE ITS PIECES — drawn one row per SOURCE piece, so the cut
     // reads at a glance (in order climbs, back to front falls, shuffled scatters).
@@ -4206,6 +4404,9 @@
     try {
       let ns = notesForRaw(L, ctx);
       ns = xfStage(L, ctx, ns);
+      // ⏸ / ✦ before the timing stage, so swing and humanize move the flourish's
+      // notes exactly as they move the layer's own.
+      ns = breathStage(L, ctx, ns);
       ns = timingStage(L, ctx, ns);
       ns = tightClip(L, ns);
       ns = accentStage(L, ns);
@@ -6499,9 +6700,17 @@
   // only what `ruleb` can hold (`BAR_RULE_F`), into `ruleb[key]` — the part's own
   // rules and every other region are untouched. The drawing and ▶ Preview show the
   // COMPOSITE (`scopedViewFn`): the whole part with just that stretch replaced.
-  function draftOpenFn(E, L, scope) {
+  function draftOpenFn(E, L, scope, opt) {
     const id = L && (L.id | 0); if (!L || DRAFTS.has(id)) return false;
     const d = { S: JSON.parse(JSON.stringify(L)) };
+    // GENERATE FOR "WHOLE PART" MEANS THE WHOLE PART (user: "still not generating
+    // for whole part"): the bars' own rules are set aside in the draft, so what it
+    // draws and what ✓ Done writes is the part by its own rules, everywhere.
+    // ✕ Cancel leaves them. Asked for by ⚙ Deep only — other drafts keep them.
+    if (!scope && opt && opt.wholePart && d.S.part && d.S.part.ruleb && Object.keys(d.S.part.ruleb).length) {
+      d.dropped = Object.keys(d.S.part.ruleb);
+      delete d.S.part.ruleb;
+    }
     // ONLY A GENERATING PART CAN BE SCOPED: `ruleb` shapes what the RULES make, and a
     // recorded part (a new layer's empty one included) plays its stored notes — so a
     // stretch's rules there drew "14 onsets" in the summary over a silent part.
@@ -6529,6 +6738,21 @@
     return true;
   }
   const draftScopeFn = (id) => { const d = DRAFTS.get(id | 0); return (d && d.scope) ? d.scope : null; };
+  const draftDroppedFn = (id) => { const d = DRAFTS.get(id | 0); return (d && d.dropped) ? d.dropped.slice() : null; };
+  // Has this draft been CHANGED since it opened? Asked before a scope switch
+  // throws it away — a switch never writes (it used to commit, and a scoped commit
+  // trims the part: picking "Whole part" silently cut the part down to a bar).
+  function draftDirtyFn(E, id) {
+    const d = DRAFTS.get(id | 0); if (!d) return false;
+    if (d.scope && !d.scope.fresh) {
+      try { const k = scopeDiffOf(d).keep; return Object.keys(k).length > 0; } catch (e) { return true; }
+    }
+    let R = null; try { R = ((E.getCfg().layers || []).find((x) => (x.id | 0) === (id | 0))) || null; } catch (e) {}
+    let ref = (d.scope && d.orig) ? d.orig : R;
+    // the stretches a whole-part draft set aside are not an edit of its own
+    if (ref && d.dropped) { ref = JSON.parse(JSON.stringify(ref)); if (ref.part) delete ref.part.ruleb; }
+    return !ref || JSON.stringify(d.S) !== JSON.stringify(ref);
+  }
   // A part can be scoped when it GENERATES, or when it is EMPTY (nothing to lose —
   // the scoped draft then builds it). A recorded take with notes is not: its notes
   // are the content, and a stretch's rules would have nothing to act on.
@@ -8627,6 +8851,8 @@
     presets: PRESETS,
     draftOpen: draftOpenFn,
     draftScope: draftScopeFn,       // {key, nm} while ⚙ Deep generates for one bar/change
+    draftDirty: draftDirtyFn,
+    draftDropped: draftDroppedFn,
     scopable: scopableFn,
     scopeOK: scopeOKFn,
     scopedView: scopedViewFn,
@@ -12948,8 +13174,8 @@
       } catch (e) {}
     }
     if (!(V2.scopeOK && V2.scopeOK(ctx.L))) scope = null;   // a recorded take has no rules to scope
-    V2.draftOpen(E, ctx.L, scope);               // STAGED until ✓ Done
-    if (scope && V2.draftScope(ctx.L.id)) {
+    V2.draftOpen(E, ctx.L, scope, { wholePart: !scope });   // STAGED until ✓ Done
+    if ((scope && V2.draftScope(ctx.L.id)) || (V2.draftDropped && V2.draftDropped(ctx.L.id))) {
       // the rows are built from the staged part — rebuild so they show THIS
       // stretch's values (the render swaps in the staged panel)
       try { const hh = host(E); if (hh) hh._sig = ''; V2.render(E); } catch (e) {}
@@ -12994,7 +13220,7 @@
     const skipped = (ls.dropped || []).filter((x) => !INTERNAL.test(x)).map((x) => NAMES[x] || x);
     if (ls.trimmed) {
       const sk = (ls.dropped || []).filter((x) => !/(^|\s)(take|mat|made|preset|ground|notes|reg|cells|lanes|steps|home|beat|mem|barsMode|_\w*)$/.test(x));
-      showToast('\u25eb The part is now just ' + ls.nm + ' \u2014 everything outside it is silent. Pick another bar in Generate for to add to it.' +
+      showToast('\u25eb Kept ' + ls.nm + ' \u2014 the part\u2019s other content is silent now (bars that already had their own rules stay). Pick another bar in Generate for to add to it.' +
                 (sk.length ? ' Whole-part only, not applied: ' + sk.slice(0, 4).join(', ') + (sk.length > 4 ? '\u2026' : '') + '.' : ''), { ms: 5500 });
       return;
     }
@@ -13039,8 +13265,11 @@
       const marks = (cvz && cvz._chordGeo && Array.isArray(cvz._chordGeo.marks)) ? cvz._chordGeo.marks : [];
       const top = Math.max(1, Math.round(barsF * SPB));
       marks.forEach((m, i) => {
-        const sa = Math.max(0, Math.min(top - 1, Math.round(m.f0 * barsF * SPB)));
-        const sb = Math.max(sa + 1, Math.min(top, Math.round(m.f1 * barsF * SPB)));
+        // SNAPPED TO THE QUARTER BAR: the marks are one PASS as heard, so Rubato
+        // bends their edges (a change ending at "bar 1.98" left a silent sliver)
+        const q = SPB / 4, sn = (x) => Math.round(x / q) * q;
+        const sa = Math.max(0, Math.min(top - 1, sn(m.f0 * barsF * SPB)));
+        const sb = Math.max(sa + 1, Math.min(top, sn(m.f1 * barsF * SPB)));
         const k = regKey(sa, sb);
         add(k, 'Change ' + (i + 1) + (m.nm ? ' — ' + m.nm : '') + ' (' + regLabel(k) + ')');
       });
@@ -13049,8 +13278,20 @@
     const html = opts.map(([v, lab]) => '<option value="' + esc(v) + '">' + esc(lab) + '</option>').join('');
     if (sel._html !== html) { sel.innerHTML = html; sel._html = html; }
     sel.value = sc ? sc.key : '';
+    // WHOLE PART over stretches that had their own rules: say which, and what
+    // ✓ Done / ✕ Cancel will do with them (the draft has already set them aside)
+    const dropped = (!sc && V2.draftDropped) ? V2.draftDropped(id) : null;
+    const own = (dropped && dropped.length && R.part.ruleb) ? R.part.ruleb : null;
     const says = card.querySelector('.v2-genscope-says');
-    if (says) {
+    if (says && own) {
+      const live = {}, mute = {};
+      Object.keys(own).forEach((k) => { const r = own[k] && own[k].rhythm;
+        ((r && r.kind === 'chance' && !((r.chance | 0) > 0)) ? mute : live)[k] = 1; });
+      const t = [Object.keys(live).length ? 'own rules on ' + regListTxt(live) : '',
+                 Object.keys(mute).length ? 'silent: ' + regListTxt(mute) : ''].filter(Boolean).join(' \u00b7 ') +
+        ' \u2014 \u2713 Done generates the whole part and drops those; \u2715 Cancel keeps them';
+      if (says.textContent !== t) says.textContent = t;
+    } else if (says) {
       const t = (sc && sc.fresh) ? ('only ' + sc.nm + ' — pick a Material; ✓ Done builds it here and leaves the rest of the part silent')
               : sc ? ('only ' + sc.nm + ' — ✓ Done keeps just this stretch (the rest goes silent); greyed rows are whole-part only')
                    : 'or pick a bar or a change to generate just that stretch';
@@ -13087,12 +13328,17 @@
       if ((cur ? cur.key : '') === key) return;
       let R = null; try { R = ((_cfgOf().layers) || []).find((x) => (x.id | 0) === id) || null; } catch (e) {}
       if (!R) return;
+      // A SWITCH NEVER WRITES. Only ✓ Done does — a switch that committed made a
+      // scoped draft TRIM the part as a side effect of choosing another scope.
+      // Changed? Ask before throwing it away; declined, the menu goes back.
       const St = V2.stagedOf(id);
       if (St) {
-        const R2 = V2.draftCommit(E, St);
-        if (R2) { try { v2TakeHeard(E, R2); } catch (e) {} R = R2; }
-        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-        try { scopeToast(); } catch (e) {}
+        if (V2.draftDirty && V2.draftDirty(E, id)) {
+          let ok = true;
+          try { ok = confirm('Discard what you changed for ' + (cur ? cur.nm : 'the whole part') + '? Nothing has been written \u2014 \u2713 Done writes it.'); } catch (e) {}
+          if (!ok) { s2.value = cur ? cur.key : ''; return; }
+        }
+        V2.draftCancel(E, St);
       }
       const o = s2.selectedOptions && s2.selectedOptions[0];
       const nm = key ? ((o && o.textContent) || regLabel(key)) : '';
@@ -17477,6 +17723,31 @@
               })(L.part.rhythm || {}) +
               gsl(L, 'part.rhythm.syncop', 'Syncopate', num((L.part.rhythm || {}).syncop, 0), 0, 100,
                   'straight → offbeat', 'kind:live;voice:synth;rhythm:chance') +
+              // ── ⏸ BREATH / ✦ FLOURISH — silence and rate, PLACED ─────────
+              // Every other die here is per ONSET; these two work in WINDOWS of
+              // the cycle, which is what makes a rest read as phrasing and a
+              // burst as a fill. `breathStage` holds the rules.
+              (function () {
+                const b0 = L.breath || {}, f0 = L.flourish || {};
+                return gsl(L, 'breath.amount', '\u23f8 Breath', num(b0.amount, 0), 0, 100,
+                        'how much of the time it holds back \u2014 0 never', 'kind:live') +
+                  gsel(L, 'breath.len', 'Breath length', b0.len || 'bar',
+                       [['beat', 'A beat'], ['bar', 'A bar'], ['chg', 'A change'], ['pass', 'A whole pass']],
+                       'how long one held-back stretch is', 'kind:live') +
+                  gsel(L, 'breath.where', 'Breath where', b0.where || '',
+                       [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']],
+                       'where it is most likely to rest', 'kind:live') +
+                  gsl(L, 'flourish.amount', '\u2726 Flourish', num(f0.amount, 0), 0, 100,
+                      'how much of the time the rate jumps \u2014 0 never', 'kind:live') +
+                  gsl(L, 'flourish.wild', 'Flourish size', num(f0.wild, 50), 0, 100,
+                      'how far the rate jumps \u2014 low doubles, high runs', 'kind:live') +
+                  gsel(L, 'flourish.where', 'Flourish where', f0.where || '',
+                       [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']],
+                       'where a flourish is most likely', 'kind:live') +
+                  gsel(L, 'breath.pair', 'Pair them', b0.pair || '',
+                       [['', 'Independent'], ['fill', 'Flourish, then rest'], ['enter', 'Rest, then come back with one']],
+                       'a fill and the silence after it are one gesture', 'kind:live');
+              })() +
               // Note length is NOT here — it is a MAIN knob now (user: "it should
               // be a primary value and highlighted"). It was the single loudest
               // thing about a generated line sitting behind a Fine-tune tab.

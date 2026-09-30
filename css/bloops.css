@@ -17753,3 +17753,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
    bypassed the cards dim and do not open (edits there would be overwritten on return) */
 .ambient-pov-varstrip .ambient-pov-varbar > .ambient-pov-varmaster { grid-column: 1 / -1; width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .ambient-pov-varstrip .ambient-pov-varbar.ambient-var-bypassed > [data-pov] { opacity: 0.4; pointer-events: none; }
+
+/* ✕ on a version chip — deletes that version (the chip itself switches to it) */
+.ambient-pov-ver .ambient-pov-verdel { margin-left: 7px; padding: 0 3px; opacity: 0.55; font-weight: 700; border-radius: 4px; }
+@media (hover: hover) { .ambient-pov-ver .ambient-pov-verdel:hover { opacity: 1; background: rgba(255,255,255,0.08); } }

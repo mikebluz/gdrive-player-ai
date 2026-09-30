@@ -226,6 +226,36 @@
   12-cap the switch is REFUSED. A version with no parts (a ❄ capture) keeps the current parts when its
   chord count fits — it used to `delete prog.parts` and flatten an 8-part arrangement into one (reported,
   unrecoverable in-app: the undo stack covers tracks only). Versions store WHOLE parts, not name/len.
+  A ❄ CAPTURE keeps its parts by tracking each slot's part through `_ambProgCaptureCycle` (salt splits a
+  chord into several, so a part's captured `len` is its own count; chords never merge across a part
+  edge; the parts' salt/rubato are stripped — they are baked into the chords). The first capture saves
+  "Original" first (`_ambProgEnsureOriginal`). A version chip's ✕ is `verdel:i`.
+- **`_ambNotesOf(L)` IS "NOW" UNLESS THE STEP IS PINNED.** A layer whose Notes follow the changes answers
+  with the chord at the LIVE clock — seconds ahead of the note in playback, the part's start in the drawing.
+  Any generator reading it must pin `_ambProgStepOverride = _ambProgStepAt(E, chgTime(at))` the way
+  `toneSetAt` does. ConFugued's key snap did not: the edge onsets of every change sounded snapped to the
+  neighbouring chord while the drawing showed them all alike (measured F·G·C → F·A·C). `withKeyTime` does
+  NOT cover this — it only times the keyMaster key schedule. Diagnose by diffing `notesFor` (drawing)
+  against what reaches `playNote` for the same layer key. That accidental motion was what made the default
+  ConFugued sound like more than a triad on a pulse; the promised "bent toward the next change" is now real
+  (`bendPcs`: last quarter-bar before a change, upper voices snap to the NEXT chord's tones, each to its own,
+  root held) — so the motion is deliberate and drawn.
+- **⏸ BREATH / ✦ FLOURISH WORK IN WINDOWS, not per onset** (`breathStage`, in the `notesFor` pipeline so the
+  drawing and the emitter get one answer). Every older die here — Sparse, Rest, Twist, Ratchet, Ghost — is a
+  per-ONSET coin flip, which is why silence arrived as random gaps; these decide per beat/bar/change/pass,
+  seeded from `ctx._seedBase`, so `part.vary` makes them per-pass for free. Rules worth keeping: a breath
+  CLIPS a tail that would cover it (`durMs` only — the voice's release still rings); a flourish never fires
+  inside one; `pair` makes the fill and the silence one gesture; and **the whole pass can never breathe** —
+  a dial that can make a layer vanish reads as a bug, so the window that least wanted to rest keeps playing.
+  Fields are per layer (`L.breath` / `L.flourish`), and ✺ Groove's block WRITES THROUGH to every v2 layer
+  rather than holding a second copy. Pruned only when ENTIRELY default, or setting Length before Amount is
+  thrown away between the two presses. ✺ Novelty drives them from its TIME axis with a row each — per-layer
+  writes taking the planned `cfg` from the closure and ignoring `write`'s argument, the shape ◇ Tone set
+  set — and they ride `_ambNovSnapshot` keyed BY LAYER ID, which is what gives ↶ Undo, the ✺ Novelty
+  switch and the master ✺ Variation bypass all three for free.
+- **`offsetParent` IS NULL INSIDE A POPOVER**, whose wrapper is `position: fixed` — so a control you can see
+  and press measures as hidden, and a reachability probe fails on working UI. Test the RECT plus
+  `document.elementFromPoint` at its centre (what `test/ui-lifecycle.js`'s `tap` does), never `offsetParent`.
 - **Deep or ✺ Live: trace the seed, not the label.** Anything drawn from `seedBase` is per TAKE (Deep)
   unless `part.vary` is on; per-pass means seeded on play time, chord occurrence, or the shared stream.
 
@@ -1326,6 +1356,13 @@
   of its own (else it is still whole-part content, and the NEXT scoped Done silences it), then
   `silenceOutside` silences whole-part content outside it — never overwriting a stretch that already has
   a rule, so a part builds bar by bar. A silent stretch opens on the part's material (`silentHere`).
+  **Only ✓ Done writes.** Switching Generate for DISCARDS the draft (a confirm when `V2.draftDirty`) — it
+  once committed, and a scoped commit TRIMS, so picking "Whole part" cut the part to a bar (reported).
+  Dirty = the scoped diff, or the whole draft's JSON against the layer. **"Whole part" means the whole
+  part:** ⚙ Deep opens it with `{wholePart:true}`, which sets the stretches' `ruleb` aside in the draft
+  (`draftDropped`) — drawn, previewed and written without them; ✕ Cancel keeps them. Change regions from
+  the chord band SNAP to the quarter bar (the band is one Rubato-bent pass — it cut "bar 1.98" slivers).
+  A card re-renders on a Material pick — re-query it.
   **A stretch's NEW TAKE lives in `ruleb[key].take`** (an offset on the part's take), not `takeb` — the
   emitter calls `notesFor` with no pin, so `takeb` is drawn but never PLAYED; `composite` reads `ov.take`
   in every path. A scoped draft's `part.take` is the region's take, and the diff writes the offset.

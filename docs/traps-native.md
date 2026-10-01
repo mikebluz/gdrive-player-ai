@@ -332,3 +332,24 @@
   can't find where"). Every simulator run ends with `simctl terminate` + `simctl shutdown`.
 - **`verify.sh` MUST STOP ON A FAILED BUILD.** It fell through to `install`, which put the PREVIOUS
   binary beside freshly synced JS; the stamp check cannot catch that because the stamp is in the JS.
+- **NOT EVERY MEDIA-SESSION "PAUSE" IS A PRESS.** WebKit routes its OWN pause requests to the page's
+  `setActionHandler('pause')`: as the native engine arms, ~70 ms after the keep-alive element
+  (re)starts, and once 56 s into visible playback — with nobody touching the phone, every run on
+  2026-09-30. Honoured, each set `userPaused`, paused the keep-alive and stood every rescue down,
+  and the first app switch then silenced the piece for good (20+ s, not recovered in the
+  foreground). Only the lock-screen ▶ cleared it — the app's own Play never did. Now: a pause while
+  VISIBLE with no page touch in 1.5 s is logged and ignored, and the transport's PLAY edge calls
+  `__bloopsReleaseHold()`. Repro: `AUTOPLAY=ownpause ./verify.sh 40 30` fires the handler before Play.
+- **`rms=` IN THE NATIVE LINE IS A RUNNING MEAN SINCE START** — it read 0.15 through 30 s of a
+  silent speaker and through an empty ring. Use `inPk=`/`outPk=` (live peaks, cleared only by the
+  flight-log read, `stats({take:true})`; any other `stats()` poller would zero them first).
+- **AN EMPTY RING COUNTS NO UNDERRUNS.** `verify.sh` printed PASS with `buf=0` on every line because
+  nothing played. It now fails any post-warm-up line with an empty ring or a silent `outPk`, and
+  refuses a capture older than 5 min (devicectl keeps the phone's mtime; only own/ownstall builds
+  write one, so any other build got a day-old recording scored).
+- **RHYTHM JANK IS MEASURED AT BOTH STAGES.** `late=`/`lateWorst=`/`leadMin=` count notes scheduled
+  after their own start time (the only way the engine itself makes jank — Web Audio is otherwise
+  sample-accurate); the own-capture IN-vs-OUT score covers the ring. On the user's 6-layer project
+  (2026-09-30): 0 late of ~2000, lead ≥ 1.27 s; ring added no gaps/jumps. The ring's growth from
+  the 350 ms prime to 850 ms is ~28 splices in the first ~30 s after Play (≈5% slow for ~7 s) —
+  slowing it to 2% cut the Play-then-lock reserve 118 → 14 ms, 1.2% ran dry. Not changed.

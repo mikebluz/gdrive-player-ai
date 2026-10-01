@@ -4342,6 +4342,20 @@
       // Humanize (Bloom Variance): per-onset timing jitter from _ambApplyAdsr.
       // Scheduled notes only (a live press has no startTime to shift).
       if (Number.isFinite(params._humanSec) && params._humanSec && Number.isFinite(startTime)) { startTime = Math.max(0, startTime + params._humanSec); }
+      // LATE-NOTE METER. Web Audio plays a scheduled note sample-accurately, so
+      // the ONLY way the engine itself makes rhythm jank is a note scheduled
+      // after its own start time — it then sounds "now", late by the deficit.
+      // A capture cannot show that (the music is deliberately off-grid), so it
+      // is counted here and read by the native flight line (`late=`).
+      if (Number.isFinite(startTime)) {
+        try {
+          const lead = startTime - Tone.context.rawContext.currentTime;
+          const m = window.__noteLead || (window.__noteLead = { n: 0, late: 0, worst: 0, minLead: 1e9 });
+          m.n++;
+          if (lead < 0) { m.late++; if (-lead > m.worst) m.worst = -lead; }
+          if (lead < m.minLead) m.minLead = lead;
+        } catch (e) {}
+      }
       // "User" Design patches: resolve to the patch's stored voice (base
       // oscillator/sample + amp env + filter + design blocks), letting any
       // incoming step-level overrides (bend/pan/volume/detune from the

@@ -652,6 +652,12 @@
                   if (on === null || on === tOn) return;
                   const was = tOn; tOn = on;
                   if (was === null) return;         // boot state, not an edge
+                  if (on) {
+                    try {
+                      if (window.__bloopsReleaseHold && window.__bloopsReleaseHold())
+                        log('in-app PLAY released a lock-screen hold — keep-alive re-armed');
+                    } catch (e) {}
+                  }
                   try {
                     // discardMs on STOP: audio already in flight (the tap's
                     // partial 100 ms chunk, the bridge queue, the MediaStream
@@ -677,7 +683,7 @@
             let lastUnder = 0;
             setInterval(() => {
               try {
-                const pr = plug.stats();
+                const pr = plug.stats({ take: true });   // this line owns the read-and-clear meters
                 if (pr && pr.then) pr.then((st) => {
                   if (!st) return;
                   const sr2 = bridge.sampleRate || 48000;
@@ -691,6 +697,20 @@
                     + ' rx=' + (st.received || 0) + ' play=' + (st.played || 0)
                     + ' rate=' + (st.rate != null ? Number(st.rate).toFixed(4) : '?')
                     + ' prod=' + (st.prod != null ? Number(st.prod).toFixed(3) : '?')
+                    // notes scheduled since the last line · how many were already
+                    // LATE when scheduled · the worst · the tightest lead (see
+                    // the meter in playNote). Read-and-clear per line.
+                    + (() => {
+                      const m = window.__noteLead; window.__noteLead = null;
+                      if (!m || !m.n) return ' notes=0';
+                      return ' notes=' + m.n + ' late=' + m.late + ' lateWorst=' + Math.round(m.worst * 1000) + 'ms'
+                        + ' leadMin=' + Math.round(m.minLead * 1000) + 'ms';
+                    })()
+                    // live levels this interval (rms= is a running mean since
+                    // start and read 0.15 through 30 s of a silent speaker)
+                    + ' inPk=' + (st.inPeak != null ? Number(st.inPeak).toFixed(3) : '?')
+                    + ' outPk=' + (st.outPeak != null ? Number(st.outPeak).toFixed(3) : '?')
+                    + ' writes=' + (st.writes != null ? st.writes : '?')
                     + ' spl=+' + (st.splicesIn || 0) + '/-' + (st.splicesOut || 0)
                     + ' cbw=' + Math.round(st.cbWorstUs || 0) + 'us cbover=' + (st.cbOver || 0)
                     + ' stops=' + (st.engineStops || 0) + (st.lastStopWhy ? '(' + st.lastStopWhy + ')' : '')
@@ -1272,6 +1292,25 @@
     // becomes an argument with a robot.
     let userPaused = false;
     let silencePaused = false;   // battery watchdog released the keep-alive
+    // AN IN-APP PLAY OVERRIDES A LOCK-SCREEN PAUSE. Only the lock-screen ▶
+    // cleared `userPaused`, so a hold outlived the app's own Play — and iOS
+    // sends a media-session PAUSE by itself at launch, as the native engine
+    // takes the session (measured 2026-09-30: 0.2 s before AUTOPLAY pressed
+    // Play, every run). The music then played with the keep-alive element
+    // paused and every rescue path standing down, so the first app switch
+    // interrupted the context for good: 20 s of silence, never recovered even
+    // back in the foreground. The transport's PLAY edge calls this.
+    try { document.addEventListener('pointerdown', () => { window.__lastTouchAt = performance.now(); }, { capture: true, passive: true }); } catch (e) {}
+    window.__bloopsReleaseHold = () => {
+      if (!userPaused && !silencePaused) return false;
+      userPaused = false; silencePaused = false;
+      try { window.__bloopsNativeHold = false; } catch (e) {}
+      try { if (bridge && bridge.state !== 'running') bridge.resume(); } catch (e) {}
+      try { if (window._bloopsMseHold) window._bloopsMseHold(false); } catch (e) {}
+      try { if (el.paused) kick(); } catch (e) {}
+      try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
+      return true;
+    };
     // fg/bg mode-switch hooks — assigned by the MSE-armed block; the
     // statechange handler is the EARLIEST lock signal and must reach them
     let fgOnInterrupt = null, fgOnRunning = null;
@@ -1563,7 +1602,26 @@ if (beatsOnRef.v) {
           artwork: [{ src: 'bloops-icon.png', sizes: '1024x1024', type: 'image/png' }],
         });
         navigator.mediaSession.playbackState = 'playing';
-        navigator.mediaSession.setActionHandler('pause', () => {
+        const onSessionPause = (opts) => {
+          // NOT EVERY "PAUSE" IS A PRESS. WebKit routes its OWN pause requests
+          // to this handler too, and they started arriving with nobody touching
+          // the phone (2026-09-30, every run): one as the native engine armed,
+          // one 70 ms after the keep-alive element restarted, one 56 s into
+          // visible playback. Honoured, each held the piece and stood the
+          // keep-alive down, and the next app switch silenced it for good. A
+          // real lock-screen press comes while HIDDEN; visible with no touch on
+          // the page is the system talking to itself. Cost: a headphone or
+          // Control Center pause while looking at the app is ignored — the
+          // app's own Stop still works. `opts.forced` = the soak harness.
+          let _vis = 'visible', _recent = false;
+          try { _vis = document.visibilityState; } catch (e) {}
+          try { _recent = !!window.__lastTouchAt && performance.now() - window.__lastTouchAt < 1500; } catch (e) {}
+          if (_vis === 'visible' && !_recent && !(opts && opts.forced)) {
+            log('session PAUSE while visible with no touch — not a user press, ignored');
+            try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
+            setTimeout(() => { try { if (el.paused && !userPaused && !silencePaused) kick(); } catch (e) {} }, 0);
+            return;
+          }
           userPaused = true;
           // STAND THE WEB KEEP-ALIVE WATCHDOG DOWN. `03-audio-bus-fx` polls
           // every 500 ms and resumes any context it finds suspended, and it
@@ -1585,8 +1643,21 @@ if (beatsOnRef.v) {
           try { if (bridge) bridge.suspend(); } catch (e) {}
           try { if (window._bloopsNativeFlush) window._bloopsNativeFlush(8, 200); } catch (e) {}
           try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
-          log('lock-screen pause — broadcast held, context suspended, piece holds its place');
-        });
+          // WHO SENT IT. iOS delivered this with nobody touching the phone in
+          // 3 of 3 runs on 2026-09-30 (once at launch, once 56 s into visible
+          // playback) and never on 09-28/29 — the source is not ours (the
+          // native side has no remote-command code, session is mixWithOthers).
+          // A real lock-screen press comes HIDDEN or from Control Center;
+          // `vis=visible touch=…` with no recent touch is the unprompted kind.
+          let _touchAgo = '?';
+          try { if (window.__lastTouchAt) _touchAgo = Math.round(performance.now() - window.__lastTouchAt) + 'ms'; } catch (e) {}
+          log('lock-screen pause — broadcast held, context suspended, piece holds its place'
+            + ' [vis=' + document.visibilityState + ' focus=' + (document.hasFocus ? document.hasFocus() : '?')
+            + ' touch=' + _touchAgo + ' ago]');
+        };
+        navigator.mediaSession.setActionHandler('pause', onSessionPause);
+        // the soak harness (`AUTOPLAY=ownpause`) fires it exactly as iOS does
+        if (window.__BLOOPS_SOAK) window.__bloopsSessionPause = onSessionPause;
         navigator.mediaSession.setActionHandler('play', () => {
           userPaused = false;
           try { window.__bloopsNativeHold = false; } catch (e) {}

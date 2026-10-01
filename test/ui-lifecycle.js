@@ -194,8 +194,17 @@ const ok = (name, cond, detail) => {
     if (!t) return 'no "Layer" entry among: ' + bs.map((x) => x.textContent.trim()).join(' | ');
     t.click(); return null;
   });
+  await zz(450);
+  // …"Layer" now asks WHAT KIND (2026-10-01); the rest of this file drives the
+  // blank card, so take "Empty". The styles have their own probe.
+  const kindPicked = doorPicked ? null : await page.evaluate(() => {
+    const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
+    const t = bs.find((x) => /^Empty/.test(x.textContent.trim()));
+    if (!t) return 'no "Empty" in the kind chooser: ' + bs.map((x) => x.textContent.trim()).join(' | ');
+    t.click(); return null;
+  });
   await zz(600);
-  ok('+ Add layer → "Layer" creates a v2 card', !doorOpened && !doorPicked, doorOpened || doorPicked);
+  ok('+ Add layer → "Layer" → "Empty" creates a v2 card', !doorOpened && !doorPicked && !kindPicked, doorOpened || doorPicked || kindPicked);
   await page.evaluate(() => { _ambRebuildMaster(); });   // 3. THE STEP ad-hoc probes skip
   await zz(500);
 

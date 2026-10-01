@@ -772,12 +772,23 @@
             // flight log does not capture. An underrun count is the difference
             // between "the ring starved" and every other theory about a lock
             // glitch, so it belongs in the log that survives to the Mac.
-            let lastUnder = 0;
+            let lastUnder = 0, lastRx = -1, lastIdleLog = 0;
             setInterval(() => {
               try {
                 const pr = plug.stats({ take: true });   // this line owns the read-and-clear meters
                 if (pr && pr.then) pr.then((st) => {
                   if (!st) return;
+                  // IDLE LINES MUST NOT EVICT THE SESSION. The log keeps 600
+                  // lines and this one is every ~6 s, so a quarter hour of an
+                  // idle backgrounded app pushed out the whole playing session
+                  // the user had just complained about (2026-10-01: 898 s of
+                  // `buf=0` and nothing else). Empty ring + nothing received
+                  // since the last line = one line a minute.
+                  const rxNow = Number(st.received) || 0;
+                  const idle = !st.primed && !(st.buffered > 0) && rxNow === lastRx;
+                  lastRx = rxNow;
+                  if (idle && Date.now() - lastIdleLog < 60000) return;
+                  if (idle) lastIdleLog = Date.now();
                   const sr2 = bridge.sampleRate || 48000;
                   const d = (st.underrun || 0) - lastUnder;
                   const gapNow = window.__tapGapMax || 0; window.__tapGapMax = 0;

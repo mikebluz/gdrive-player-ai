@@ -26800,4 +26800,43 @@
     V2.render(E);
     return L;
   };
+  // ── ＋ LAYER IN A STYLE (2026-10-01) ────────────────────────────────────
+  // user: "when creating a new layer, add an initial options screen where the
+  // user can choose beat, melody, chords, bass, ambience, drone, and have them
+  // be macros for bootstrapping a new v2 layer in that style with generated
+  // content". Each style is the EXISTING material door plus an instrument —
+  // the same builders the ⚙ Deep material row uses, so a styled layer is
+  // exactly what a person would have made by hand, and every control on its
+  // card already knows it. Built on `addDefault`, so per-part binding and the
+  // empty default are untouched; "Empty" still means `addDefault` alone.
+  const STYLE_RECIPES = {
+    beat:     { name: 'Beat',     make: (E, L) => V2.makeBeat(E, L) },
+    melody:   { name: 'Melody',   tone: 'user:f-mallfountain', register: 5, make: (E, L) => V2.makeMelody(E, L) },
+    chords:   { name: 'Chords',   tone: 'user:f-velvet', register: 4, make: (E, L) => V2.makeMixed(E, L) },
+    bass:     { name: 'Bass',     tone: 'user:f-undertow', make: (E, L) => V2.makeSimple(E, L, 'bass') },
+    ambience: { name: 'Ambience', tone: 'user:f-glasscath', level: 45, make: (E, L) => V2.makeSimple(E, L, 'scatter') },
+    drone:    { name: 'Drone',    tone: 'user:f-meadow', register: 3, make: (E, L) => V2.makeSustain(E, L, true) },
+  };
+  V2.styles = Object.keys(STYLE_RECIPES).map((k) => ({ key: k, name: STYLE_RECIPES[k].name }));
+  V2.addStyled = function (E, style) {
+    const R = STYLE_RECIPES[style];
+    if (!R) return V2.addDefault(E);
+    const L0 = V2.addDefault(E); if (!L0) return null;
+    // RE-RESOLVE — the normalizer replaces layer objects on every getCfg
+    const cfg = E.getCfg();
+    const L = (cfg.layers || []).find((x) => x && x.id === L0.id) || L0;
+    const taken = new Set((cfg.layers || []).filter((x) => x !== L).map((x) => String(x.name || '')));
+    let nm = R.name, k = 2;
+    while (taken.has(nm)) nm = R.name + ' ' + (k++);
+    L.name = nm;
+    L.instrument = L.instrument || {};
+    if (R.tone) L.instrument.tone = R.tone;
+    if (R.register) L.instrument.register = R.register;
+    if (R.level) L.instrument.level = R.level;
+    try { R.make(E, L); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    V2.render(E);
+    return (E.getCfg().layers || []).find((x) => x && x.id === L.id) || L;
+  };
 })();

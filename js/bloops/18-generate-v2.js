@@ -220,6 +220,24 @@
     r.kind = 'drawn'; r.steps = spb * bars; r.cells = cells; delete r.fig;
   }
 
+  // GRID = THE SIZE OF ONE STEP. The pattern keeps its step positions and the
+  // steps get shorter or longer: a finer grid repeats it to fill the bar, a
+  // coarser one cuts it short. (Re-spreading the hits evenly on the new grid
+  // put them back on the same beats, so the change was silent.)
+  function regrid(n) {
+    let msg = '';
+    edit((L) => {
+      const { ns, cyc } = notesNow(L), cur = barHits(L, ns, cyc), lit = new Set();
+      for (let j = 0; j < n; j++) if (cur.lit.has(j % cur.spb)) lit.add(j);
+      if (!lit.size) lit.add(0);
+      writeBar(L, n, lit);
+      msg = n === cur.spb ? '' : (n > cur.spb
+        ? 'Shorter steps: the pattern plays faster and repeats to fill the bar.'
+        : 'Longer steps: the pattern plays slower; steps past ' + n + ' are cut.');
+    }, '');
+    if (msg) { G.note = msg; paint(); }
+  }
+
   const css = `
   .g2-ov{position:fixed;inset:0;z-index:10350;background:rgba(5,5,12,.6);display:flex;align-items:flex-end;justify-content:center}
   .g2{width:100%;max-width:520px;max-height:94vh;display:flex;flex-direction:column;background:#12121f;color:#ece8f8;border:1px solid #2d2d4a;border-radius:20px 20px 0 0;overflow:hidden;font-size:15px}
@@ -482,11 +500,7 @@
     if (a === 'fig') { const id = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {}); r.kind = 'fig'; r.fig = id; }, ''); return; }
     if (a === 'grid') {
       const n = +b.getAttribute('data-n');
-      edit((L) => {
-        const { ns, cyc } = notesNow(L), cur = barHits(L, ns, cyc), lit = new Set();
-        cur.lit.forEach((i) => lit.add(clamp(Math.round(i * n / cur.spb), 0, n - 1)));
-        writeBar(L, n, lit);
-      }, ''); return;
+      regrid(n); return;
     }
     if (a === 'step' || a === 'hits') {
       edit((L) => {
@@ -543,11 +557,7 @@
     if (a === 'ctl') { const p = el.getAttribute('data-p'), val = +el.value; edit((L) => setPath(L, p, val), ''); }
     if (a === 'gridn') {
       const n = clamp(parseInt(el.value, 10) || 16, 1, 64);
-      edit((L) => {
-        const { ns, cyc } = notesNow(L), cur = barHits(L, ns, cyc), lit = new Set();
-        cur.lit.forEach((i) => lit.add(clamp(Math.round(i * n / cur.spb), 0, n - 1)));
-        writeBar(L, n, lit);
-      }, '');
+      regrid(n);
     }
   }
 

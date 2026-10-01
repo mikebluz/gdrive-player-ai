@@ -238,7 +238,7 @@
   .g2-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
   .g2-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .g2-chip{min-width:0;height:62px;padding:0 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:14px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:12px;font-weight:600}
-  .g2-roll{position:relative;height:150px;border-radius:14px;background:#0c0c18;border:1px solid #262640;overflow:hidden}
+  .g2-roll{position:relative;height:150px;flex-shrink:0;border-radius:14px;background:#0c0c18;border:1px solid #262640;overflow:hidden}
   .g2-mv{min-height:46px;padding:6px 10px;display:flex;align-items:center;gap:8px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600;text-align:left}
   .g2-mvcard{grid-column:1/-1;border-radius:14px;border:2px solid #a78bfa;background:#211a40;overflow:hidden}
   .g2-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px;border-radius:14px;background:#15152a;border:1px solid #262640}
@@ -281,21 +281,53 @@
       if (G.fresh && !sty) h += '<button type="button" class="g2-btn" data-a="keepempty" style="align-self:flex-start;min-height:40px;color:#c9c5e3">Keep it empty — write it yourself</button>';
     }
     if (G.note) h += '<div class="g2-hint" style="color:#c9c5e3">' + esc(G.note) + '</div>';
-    // 2. THE RESULT — the layer's real notes, tap a bar to re-roll it
-    const mids = ns.map((n) => midiOf(n.freq));
-    const lo = mids.length ? Math.min(...mids) - 1 : 48, hi = mids.length ? Math.max(...mids) + 1 : 72;
+    // 2. THE RESULT — the layer's real notes on a piano axis, tap a bar to re-roll it.
+    // A key column on the left (one row per semitone, black keys drawn, every C named)
+    // and a name on every note, so what each event IS can be read at a glance.
+    const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const isBlack = (m) => [1, 3, 6, 8, 10].indexOf(((m % 12) + 12) % 12) >= 0;
+    const nameOf = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+    const mids = ns.map((n) => Math.round(midiOf(n.freq)));
+    let lo = mids.length ? Math.min(...mids) - 1 : 47, hi = mids.length ? Math.max(...mids) + 1 : 60;
+    while (hi - lo < 12) { lo--; if (hi - lo < 12) hi++; }
+    const rows = hi - lo + 1;
+    const rowH = clamp(Math.floor(240 / rows), 10, 14);   // ≥10px: a 9px name fits its own row
+    const KEYW = 34, TOP = 18, rollH = TOP + rows * rowH + 4;
     const col = sty ? sty.col : '#a78bfa';
-    h += '<div class="g2-roll">';
-    for (let b = 0; b < nb; b++) {
-      h += '<button type="button" data-a="bar" data-b="' + b + '" aria-label="Re-roll bar ' + (b + 1) + '" style="position:absolute;top:0;bottom:0;left:' + (b / bars * 100) + '%;width:' + (100 / bars) + '%;border:0;border-right:1px solid #2a2a46;background:' + (G.flash === b ? 'rgba(167,139,250,.18)' : 'transparent') + ';padding:0">'
-        + '<span style="position:absolute;top:4px;left:6px;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span></button>';
+    const yOf = (m) => TOP + (hi - m) * rowH;
+    h += '<div class="g2-roll" style="height:' + rollH + 'px">';
+    // the key column + row shading
+    for (let m = hi; m >= lo; m--) {
+      const y = yOf(m), blk = isBlack(m);
+      h += '<div style="position:absolute;left:0;width:' + KEYW + 'px;top:' + y + 'px;height:' + rowH + 'px;box-sizing:border-box;border-bottom:1px solid #1f1f33;background:' + (blk ? '#0b0b12' : '#d9d6ea') + '">'
+        + ((m % 12 === 0) ? '<span style="position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:700;color:#3b3550">' + nameOf(m) + '</span>' : '') + '</div>';
+      if (blk) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + y + 'px;height:' + rowH + 'px;background:rgba(255,255,255,.025);pointer-events:none"></div>';
+      if (m % 12 === 0) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + (y + rowH - 1) + 'px;height:1px;background:#2a2a46;pointer-events:none"></div>';
     }
-    ns.forEach((n) => {
-      const x = n.at / cyc * 100, w = Math.max(0.8, (n.durMs / 1000) / cyc * 100);
-      const y = 16 + (1 - (midiOf(n.freq) - lo) / Math.max(1, hi - lo)) * 118;
-      h += '<div style="position:absolute;pointer-events:none;left:' + x.toFixed(2) + '%;width:calc(' + w.toFixed(2) + '% - 1px);top:' + y.toFixed(1) + 'px;height:7px;border-radius:3px;background:' + col + '"></div>';
+    // the bars you tap (offset past the keys)
+    for (let b = 0; b < nb; b++) {
+      h += '<button type="button" data-a="bar" data-b="' + b + '" aria-label="Re-roll bar ' + (b + 1) + '" style="position:absolute;top:0;bottom:0;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + (b / bars).toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + (1 / bars).toFixed(4) + ');border:0;border-left:1px solid #2a2a46;background:' + (G.flash === b ? 'rgba(167,139,250,.18)' : 'transparent') + ';padding:0">'
+        + '<span style="position:absolute;top:3px;left:6px;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span></button>';
+    }
+    // LABELS ONLY WHERE THEY READ: a dense part labelled every note and piled into a
+    // smear. A note is named when its row has room since its last name (~26px), and a
+    // run of the same note is named once; the keys still read every row.
+    const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
+    const lastX = {}, lastM = { v: null };
+    const sorted = ns.slice().sort((p1, p2) => p1.at - p2.at);
+    const labelled = new Set();
+    sorted.forEach((n) => {
+      const m = Math.round(midiOf(n.freq)), xp = n.at / cyc * rollPx;
+      if ((lastX[m] == null || xp - lastX[m] >= 26) && !(lastM.v === m && lastX[m] != null && xp - lastX[m] < 60)) { labelled.add(n); lastX[m] = xp; }
+      lastM.v = m;
     });
-    if (!ns.length) h += '<div class="g2-hint" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">' + (live ? 'Silent — these rules make no notes.' : 'Empty — pick a style to generate.') + '</div>';
+    ns.forEach((n) => {
+      const m = Math.round(midiOf(n.freq));
+      const x = n.at / cyc, w = Math.max(0.006, (n.durMs / 1000) / cyc);
+      h += '<div style="position:absolute;pointer-events:none;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + col + '">'
+        + (labelled.has(n) ? '<span style="position:absolute;z-index:3;left:calc(100% + 2px);top:50%;transform:translateY(-50%);font-size:9px;line-height:10px;font-weight:700;color:#ece8f8;white-space:nowrap;text-shadow:0 0 3px #0c0c18,0 0 3px #0c0c18">' + nameOf(m) + '</span>' : '') + '</div>';
+    });
+    if (!ns.length) h += '<div class="g2-hint" style="position:absolute;inset:0;left:' + KEYW + 'px;display:flex;align-items:center;justify-content:center">' + (live ? 'Silent — these rules make no notes.' : 'Empty — pick a style to generate.') + '</div>';
     h += '</div>';
     h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7"><span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (live ? ' · tap a bar to re-roll it' : '') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';

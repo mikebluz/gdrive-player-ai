@@ -240,6 +240,56 @@
     if (msg) { G.note = msg; paint(); }
   }
 
+  // RE-ROLL ONE BAR: bump its take pin until the bar comes out DIFFERENT and
+  // NOT EMPTY. A sparse style (Line, Ambience) can roll a bar of all rests,
+  // which reads as "it deleted my bar", so an empty result is never accepted
+  // while another take could give notes.
+  function rerollBar(bi) {
+    const L = layer(); if (!L) return;
+    const sig = (ns) => ns.map((n) => Math.round(n.at * 1000) + ':' + Math.round(midiOf(n.freq))).join(',');
+    const inBar = (L2, ns, cyc) => { const bs = cyc / barsOf(L2); return ns.filter((n) => n.at >= bi * bs - 1e-6 && n.at < (bi + 1) * bs - 1e-6).length; };
+    const before = sig(notesNow(L).ns);
+    edit((L2) => {
+      const p = L2.part, key = V2.regBarKey(bi);
+      p.takeb = Object.assign({}, p.takeb || {});
+      let cur = Number.isFinite(p.takeb[key]) ? p.takeb[key] : ((V2.takeOf ? V2.takeOf(L2) : (p.take | 0)) | 0);
+      for (let tries = 0; tries < 24; tries++) {
+        cur = (cur + 1) % 1000000; p.takeb[key] = cur;
+        const { ns, cyc } = notesNow(L2);
+        if (sig(ns) !== before && inBar(L2, ns, cyc) > 0) break;
+      }
+    }, '');
+    const L1 = layer(), now = notesNow(L1), after = sig(now.ns);
+    if (after === before && !inBar(L1, now.ns, now.cyc)) {
+      // SILENCED BY A SETTING, NOT BY THE TAKE: ⏸ Breath / Rests rest this bar
+      // whatever the take, so no re-roll can fill it — say so and change nothing.
+      G.hist.pop();
+      G.rollNote = 'Bar ' + (bi + 1) + ' is resting because of ⏸ Breath (Variation) or Rests (Rhythm), so a re-roll can’t fill it. Turn those down to hear it.';
+    } else if (after === before) {
+      // NOTHING RANDOM HERE: the same rules give the same bar. Move its hits to new
+      // steps instead (a seeded rotation of this bar), and say so — never a silent no-op.
+      G.hist.pop();   // the no-op pin is not worth an undo step
+      edit((L3) => {
+        // the PATTERN, not the notes heard: with rests/breath/flourish on, the heard
+        // notes have holes, and drawing those in would make the silence permanent
+        const bare = JSON.parse(JSON.stringify(L3)); delete bare.restProb; delete bare.breath; delete bare.flourish; delete bare.ghosts;
+        const { ns, cyc } = notesNow(bare), spb = spbOf(L3), bars = Math.max(1, Math.round(barsOf(L3))), barSec = cyc / barsOf(L3);
+        const cells = [];
+        for (let k = 0; k < bars; k++) for (let i = 0; i < spb; i++) cells.push(0);
+        ns.forEach((n) => { cells[clamp(Math.round(n.at / barSec * spb), 0, cells.length - 1)] = 1; });
+        const sl = cells.slice(bi * spb, (bi + 1) * spb), rot = 1 + ((G.hist.length * 5 + bi * 3) % Math.max(1, spb - 1));
+        for (let i = 0; i < spb; i++) cells[bi * spb + ((i + rot) % spb)] = sl[i];
+        const r = L3.part.rhythm = Object.assign({}, L3.part.rhythm || {});
+        r.kind = 'drawn'; r.steps = spb * bars; r.cells = cells; delete r.fig;
+      }, '');
+      G.rollNote = 'Nothing here is random yet, so bar ' + (bi + 1) + ' kept its notes and moved them to new steps. Turn up a 🎲 control (Rhythm or Variation tab) to get new notes.';
+    } else {
+      G.rollNote = 'Bar ' + (bi + 1) + ' re-rolled.';
+    }
+    G.flash = bi; paint();
+    setTimeout(() => { if (G && G.flash === bi) { G.flash = -1; paint(); } }, 450);
+  }
+
   const css = `
   .g2-ov{position:fixed;inset:0;z-index:10350;background:rgba(5,5,12,.6);display:flex;align-items:flex-end;justify-content:center}
   .g2{width:100%;max-width:520px;max-height:94vh;display:flex;flex-direction:column;background:#12121f;color:#ece8f8;border:1px solid #2d2d4a;border-radius:20px 20px 0 0;overflow:hidden;font-size:15px}
@@ -522,36 +572,11 @@
     if (a === 'bar') {
       const L = layer(); if (!L || !(L.part && L.part.kind === 'live')) return;
       const bi = +b.getAttribute('data-b');
-      const before = notesNow(L).ns.map((n) => Math.round(n.at * 1000) + ':' + Math.round(midiOf(n.freq))).join(',');
-      edit((L2) => {
-        const p = L2.part, key = V2.regBarKey(bi);
-        p.takeb = Object.assign({}, p.takeb || {});
-        const cur = Number.isFinite(p.takeb[key]) ? p.takeb[key] : ((V2.takeOf ? V2.takeOf(L2) : (p.take | 0)) | 0);
-        p.takeb[key] = (cur + 1) % 1000000;
-      }, '');
-      const after = notesNow(layer()).ns.map((n) => Math.round(n.at * 1000) + ':' + Math.round(midiOf(n.freq))).join(',');
-      if (after === before) {
-        // NOTHING RANDOM HERE: the same rules give the same bar. Move its hits to new
-        // steps instead (a seeded rotation of this bar), and say so — never a silent no-op.
-        G.hist.pop();   // the no-op pin is not worth an undo step
-        edit((L3) => {
-          const { ns, cyc } = notesNow(L3), spb = spbOf(L3), bars = Math.max(1, Math.round(barsOf(L3))), barSec = cyc / barsOf(L3);
-          const cells = [];
-          for (let k = 0; k < bars; k++) for (let i = 0; i < spb; i++) cells.push(0);
-          ns.forEach((n) => { cells[clamp(Math.round(n.at / barSec * spb), 0, cells.length - 1)] = 1; });
-          const sl = cells.slice(bi * spb, (bi + 1) * spb), rot = 1 + ((G.hist.length * 5 + bi * 3) % Math.max(1, spb - 1));
-          for (let i = 0; i < spb; i++) cells[bi * spb + ((i + rot) % spb)] = sl[i];
-          const r = L3.part.rhythm = Object.assign({}, L3.part.rhythm || {});
-          r.kind = 'drawn'; r.steps = spb * bars; r.cells = cells; delete r.fig;
-        }, '');
-        G.rollNote = 'Nothing here is random yet, so bar ' + (bi + 1) + ' kept its notes and moved them to new steps. Turn up a 🎲 control (Rhythm or Variation tab) to get new notes.';
-      } else {
-        G.rollNote = 'Bar ' + (bi + 1) + ' re-rolled.';
-      }
-      G.flash = bi; paint();
-      setTimeout(() => { if (G && G.flash === bi) { G.flash = -1; paint(); } }, 450);
-    }
-  }
+      // ASK FIRST — a stray tap on the picture would otherwise throw the bar away
+      Promise.resolve(window.uiConfirm ? window.uiConfirm('Re-roll bar ' + (bi + 1) + '? Its notes are replaced with a new take — ↶ Undo brings them back.') : true)
+        .then((ok) => { if (ok && G && layer()) rerollBar(bi); }, () => {});
+      return;
+    }  }
   function onInput(ev) {
     const el = ev.target; if (!el || el.getAttribute('data-a') !== 'ctl') return;
     const v = el.closest('.g2-row') && el.closest('.g2-row').querySelector('.g2-val');

@@ -60301,14 +60301,14 @@
             // chrome — Empty (today's blank layer, write it yourself) or one of
             // six styles, each built by the material door it names, with
             // content already generated. `V2.addStyled` / `V2.styles`.
+            // ＋ LAYER OPENS GENERATE V2 ON THE NEW LAYER (2026-10-01): the old "What kind of
+            // layer?" sheet repeated Generate V2's own style grid. The layer is made empty
+            // (`addDefault`, so per-part binding is unchanged), then the sheet opens on its
+            // style grid; "Keep it empty" is the old Empty, ✕ removes the layer again.
             if (type === 'v2') { actions.push({ label: name, fn: () => setTimeout(() => {
-              const st = (window._v2 && window._v2.styles) || [];
-              const ICON = { beat: '♦', melody: '♪', chords: '♫', bass: '𝄢', ambience: '☁', drone: '▬' };
-              _ambActionsPopover('What kind of layer?', [
-                { label: 'Empty — write it yourself', fn: () => { try { window._v2.addDefault(E); } catch (e) {} } },
-                'hr',
-                ...st.map((x) => ({ label: (ICON[x.key] || '') + ' ' + x.name, fn: () => { try { window._v2.addStyled(E, x.key); } catch (e) {} } })),
-              ]);
+              let L0 = null;
+              try { L0 = window._v2.addDefault(E); } catch (e) {}
+              if (L0 && typeof window._genV2Open === 'function') { try { window._genV2Open(E, L0, { fresh: true }); } catch (e) {} }
             }, 0) }); return; }
             // IMPORT — pick an existing v1 layer and read it as v2 pieces. A
             // second popover rather than a submenu, because the layer list is

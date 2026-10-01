@@ -32,6 +32,21 @@
     { k: 'beat', name: 'Beat', col: '#f87171', icon: 'M5 18V9M10 18V13M15 18V6M20 18V11', make: (E, L) => V2.makeBeat(E, L) },
     { k: 'ambience', name: 'Ambience', col: '#d6b98c', icon: 'M4 16c2-2 4-2 6 0s4 2 6 0 3-2 4-1', make: (E, L) => V2.makeSimple(E, L, 'scatter') },
   ];
+  // A NEW LAYER (＋ Layer) is dressed by its first style the way the old "What kind of
+  // layer?" sheet did (`V2.addStyled`'s recipes): its name and an instrument to match.
+  const DRESS = { line: { tone: 'user:f-mallfountain', register: 5 }, arp: { tone: 'user:f-mallfountain', register: 5 },
+    chords: { tone: 'user:f-velvet', register: 4 }, bass: { tone: 'user:f-undertow' }, ambience: { tone: 'user:f-glasscath', level: 45 },
+    drone: { tone: 'user:f-meadow', register: 3 }, pulse: {}, beat: {} };
+  function dress(E, L, s) {
+    const taken = new Set((E.getCfg().layers || []).filter((x) => x && x.id !== L.id).map((x) => String(x.name || '')));
+    let nm = s.name, k = 2; while (taken.has(nm)) nm = s.name + ' ' + (k++);
+    L.name = nm;
+    const d = DRESS[s.k] || {};
+    L.instrument = L.instrument || {};
+    if (d.tone) L.instrument.tone = d.tone;
+    if (d.register) L.instrument.register = d.register;
+    if (d.level) L.instrument.level = d.level;
+  }
   // which style a layer IS, read back from its rules (best effort — a hand-tuned layer
   // may match none, and then no chip is lit)
   // `part.mat` is the material the layer was BUILT from — the same field the card's own
@@ -248,9 +263,9 @@
     const bars = barsOf(L), nb = Math.max(1, Math.ceil(bars));
     let h = '';
     // header
-    h += '<div class="g2-head"><div style="flex-grow:1;min-width:0"><div style="font-size:20px;font-weight:700">Generate <span style="font-size:12px;font-weight:700;color:#5eead4;vertical-align:middle">V2 beta</span></div>'
+    h += '<div class="g2-head"><div style="flex-grow:1;min-width:0"><div style="font-size:20px;font-weight:700">' + (G.fresh ? 'New layer' : 'Generate') + ' <span style="font-size:12px;font-weight:700;color:#5eead4;vertical-align:middle">V2 beta</span></div>'
       + '<div class="g2-hint">for <b style="color:#ece8f8">' + esc(L.name || ('Layer ' + L.id)) + '</b></div></div>'
-      + '<button type="button" class="g2-btn" data-a="cancel" aria-label="Cancel and close" style="width:44px;padding:0">✕</button></div>';
+      + '<button type="button" class="g2-btn" data-a="cancel" aria-label="' + (G.fresh ? 'Remove this new layer and close' : 'Cancel and close') + '" style="width:44px;padding:0">✕</button></div>';
     h += '<div class="g2-body">';
     // 1. STYLE (collapsed once chosen)
     if (!G.styleOpen && sty) {
@@ -263,6 +278,7 @@
         + '<div class="g2-grid4">' + STYLES.map((s) => '<button type="button" class="g2-chip" data-a="style" data-k="' + s.k + '"'
           + (s.k === sk ? ' style="border:2px solid ' + s.col + ';background:' + s.col + '26;color:#fff"' : '') + '>' + ico(s.icon) + '<span>' + esc(s.name) + '</span></button>').join('') + '</div>';
       if (!sty) h += '<div class="g2-hint">Pick a style — it builds this layer’s rules with generated content.</div>';
+      if (G.fresh && !sty) h += '<button type="button" class="g2-btn" data-a="keepempty" style="align-self:flex-start;min-height:40px;color:#c9c5e3">Keep it empty — write it yourself</button>';
     }
     if (G.note) h += '<div class="g2-hint" style="color:#c9c5e3">' + esc(G.note) + '</div>';
     // 2. THE RESULT — the layer's real notes, tap a bar to re-roll it
@@ -396,6 +412,7 @@
     const b = ev.target.closest && ev.target.closest('[data-a]'); if (!b || !G) return;
     const a = b.getAttribute('data-a'), E = G.E;
     if (a === 'cancel') { close(true); return; }
+    if (a === 'keepempty') { close(false); return; }
     if (a === 'done') { close(false); return; }
     if (a === 'styleopen') { G.styleOpen = true; paint(); return; }
     if (a === 'styleclose') { G.styleOpen = false; paint(); return; }
@@ -405,7 +422,9 @@
     if (a === 'style') {
       const s = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!s) return;
       const was = styleOf(layer());
-      edit((L) => { s.make(E, L); }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
+      const dressIt = G.fresh && !G.dressed;
+      edit((L) => { if (dressIt) dress(E, L, s); s.make(E, L); }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
+      if (dressIt) G.dressed = true;
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }
     if (a === 'move') { const k = b.getAttribute('data-k'); edit((L) => applyMove(L, k), ''); return; }
@@ -486,7 +505,15 @@
 
   function close(cancel) {
     if (!G) return;
-    if (cancel && G.snap) { restore(G.snap); }
+    if (cancel && G.fresh) {
+      // ✕ on a layer made a moment ago by ＋ Layer = "never mind": remove it, the same way
+      // the card's ✕ Remove layer does (by id — the captured object may be an orphan)
+      const E = G.E, id = G.id;
+      try { const c2 = E.getCfg(); c2.layers = (c2.layers || []).filter((x) => !(x && x.id === id)); } catch (e) {}
+      try { if (E._v2Phase) delete E._v2Phase['v2:' + id]; } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { V2.render(E); } catch (e) {}
+    } else if (cancel && G.snap) { restore(G.snap); }
     try { G.root.remove(); } catch (e) {}
     G = null;
   }
@@ -537,7 +564,7 @@
     }).observe(document.body, { childList: true, subtree: true });
   } catch (e) {}
 
-  window._genV2Open = function (E, L) {
+  window._genV2Open = function (E, L, opts) {
     if (!E || !L) return false;
     if (G) close(false);
     if (!document.getElementById('g2-css')) {
@@ -551,7 +578,7 @@
     root.style.setProperty('display', 'flex', 'important');
     root.innerHTML = '<div class="g2" role="dialog" aria-modal="true" aria-label="Generate V2"></div>';
     document.body.appendChild(root);
-    G = { E, id: L.id, snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'basics', note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
+    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'basics', note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);

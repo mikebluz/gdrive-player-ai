@@ -42,29 +42,34 @@ await zz(600);
 
 // RegExp cannot cross into the page; use a source string and rebuild there
 const choose = (styleWord) => page.evaluate(async (styleWord) => {
+  // ＋ Add layer → Layer opens Generate V2 on the new layer (2026-10-01); a style chip
+  // builds it, Done keeps it. "Keep it empty" stands in for the old Empty.
   const b = document.getElementById('mix-bloom-add-layer'); if (!b) return { err: 'no + Add layer' };
   b.scrollIntoView({ block: 'center' }); b.click();
   await new Promise((r) => setTimeout(r, 450));
-  let bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
-  const lay = bs.find((x) => x.textContent.trim() === 'Layer');
+  const lay = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((x) => x.textContent.trim() === 'Layer');
   if (!lay) return { err: 'no "Layer" entry' };
+  const before = new Set((_masterEng.getCfg().layers || []).map((x) => x.id));
   lay.click();
   await new Promise((r) => setTimeout(r, 450));
-  bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
-  const menu = bs.map((x) => x.textContent.trim());
-  const t = bs.find((x) => new RegExp(styleWord, 'i').test(x.textContent.trim()));
-  if (!t) return { err: 'no ' + styleWord + ' in ' + menu.join(' | ') };
-  const before = new Set((_masterEng.getCfg().layers || []).map((x) => x.id));
-  t.click();
-  await new Promise((r) => setTimeout(r, 700));
+  const g = document.querySelector('.g2'); if (!g) return { err: 'Generate V2 did not open' };
+  const gr = g.getBoundingClientRect();
+  const menu = [...g.querySelectorAll('[data-a="style"]')].map((x) => x.textContent.trim()).concat(g.querySelector('[data-a="keepempty"]') ? ['Keep it empty'] : []);
+  const pick = styleWord === '^Empty' ? g.querySelector('[data-a="keepempty"]')
+    : [...g.querySelectorAll('[data-a="style"]')].find((x) => new RegExp(styleWord, 'i').test(x.textContent.trim()));
+  if (!pick) return { err: 'no ' + styleWord + ' in ' + menu.join(' | ') };
+  pick.click();
+  await new Promise((r) => setTimeout(r, 300));
+  const done = document.querySelector('.g2 [data-a="done"]'); if (done) done.click();
+  await new Promise((r) => setTimeout(r, 400));
   const L = (_masterEng.getCfg().layers || []).find((x) => !before.has(x.id));
   if (!L) return { err: 'no layer created', menu };
-  return { menu, id: L.id, name: L.name, kind: L.part && L.part.kind, made: L.part && L.part.made,
+  return { menu, sheet: Math.round(gr.width) + 'x' + Math.round(gr.height), id: L.id, name: L.name, kind: L.part && L.part.kind, made: L.part && L.part.made,
     tone: L.instrument && L.instrument.tone, notes: (L.part && L.part.notes || []).length };
 }, styleWord);
 
 console.log('\n＋ Layer in a style');
-const STYLES = ['Beat', 'Melody', 'Chords', 'Bass', 'Ambience', 'Drone'];
+const STYLES = ['Beat', 'Line', 'Chords', 'Bass', 'Ambience', 'Drone'];
 const made = {};
 for (const s of STYLES) {
   const r = await choose(s);
@@ -74,7 +79,7 @@ for (const s of STYLES) {
     JSON.stringify({ name: r.name, kind: r.kind, tone: r.tone }));
 }
 const menu = (made.Beat && made.Beat.menu) || [];
-ok('the chooser offers Empty first, then all six', /^Empty/.test(menu[0] || '') && STYLES.every((s) => menu.some((m) => m.includes(s))), menu.join(' | '));
+ok('＋ Layer opens Generate V2 with every style and Keep it empty', STYLES.every((s) => menu.some((m) => m.includes(s))) && menu.includes('Keep it empty'), menu.join(' | '));
 
 // they SOUND
 const sound = await page.evaluate(async (ids) => {

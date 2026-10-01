@@ -197,14 +197,14 @@ const ok = (name, cond, detail) => {
   await zz(450);
   // …"Layer" now asks WHAT KIND (2026-10-01); the rest of this file drives the
   // blank card, so take "Empty". The styles have their own probe.
+  // …"Layer" now opens Generate V2 on the new layer; "Keep it empty" is the old Empty.
   const kindPicked = doorPicked ? null : await page.evaluate(() => {
-    const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
-    const t = bs.find((x) => /^Empty/.test(x.textContent.trim()));
-    if (!t) return 'no "Empty" in the kind chooser: ' + bs.map((x) => x.textContent.trim()).join(' | ');
+    const t = document.querySelector('.g2 [data-a="keepempty"]');
+    if (!t) return 'Generate V2 did not open with "Keep it empty"';
     t.click(); return null;
   });
   await zz(600);
-  ok('+ Add layer → "Layer" → "Empty" creates a v2 card', !doorOpened && !doorPicked && !kindPicked, doorOpened || doorPicked || kindPicked);
+  ok('+ Add layer → "Layer" → "Keep it empty" creates a v2 card', !doorOpened && !doorPicked && !kindPicked, doorOpened || doorPicked || kindPicked);
   await page.evaluate(() => { _ambRebuildMaster(); });   // 3. THE STEP ad-hoc probes skip
   await zz(500);
 

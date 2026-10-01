@@ -37,7 +37,7 @@ const ok = (name, cond, detail) => {
   // the user's lead synth is a V2 layer — create one through the door a user uses
   await page.evaluate(() => { const b = document.getElementById('mix-bloom-add-layer'); b.scrollIntoView({ block: 'center' }); b.click(); });
   await zz(450);
-  await page.evaluate(() => { const t = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((x) => x.textContent.trim() === 'Layer'); t.click(); setTimeout(() => { const _e = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60), undefined; });
+  await page.evaluate(() => { const t = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((x) => x.textContent.trim() === 'Layer'); t.click(); setTimeout(() => { const _e = document.querySelector('.g2 [data-a="keepempty"]') || [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60), undefined; });
   await zz(600);
   await page.evaluate(() => { _ambRebuildMaster(); });
   await zz(500);

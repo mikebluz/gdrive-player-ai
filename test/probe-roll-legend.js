@@ -55,7 +55,7 @@ const ok = (name, cond, detail) => {
     const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
     const t = bs.find((x) => x.textContent.trim() === 'Layer');
     if (!t) return 'no "Layer": ' + bs.map((x) => x.textContent.trim()).join(' | ');
-    t.click(); setTimeout(() => { const _e = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60), undefined; return null;
+    t.click(); setTimeout(() => { const _e = document.querySelector('.g2 [data-a="keepempty"]') || [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60), undefined; return null;
   });
   await zz(700);
   await page.evaluate(() => { _ambRebuildMaster(); });

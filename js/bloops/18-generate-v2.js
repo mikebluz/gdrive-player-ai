@@ -491,6 +491,52 @@
     G = null;
   }
 
+  // ── THE DOOR, where Generate already is ───────────────────────────────────
+  // The card's section grid (Instrument · Generate · Tweaks · Mix · FX · Bank) is drawn
+  // by 18-layer-v2 and rebuilt whenever the card is; rather than reach into that, this
+  // finds the grid by its Bank button and puts one full-width button under it, styled
+  // as the Generate button it sits beneath. Re-placed after every rebuild (observer,
+  // coalesced to one pass a frame). The ⋯ menu item stays as the second way in.
+  function placeDoors() {
+    document.querySelectorAll('.v2-layer[data-v2id]').forEach((card) => {
+      const btns = Array.from(card.querySelectorAll('button'));
+      const bank = btns.find((x) => x.textContent.trim() === 'Bank');
+      const gen = btns.find((x) => x.textContent.trim() === 'Generate');
+      if (!bank || !bank.parentElement) return;
+      const grid = bank.parentElement;
+      const next = grid.nextElementSibling;
+      if (next && next.classList && next.classList.contains('g2-door')) return;
+      const d = document.createElement('button');
+      d.type = 'button';
+      d.className = (gen ? gen.className : 'ambient-seg') + ' g2-door';
+      d.textContent = '\u2726 Generate V2 (beta)';
+      d.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin:8px 0 0;color:#5eead4';
+      d.addEventListener('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const id = card.getAttribute('data-v2id') | 0;
+        const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+        const L = E && (E.getCfg().layers || []).find((x) => x && (x.id | 0) === id);
+        if (L) window._genV2Open(E, L);
+      });
+      grid.insertAdjacentElement('afterend', d);
+    });
+  }
+  try {
+    // ONLY ELEMENT ADDITIONS (a card rebuilt), never text: the live readouts rewrite text
+    // every frame while playing, and a door scan per frame is a cost an old phone feels.
+    let timer = 0;
+    new MutationObserver((recs) => {
+      if (timer) return;
+      let grew = false;
+      for (let i = 0; i < recs.length && !grew; i++) {
+        const an = recs[i].addedNodes;
+        for (let j = 0; j < an.length; j++) { if (an[j].nodeType === 1 && !(an[j].classList && an[j].classList.contains('g2-door'))) { grew = true; break; } }
+      }
+      if (!grew) return;
+      timer = setTimeout(() => { timer = 0; try { placeDoors(); } catch (e) {} }, 120);
+    }).observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
+
   window._genV2Open = function (E, L) {
     if (!E || !L) return false;
     if (G) close(false);

@@ -76,7 +76,8 @@
   BUILT COMPLETELY on every press — ~17 KB of DOM, `.sd-overlay.open`, z-index 10400 — and computed
   `display: none`. Reported as "clicking Design does nothing", which is exactly how it reads.
   **Any new body-level overlay must be added to every view it can be opened from**, beside
-  `.sm-overlay` / `.modal-overlay`. Diagnostic: when a button seems dead, measure whether the DOM
+  `.sm-overlay` / `.modal-overlay` — or simply carry `.sm-overlay` itself (Generate V2's sheet
+  measured 0×0 on its first run for exactly this). Diagnostic: when a button seems dead, measure whether the DOM
   GREW on the press before looking at the handler — a built-but-hidden panel and a handler that never
   ran look identical from the outside, and they are opposite bugs.
 

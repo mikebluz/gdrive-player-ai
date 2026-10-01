@@ -26771,6 +26771,11 @@
                   try { if (typeof _ambSoloSyncAll === 'function') _ambSoloSyncAll(E); } catch (e) {}
                   h._sig = ''; V2.render(E);
                 }, 0) },
+              // ✦ GENERATE V2 (beta) — the redesigned sheet, beside the classic one
+              // (js/bloops/18-generate-v2.js); edits this layer live, ✕ restores it.
+              { label: '\u2726 Generate V2 (beta)', fn: () => setTimeout(() => {
+                  try { if (typeof window._genV2Open === 'function') window._genV2Open(E, ctx.L); } catch (e) {}
+                }, 0) },
               { label: '\u270e Rename\u2026', fn: () => setTimeout(() => {
                   // NON-BLOCKING (window.uiPrompt): the native prompt froze the
                   // main thread and the phone's audio glitched while you typed.

@@ -140,7 +140,6 @@
   // ── the 🎲 controls (a re-roll changes them) and the tab contents ─────────
   const S_ = (path, label, min, max, dice, unit) => ({ path, label, min, max, dice: !!dice, unit: unit || '' });
   const TABS = [
-    { id: 'basics', label: 'Basics' },
     { id: 'rhythm', label: 'Rhythm', secs: [
       ['Rhythm feel', [S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1),
         S_('part.rhythm.syncop', 'Syncopate', 0, 100), S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'), S_('startVary', 'Start', 0, 100, 1)]],
@@ -242,7 +241,7 @@
   .g2-roll{position:relative;height:150px;border-radius:14px;background:#0c0c18;border:1px solid #262640;overflow:hidden}
   .g2-mv{min-height:46px;padding:6px 10px;display:flex;align-items:center;gap:8px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600;text-align:left}
   .g2-mvcard{grid-column:1/-1;border-radius:14px;border:2px solid #a78bfa;background:#211a40;overflow:hidden}
-  .g2-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:4px;border-radius:14px;background:#15152a;border:1px solid #262640}
+  .g2-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px;border-radius:14px;background:#15152a;border:1px solid #262640}
   .g2-tab{min-height:50px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:10px;border:0;background:transparent;color:#c9c5e3;font-size:13px;font-weight:600}
   .g2-tab.on{background:#8b5cf6;color:#fff}
   .g2-die{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:#0f3a36;color:#5eead4}
@@ -312,9 +311,11 @@
     }).join('') + '</div>';
     if (!live) {
       h += '<div class="g2-hint">This part plays notes written by hand. Pick a style above to hand it to generated rules — ↶ Undo or ✕ brings the written notes back.</div>';
-    } else if (G.tab === 'basics') {
-      h += basicsHTML(L, ns, cyc);
     } else {
+      // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
+      // Movement), with the finer controls for the same topic beneath it
+      if (G.tab === 'rhythm') h += rhythmHTML(L, ns, cyc);
+      if (G.tab === 'pitch') h += movementHTML(L);
       h += tabHTML(L, TABS.find((t) => t.id === G.tab));
     }
     h += '</div>';
@@ -327,7 +328,7 @@
     const sc2 = G.root.querySelector('.g2-body'); if (sc2) sc2.scrollTop = top;
   }
 
-  function basicsHTML(L, ns, cyc) {
+  function movementHTML(L) {
     let h = '';
     // MOVEMENT — the selected option is a card holding its own setting
     const mv = moveOf(L);
@@ -357,10 +358,14 @@
     });
     h += '</div></div>';
     }
+    return h;
+  }
+  function rhythmHTML(L, ns, cyc) {
+    let h = '';
     // RHYTHM — figures as pictures, the bar you tap, the grid
     const r = (L.part.rhythm || {});
     const { spb, lit } = barHits(L, ns, cyc);
-    h += '<div style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;align-items:center;gap:8px"><b>Rhythm</b>'
+    h += '<div style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;align-items:center;gap:8px"><b>Pattern</b>'
       + '<span class="g2-hint" style="margin-left:auto">' + lit.size + ' hit' + (lit.size === 1 ? '' : 's') + ' a bar</span>'
       + '<button type="button" class="g2-btn" data-a="hits" data-d="-1" aria-label="Fewer hits" style="width:40px;min-height:36px;padding:0">−</button>'
       + '<button type="button" class="g2-btn" data-a="hits" data-d="1" aria-label="More hits" style="width:40px;min-height:36px;padding:0">+</button></div>';
@@ -589,7 +594,7 @@
     root.style.setProperty('display', 'flex', 'important');
     root.innerHTML = '<div class="g2" role="dialog" aria-modal="true" aria-label="Generate V2"></div>';
     document.body.appendChild(root);
-    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'basics', note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
+    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'rhythm', note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);

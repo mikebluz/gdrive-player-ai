@@ -7228,6 +7228,19 @@
     if (to <= from) return;
 
     const dest = (typeof _ambLayerDest === 'function') ? _ambLayerDest(key) : undefined;
+    // ✺ COUPLE / PUSH-PULL / DRIFT, resolved once per pass (see the note beside
+    // `const at` below). `cyc` is this layer's real cycle, which is what the
+    // percentage terms have to be a percentage OF — without it they fall on
+    // `_ambEffIntervalSec`'s 0.05 s floor, since a v2 layer has neither `rate`
+    // nor `intervalMs`. Anything non-finite is DROPPED rather than added: a NaN
+    // here would put every note of the layer at NaN and silence it outright.
+    let _driftOff = 0;
+    try {
+      if (typeof _ambDriftOffset === 'function') {
+        const _d = _ambDriftOffset(E, key, L, cfg, cyc);
+        if (Number.isFinite(_d)) _driftOff = _d;
+      }
+    } catch (e) { _driftOff = 0; }
     // STAGING, not the fader. Level is a CONTINUOUS gain on the chain
     // (`e.levelGain`, written by `_ambUpdateMod`), so it sweeps the whole layer
     // including notes already sounding; a per-note volume only affects NEW
@@ -7376,7 +7389,17 @@
         // why the picture never had it (measured: swing 100 delayed every odd
         // slot 125 ms while `notesFor` returned the straight grid). Adding it
         // in both places would double it, so this is a DELETE, not a move.
-        const at = n.at;
+        // …BUT PUSH/PULL, DRIFT AND ✺ COUPLE ARE STILL MISSING, and unlike swing
+        // they were never moved anywhere — `_ambDriftOffset` is called from the
+        // SEVEN v1 emitters and from nothing here, so on a v2 layer all three
+        // were stored and never read (found 2026-09-30 while asking what else
+        // moves rhythm; the ✺ Variation audit's inability to measure Couple was
+        // this, not a harness gap). They belong at EMIT, not in `notesFor`:
+        // Couple is a live Kuramoto phase that evolves tick to tick, and all
+        // three describe where this layer sits against the OTHERS rather than
+        // what it plays — which is also why they are invisible in a one-layer
+        // drawing. Computed once per pass, exactly as v1 does it.
+        const at = n.at + _driftOff;
         let vol = n.ghost ? Math.max(1, Math.round(lvl * 0.42)) : lvl;
         // A HAND-EDITED NOTE'S OWN VOLUME, as a percentage of the layer's level
         // — applied BEFORE accent and velVar so those still shape it, exactly

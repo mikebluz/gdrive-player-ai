@@ -437,6 +437,36 @@
   threw into its catch, and EVERY per-layer Reverb send vanished from the fast bounce — a wet-only
   layer rendered pure silence with all its notes correctly delivered and `missing: []`. Anything
   indexing the core node must use `off.cap`, never `SLOTS`. Gate: `node test/probe-bounce-wet.js`.
+- **PUSH/PULL, DRIFT AND ✺ COUPLE ARE APPLIED BY `_ambDriftOffset`, AND v2 NEVER CALLED IT.** Seven
+  v1 emitters call it; `18-layer-v2`'s `emit` did not, so on a v2 layer all three were stored and
+  never read — every control looked live, the store held the value, the audio was identical. (That
+  is also why the ✺ Variation audit could never measure Couple: there was nothing to measure.) They
+  belong at EMIT, not in `notesFor` — Couple is a live Kuramoto phase that evolves tick to tick, and
+  all three say where a layer sits against the OTHERS rather than what it plays. Pass the layer's
+  CYCLE as `unitSec`: a v2 layer has neither `rate` nor `intervalMs`, so the percentage terms
+  otherwise land on `_ambEffIntervalSec`'s 0.05 s floor. Gate: `node test/probe-v2-drift.js`.
+- **MEASURE "WHERE DOES THIS NOTE LAND" ON LIVE PLAYBACK, NOT ON A BOUNCE.** `_ambRenderOffline` is
+  a two-pass record-then-replay on a different time base, and it cost two wrong conclusions in one
+  session: a bounce said a NEGATIVE push did nothing while a positive one worked, and live playback
+  then showed both moving by exactly ±60 ms. **And never compare two note lists index-by-index** —
+  a shifted layer emits a different number of notes in the window, so index *i* is a different
+  onset in each run; the first version of that probe reported a clean 60 ms shift against code that
+  moved nothing at all. Compare the circular mean of each onset's phase MODULO the step period:
+  no list alignment, and an added or dropped edge note cannot skew it.
+  **And measure a bounce against ANOTHER LAYER, never against its start:** the capture anchors
+  time zero on the first onset, which under a negative push is the pushed layer's own — so it reads
+  as "a negative push does nothing in the bounce" when A − B is exactly −60 ms.
+- **SILENCE THE ARRANGEMENT ASKED FOR IS NOT A DROPOUT.** 🌒 Arc's entire job is "layers drop out
+  and come back so it builds and thins instead of playing flat", and ⏸ Breath's is holding back —
+  so the bounce's dropout detector flagged EVERY layer on EVERY render of any project using them,
+  under a toast heading reading "Missing:". Reported 2026-09-30 as "what is wrong with capture"
+  with Arc at build/40 over 32 bars: four layers named, each with 7–8 s of contiguous quiet.
+  **The report's own verdict was already the answer** — "NO notes generated there, so this is the
+  material" — because material-side quiet on a project that deliberately removes notes IS the
+  feature working. The reporter now suppresses those and says so in its own clause ("4 layers thin
+  out — that is 🌒 Arc, not a dropout"), never under "Missing". AUDIO-side quiet (notes delivered,
+  no sound) is still a fault and still named. Verified by setting `prog.arc.amount = 0` on the same
+  project: the dropout lines vanish, which is what proves Arc was the cause and not a blanket mute.
 - **The per-layer bounce meter taps each layer's DRY output** (a core strip's slot, a node chain's
   panner). A WET-ONLY layer mutes exactly that, so its `layerRms` is legitimately zero — pass it in
   `_bloomLayerDropouts(map, skip)` or the silence report cries wolf. To ask "is it in the mix",

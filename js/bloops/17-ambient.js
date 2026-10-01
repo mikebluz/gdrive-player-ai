@@ -12024,14 +12024,21 @@
       _AMB_COUPLE.set(k, ph);
       return (amt / 100) * _AMB_COUPLE_SPAN * per * Math.sin(2 * Math.PI * ph);
     }
-    function _ambDriftOffset(E, key, layer, cfg) {
+    // `unitSec` OVERRIDES the layer's own interval for the two PERCENTAGE terms
+    // (Drift, and Push in % mode). v1 layers have `rate`/`intervalMs` and need
+    // nothing; a v2 layer has neither, so `_ambEffIntervalSec` bottoms out at its
+    // 0.05 s floor and a "% of the unit" offset would be a twentieth of a second
+    // whatever the layer's cycle actually is. Omitted → the v1 behaviour exactly,
+    // so every existing caller is byte-identical.
+    function _ambDriftOffset(E, key, layer, cfg, unitSec) {
       let off = 0;
+      const _iv = (Number.isFinite(unitSec) && unitSec > 0) ? unitSec : _ambEffIntervalSec(layer);
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
       if (drift > 0) {
         const ds = _ambDriftSteps(E, key, layer, cfg);
         if (ds) off = ds.idx * ds.step;
         else {
-          off = (drift / 100) * _ambEffIntervalSec(layer);
+          off = (drift / 100) * _iv;
           if (cfg && cfg.timing === 'sync') { const step = _ambStepSec(); off = Math.round(off / step) * step; }
         }
       }
@@ -12044,7 +12051,7 @@
       const push = (_grOn && Number.isFinite(layer.push)) ? Math.max(-200, Math.min(200, layer.push)) : 0;
       if (push !== 0) {
         const pct = !!(cfg && cfg.groove && cfg.groove.pushMode === 'pct');
-        off += pct ? (Math.max(-90, Math.min(90, push)) / 100) * _ambEffIntervalSec(layer) : (push / 1000);
+        off += pct ? (Math.max(-90, Math.min(90, push)) / 100) * _iv : (push / 1000);
       }
       // \u273a COUPLE \u2014 the ensemble term, added last so it rides on top of whatever
       // Drift and Push already asked for. Gated on the groove being active, like
@@ -39395,6 +39402,8 @@
           Object.keys(s).forEach((nm) => { sendsWanted += (s[nm] | 0); });
         });
       } catch (e) {}
+      const _thinnedOut = { n: 0, by: '' };
+      let _thinNote = '';
       // NAME THE LAYER. "Layers cut in and out" survived six rounds of whole-mix
       // measurement because the mix cannot see it; this states which layer went
       // quiet and at which second, from the user's own render.
@@ -39414,10 +39423,39 @@
           }
           return out;
         };
+        // SILENCE THE ARRANGEMENT ASKED FOR IS NOT A DROPOUT. 🌒 Arc's whole job
+        // is "layers drop out and come back so it builds and thins instead of
+        // playing flat", and ⏸ Breath's is holding back — so on any project
+        // using them this detector flagged EVERY layer, every render, under a
+        // heading reading "Missing:". Reported 2026-09-30 with Arc at build/40
+        // over 32 bars: four layers named, each with 7-8 s of contiguous quiet
+        // and the report's own verdict already saying "NO notes generated
+        // there, so this is the material". That verdict IS the tell — material
+        // -side quiet on a project that deliberately removes notes is the
+        // feature working. Audio-side quiet (notes delivered, no sound) stays a
+        // fault and is still named.
+        const _thinBy = [];
+        let _thinned = 0;
+        try {
+          const c = cap.cfg, pr = (c && c.prog) || {};
+          if (!_ambVarBypassed(c)) {
+            // a PART can carry its own Arc depth while the area's is 0
+            if ((pr.arc && (pr.arc.amount | 0) > 0) || _ambAnyPartArc(pr)) _thinBy.push('🌒 Arc');
+            if ((c.layers || []).some((L) => L && L.on !== false && L.breath && L.breath.amount))
+              _thinBy.push('⏸ Breath');
+          }
+        } catch (e) {}
         const _dr = _bloomLayerDropouts(_layerRms, _wetOnlyKeys);
-        _dr.slice(0, 4).forEach((d) => {
+        // The cap is on what gets NAMED, not on what gets looked at — a thinned
+        // layer must not use up one of the four slots and hide a real fault
+        // sitting fifth in the list.
+        let _named = 0;
+        _dr.forEach((d) => {
           const nps = _npsOf(d.key);
           const withNotes = d.quietAt.filter((i) => (nps[i] | 0) > 0).length;
+          // …material-side, and something is thinning on purpose → not a fault.
+          if (!d.silent && _thinBy.length && withNotes < Math.ceil(d.quietAt.length / 2)) { _thinned++; return; }
+          if (_named++ >= 4) return;
           if (d.silent) {
             const total = nps.reduce((s, v) => s + (v | 0), 0);
             _missing.unshift('layer ' + d.key + ' rendered SILENT for the whole take'
@@ -39436,12 +39474,20 @@
             + ' (quiet at ' + d.quietAt.map((i) => i + 's').join(', ')
             + (d.secs > d.quietAt.length ? ' …' : '') + ')' + verdict);
         });
+        _thinnedOut.n = _thinned; _thinnedOut.by = _thinBy.join(' + ');
       } catch (e) {}
       if (_sampStats && _sampStats.sampFail > 0) {
         _missing.unshift(_sampStats.sampFail + ' sample note' + (_sampStats.sampFail === 1 ? '' : 's')
           + ' missed their layer strip (of ' + (_sampStats.sampOk + _sampStats.sampFail)
           + ') — those play with no level, pan or FX'
           + (_sampStats.bufs >= 96 ? ', and the render ran out of sample buffer slots' : ''));
+      }
+      // …and SAY it thinned, so "layers come and go" is answered rather than
+      // merely unreported. Deliberately NOT in `_missing`: that list is faults,
+      // and it heads the toast with the word "Missing".
+      if (_thinnedOut.n > 0) {
+        _thinNote = _thinnedOut.n + ' layer' + (_thinnedOut.n === 1 ? '' : 's')
+          + ' thin out over the take — that is ' + _thinnedOut.by + ', not a dropout';
       }
       if (sendsWanted > 0 && wetRms !== null && wetRms < 1e-6) {
         _missing.unshift('the FX RETURNS carried NO signal — this project has sends turned up '
@@ -39450,7 +39496,7 @@
       phase('rendered', { wallSec: wall, peak });
       return { buffer, notes: notes.length, played, failed, seconds, wallSec: wall,
                xRealtime: wall > 0 ? seconds / wall : 0, peak, wet: wetOut, master: _masterBuilt,
-               missing: _missing, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
+               missing: _missing, thinNote: _thinNote, wetErr: _wetErr, lostFx: _lostFx, wetRms, sendsWanted,
                chains: _chainKinds,
                peakVoices: _peakVoices,
                svoicePeak: _svoicePeak, lookahead: CHUNK + LOOK,
@@ -39570,7 +39616,10 @@
           const bad = dry || missing.length > 0;
           showToast((dry ? '⚠ Rendered DRY — ' : 'Rendered ') + '“' + filename + '” in ' + res.wallSec.toFixed(1) + 's (' + xr + '× realtime'
             + (res.core ? '' : ', slow engine') + ') — in the Harvest bank.'
-            + (missing.length ? ('  Missing: ' + missing.join(' · ')) : ''),
+            + (missing.length ? ('  Missing: ' + missing.join(' · ')) : '')
+            // Its own clause, never under "Missing" — this one is the
+            // arrangement working as set, not something that went wrong.
+            + (res.thinNote ? ('  · ' + res.thinNote) : ''),
             bad ? { warn: true, ms: 12000 } : undefined);
         }
       } catch (e) {}

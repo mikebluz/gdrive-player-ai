@@ -70,6 +70,21 @@
 - **Extending a `strip_*` wasm export: make new args `i32`, never `f32`** — a missing argument becomes
   `0` for an int and `NaN` for a float, so design the new param so 0 is neutral.
 
+- **THE SPLICE RING'S `rate` IS A TARGET, NOT A RESAMPLE.** `BloopsSpliceRing` never changes pitch
+  or playback speed — `rate` only accrues `debt`, and the audio changes ONLY when a splice fires. So a
+  `rate` step in the flight log is not a pitch bend, and slew-limiting it alone is inaudible (verified
+  2026-09-30: slewed `rate` with debt+gap on the target is bit-identical in `tools/splice-test.swift`).
+  Slewing the debt instead spreads the splices out but drains the ring deeper first — the "severe
+  0.60" scenario went from 1 to 8 POOR splices and failed. What a listener hears is SPLICE DENSITY.
+- **A STALE `rate` FROM AN EMPTY RING READS AS A JUMP.** `rate=0.6665` with `primed=false buf=0ms`
+  is the controller pinned at its floor while nothing is produced (an iOS interruption,
+  `ctx state → interrupted`), held until the next prime. A whole fix was built on reading
+  "0.95 → 0.667 → 1.0" as a live slew. **Filter flight lines to `primed=true` AND `vis=visible`
+  before reading anything into them, and count how many survive** — that harvest had 4 of ~140.
+- **A FLIGHT LOG OF A BACKGROUNDED APP LOOKS ALARMING AND MEANS NOTHING.** 898 s of
+  `vis=hidden state=interrupted media=paused`, with underruns climbing and `prod=0.908`, is all
+  expected when nothing is producing. Say so when there are no playing samples; never pass or fail on it.
+
 ## The WASM audio engine (bloops-dsp)
 
 Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core (`dsp/`, built by `dsp/build.sh` → `js/bloops/core/bloops-dsp.wasm`) inside ONE AudioWorklet (`js/bloops/core/voice-processor.js`, bridged by `js/bloops/03b-core-voices.js`). **Default ON** — `window.bloopsCore(false)` / `window.bloopsCoreStrips(false)` are the kill switches (persisted localStorage `'0'`); the Tone node engine remains the automatic fallback (cold start, ineligible notes, slot exhaustion, pads/held notes, offline export). Rules:

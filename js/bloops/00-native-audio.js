@@ -268,15 +268,50 @@
     // flashed modal reads as a glitch), hidden the moment `sounding(edgeAt)`
     // says sound has reached the speaker, or after 6 s whatever happens.
     // `opts.cal` = run the MSE calibration on the stop edge.
+    // ── SOUND HAS STARTED — the one flag every "rolling" readout waits on ──
+    // user (2026-10-01): "stop introducing slippages between when the playback
+    // starts and when the timer/UI start; if there needs to be a wait, indicate
+    // it and do not update the UI into a rolling state until playback starts".
+    // Set by the starting modal's own `sounding` check (the ring is primed and
+    // frames are leaving it), cleared on every transport edge. The header clock
+    // counts from `__bloopsAudibleAt`, so it holds at zero until sound, and
+    // never rolls on a press that produced nothing.
+    window.__bloopsAudible = false; window.__bloopsAudibleAt = 0;
+    // assigned below, where the contexts and the keep-alive element exist
+    let reviveAudio = null;
     const armStartingModal = (sounding, opts) => {
       try {
         const ov = document.createElement('div');
         ov.className = 'sm-overlay'; ov.id = 'bloops-starting-modal';
         ov.innerHTML = '<div class="sm-modal" style="text-align:center;padding:18px 22px;max-width:260px">'
           + '<div style="font-size:1.5rem;margin-bottom:6px">♪</div>'
-          + '<div>Starting the music…</div>'
-          + '<div class="ambient-hint" style="margin-top:6px">Filling the audio buffer first, so playback stays smooth — even if the phone locks.</div></div>';
+          + '<div class="sm-start-msg">Starting the music…</div>'
+          + '<div class="ambient-hint sm-start-hint" style="margin-top:6px">Filling the audio buffer first, so playback stays smooth — even if the phone locks.</div>'
+          + '<div class="sm-footer sm-start-acts" style="display:none;gap:8px;justify-content:center;margin-top:12px">'
+          + '<button type="button" class="sm-cancel sm-start-stop">Stop</button>'
+          + '<button type="button" class="sm-apply sm-start-retry">Retry</button></div></div>';
         document.body.appendChild(ov);
+        const msgEl = ov.querySelector('.sm-start-msg'), hintEl = ov.querySelector('.sm-start-hint'), actsEl = ov.querySelector('.sm-start-acts');
+        let stage = 0;          // 0 starting · 1 waking the engine · 2 it did not start
+        const setStage = (n) => {
+          if (n === stage) return; stage = n;
+          const T = [
+            ['Starting the music…', 'Filling the audio buffer first, so playback stays smooth — even if the phone locks.'],
+            ['Waking the audio engine…', 'The phone paused its audio while the app was idle. Bringing it back.'],
+            ['Audio didn\u2019t start', 'The phone\u2019s audio engine isn\u2019t responding. Retry, or Stop and press Play again.'],
+          ][n] || [];
+          try { msgEl.textContent = T[0]; hintEl.textContent = T[1]; actsEl.style.display = (n === 2) ? 'flex' : 'none'; } catch (e) {}
+          log('starting-modal stage ' + n + ' (' + T[0] + ')');
+        };
+        try {
+          ov.querySelector('.sm-start-retry').addEventListener('click', () => {
+            shownAt = Date.now(); setStage(1);
+            try { if (reviveAudio) reviveAudio('retry'); } catch (e) {}
+          });
+          ov.querySelector('.sm-start-stop').addEventListener('click', () => {
+            try { const b = document.getElementById('mix-bloom-play-btn'); if (b) b.click(); } catch (e) {}
+          });
+        } catch (e) {}
         let shownFlag = false;
         const show = (on) => {
           try { ov.style.setProperty('display', on ? 'flex' : 'none', 'important'); } catch (e) {}
@@ -295,14 +330,25 @@
           try {
             const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
             const on = !!(E && E.timer);
-            if (on && !tWasOn) { shownAt = Date.now(); }
+            if (on && !tWasOn) { shownAt = Date.now(); window.__bloopsAudible = false; window.__bloopsAudibleAt = 0; setStage(0); }
             if (!on && tWasOn && opts && opts.cal) { setTimeout(() => { try { if (window.__bloopsCal) window.__bloopsCal(); } catch (e) {} }, 2200); }
-            if (!on) { if (shownAt) { show(false); shownAt = 0; } }
+            if (!on) { window.__bloopsAudible = false; window.__bloopsAudibleAt = 0; if (shownAt) { show(false); shownAt = 0; setStage(0); } }
             else if (shownAt) {
               let ok = false;
               try { ok = !!sounding(shownAt, E); } catch (e) {}
-              if (ok || (Date.now() - shownAt > 6000)) { show(false); shownAt = 0; }
-              else if (Date.now() - shownAt > 300) show(true);
+              // HIDDEN ONLY BY SOUND. It used to give up after 6 s and hide
+              // with nothing playing, while the clock rolled on — measured
+              // on-device: four presses into a frozen engine, each "hidden
+              // +6069ms", the header counting, silence.
+              if (ok) {
+                window.__bloopsAudible = true; window.__bloopsAudibleAt = performance.now();
+                show(false); shownAt = 0; setStage(0);
+              } else {
+                const waited = Date.now() - shownAt;
+                if (waited > 300) show(true);
+                if (waited > 4000 && stage === 0) { setStage(1); try { if (reviveAudio) reviveAudio('play-stall'); } catch (e) {} }
+                if (waited > 10000 && stage === 1) setStage(2);
+              }
             }
             // PROJECT SNAPSHOT on the play edge: the phone has no console, so
             // bloomDump (quiet — no toast/clipboard) is written into the app
@@ -1433,6 +1479,48 @@
       };
     } catch (e) {}
     setInterval(() => rescue('poll'), 1000);
+
+    // ── A "RUNNING" CONTEXT WHOSE CLOCK DOES NOT MOVE ─────────────────────
+    // Measured 2026-10-01 on the user's phone: idle in the background, the
+    // battery watchdog released the keep-alive (by design), iOS stopped
+    // rendering — and the context kept reporting state "running" with
+    // currentTime FROZEN at 79.09 for eleven minutes. Every rescue path keys on
+    // `state !== 'running'`, so none fired; four Play presses later the ring had
+    // received nothing and the music never came. So the CLOCK is the test, not
+    // the state. Revival: re-arm the keep-alive (the thing iOS keeps us alive
+    // for), stand every hold down, and cycle the contexts suspend → resume,
+    // logging whether the clock moved — the outcome is itself the diagnostic.
+    reviveAudio = (why) => {
+      const ct0 = raw.currentTime;
+      log('REVIVE [' + why + '] ctx=' + raw.state + ' ct=' + ct0.toFixed(2)
+        + ' br=' + (bridge ? bridge.state : '-') + ' media=' + (el.paused ? 'paused' : 'playing'));
+      silencePaused = false;
+      try { window.__bloopsNativeHold = false; } catch (e) {}
+      try { if (el.paused) kick(); } catch (e) {}
+      try { if (bridge && bridge.state !== 'running') bridge.resume(); } catch (e) {}
+      const check = (step) => setTimeout(() => {
+        const moved = raw.currentTime > ct0 + 0.05;
+        log('REVIVE ' + step + ': ct ' + ct0.toFixed(2) + ' → ' + raw.currentTime.toFixed(2) + ' (' + (moved ? 'RUNNING' : 'still frozen') + ')');
+      }, 700);
+      try {
+        Promise.resolve(raw.state === 'running' ? raw.suspend() : null)
+          .catch(() => {})
+          .then(() => raw.resume())
+          .then(() => check('suspend→resume'), (e) => log('REVIVE resume rejected: ' + (e && e.name)));
+      } catch (e) { log('REVIVE threw: ' + e.message); }
+    };
+    {
+      let lastCt = -1, lastMoveAt = 0, lastRevive = 0;
+      setInterval(() => {
+        if (document.visibilityState !== 'visible' || userPaused || raw.state !== 'running') { lastCt = -1; return; }
+        const ct = raw.currentTime, now = performance.now();
+        if (ct !== lastCt) { lastCt = ct; lastMoveAt = now; return; }
+        if (now - lastMoveAt > 1500 && now - lastRevive > 4000) {
+          lastRevive = now;
+          try { reviveAudio('frozen clock ' + ((now - lastMoveAt) / 1000).toFixed(1) + 's'); } catch (e) {}
+        }
+      }, 500);
+    }
 
     // BATTERY: the playing media element is what keeps the app alive in the
     // background — so with the app HIDDEN and the mix genuinely silent for

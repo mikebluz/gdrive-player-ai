@@ -37107,10 +37107,23 @@
       // HEARD, so they run behind the wall clock by the render→speaker delay.
       let _lagMs = 0;
       try { if (typeof window._bloopsMseOutLag === 'function') _lagMs = window._bloopsMseOutLag() * 1000; } catch (e) {}
-      if (_masterEng && _masterEng.timer && _masterEng._playStartMs) ms = Math.max(0, performance.now() - _masterEng._playStartMs - _lagMs);
+      // THE PHONE COUNTS FROM SOUND, NOT FROM THE PRESS (2026-10-01): "do not
+      // update the UI into a rolling state until playback starts". The shell
+      // sets `__bloopsAudible` when frames actually leave the native ring;
+      // until then the clock holds at zero and says it is starting — so a press
+      // into a stalled engine never shows a running clock over silence.
+      const _shell = (typeof window.__bloopsAudible === 'boolean');
+      const _anyOn = !!((_masterEng && _masterEng.timer) || (_laneEng && _laneEng.timer));
+      let _starting = false;
+      if (_shell && _anyOn) {
+        if (window.__bloopsAudible && window.__bloopsAudibleAt > 0) ms = Math.max(0, performance.now() - window.__bloopsAudibleAt);
+        else { ms = 0; _starting = true; }
+      }
+      else if (_masterEng && _masterEng.timer && _masterEng._playStartMs) ms = Math.max(0, performance.now() - _masterEng._playStartMs - _lagMs);
       else if (_laneEng && _laneEng.timer && _laneEng._playStartMs) ms = Math.max(0, performance.now() - _laneEng._playStartMs - _lagMs);
       const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
-      el.textContent = _ambFmtElapsed(ms) + '  ·  ' + bpm + ' BPM';
+      const _txt = (_starting ? 'Starting…' : _ambFmtElapsed(ms)) + '  ·  ' + bpm + ' BPM';
+      if (el.textContent !== _txt) el.textContent = _txt;
       // Optional BPM flash (Settings → Tempo → Flash). The whole header pulses
       // once per beat, locked to the BPM and re-anchored on the rising edge of
       // playback (= reset on Play), so it stays in step with whatever's playing.

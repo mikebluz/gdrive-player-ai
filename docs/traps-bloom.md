@@ -838,6 +838,10 @@
   is a COPY, not a move (⚙ Deep's Note length already does it) — "one field with two controls and two
   different gates is how the two come to disagree about whether the knob applies at all".
 
+- **Under `barsMode: 'fill'` (bars > 1) a euclid/pulse rule's `steps`/`n` are PER BAR** — the onset
+  solver tiles one bar. `drawn` cells still span the CYCLE. Sizing a rule as `perBar × bars` made a
+  3-bar Line a 24-a-bar grid and a 3-bar Arp 24 notes a bar (rollRunFn, makeArpFn, speedOf/setSpeed).
+
 - **`euclid` IS MAXIMALLY EVEN BY DEFINITION, WHICH IS WHY EVERYTHING SOUNDED THE SAME.** The same
   (pulses, steps, rotate) is the same pattern for ever, and `fill` tiles it identically in every bar
   — three bars of a Bass were three copies. `vary` is not the cure: it drops and adds hits at random,

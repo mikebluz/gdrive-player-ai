@@ -8113,7 +8113,9 @@
     // made a different arpeggio on every part. Eighths, whatever the length,
     // and `fill` keeps that density when the bars change later.
     p.bars = partBarsFor(E, L) || p.bars || 2;
-    p.rhythm = { kind: 'pulse', n: clamp(Math.round(8 * (+p.bars || 1)), 1, 64), steps: 16 };
+    // ◫ …and `fill` (set above) plays `n` in EVERY bar, so `8 × bars` was 24 a
+    // bar on a 3-bar part (measured 2026-10-01). Under fill, `n` is per bar.
+    p.rhythm = { kind: 'pulse', n: 8, steps: 16 };
     p.pitch = { kind: 'series', dir: 'up', octaves: 2, degree: 1 };
     p.shape = Object.assign({}, p.shape, { lenRatio: 70, holdSteps: 0 });
     try { E.getCfg(); } catch (e) {}
@@ -8263,9 +8265,12 @@
     // "the note events are not squaring up with the bar grid"). The roll
     // picks whole steps per bar now: the densest of 8/4/2/1 per bar that
     // fits the 32-step ceiling, so a 5-bar part rolls at 20 (4/bar).
-    const barsInt = Math.max(1, Math.round(+p.bars || 1));
-    const perBar = [8, 4, 2, 1].find((pb) => pb * barsInt <= 32) || 1;
-    const steps = Math.max(2, Math.min(32, perBar * barsInt));
+    // ◫ …BUT `barsMode: 'fill'` (set below) solves the euclid over ONE BAR and
+    // tiles it, so steps sized for the whole cycle became steps PER BAR: a
+    // 3-bar line rolled a 24-to-the-bar grid, a 4-bar one 32 (measured
+    // 2026-10-01 — "looks stochastic", with no grid it could be edited on).
+    // Eighths, per bar, whatever the length.
+    const steps = 8;
     // EUCLID, not an even pulse: the syncopation is most of what makes a riff
     // a riff, and it leaves a Pattern grid the user can edit afterwards.
     const pulses = Math.max(2, Math.min(steps - 1, Math.round(steps * (0.3 + Math.random() * 0.35))));
@@ -8300,16 +8305,20 @@
   // steps a bar and keeps the SAME SHARE of them sounding. It writes the
   // existing fields — there is no speed field — so it can never disagree
   // with them, and `fill` (set by the density shapes) keeps it as bars change.
+  // ◫ UNDER `fill` (bars > 1) the onset solver tiles ONE BAR of a pulse/euclid
+  // rule, so `n`/`steps` are already per bar — dividing by the bars again was
+  // the same mistake the Line/Arp makers made (2026-10-01).
+  const fillsPerBar = (p) => p.barsMode === 'fill' && (+p.bars || 1) > 1 + 1e-9;
   function speedOfFn(L) {
     const p = L && L.part; if (!p || !p.rhythm) return null;
-    const bars = Math.max(0.125, +p.bars || 1), r = p.rhythm;
+    const r = p.rhythm, bars = (fillsPerBar(p) && r.kind !== 'drawn') ? 1 : Math.max(0.125, +p.bars || 1);   // drawn spans the cycle
     if (r.kind === 'pulse') return (r.n | 0) / bars;
     if (r.kind === 'euclid' || r.kind === 'drawn') return (r.steps | 0) / bars;
     return null;
   }
   function setSpeedFn(E, L, perBar, density) {
     const p = L && L.part; if (!p || !p.rhythm) return false;
-    const bars = Math.max(0.125, +p.bars || 1), r = p.rhythm;
+    const bars = fillsPerBar(p) ? 1 : Math.max(0.125, +p.bars || 1), r = p.rhythm;
     const v = Math.max(1, +perBar || 1);
     if (r.kind === 'pulse') {
       r.n = clamp(Math.round(v * bars), 1, 64);

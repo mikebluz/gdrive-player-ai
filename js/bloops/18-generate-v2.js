@@ -133,9 +133,16 @@
   const GRIDS = [[4, 'Quarters'], [8, 'Eighths'], [12, 'Triplets'], [16, 'Sixteenths'], [32, '32nds']];
   const barsOf = (L) => Math.max(0.25, +((L.part || {}).bars) || 1);
   const bpmOf = (cfg) => ((cfg && cfg.bpm > 0) ? cfg.bpm : ((typeof _ambBpm === 'function') ? _ambBpm() : 120));
+  // ◫ FILL = PER BAR: with `barsMode: 'fill'` the engine solves a euclid/pulse
+  // rule over ONE bar and tiles it (18-layer-v2 onsets), so its steps ARE a bar
+  const perBarRule = (L) => { const p = L.part || {}, k = (p.rhythm || {}).kind; return p.barsMode === 'fill' && barsOf(L) > 1 + 1e-9 && (k === 'euclid' || k === 'pulse'); };
   function spbOf(L) {
     const r = (L.part || {}).rhythm || {};
     if (r.kind === 'fig') return 16;
+    if (perBarRule(L)) {
+      if (r.kind === 'euclid') return clamp((r.steps | 0) || 16, 1, 64);
+      const n = Math.max(1, r.n | 0); return (16 % n === 0) ? 16 : clamp(n, 1, 64);
+    }
     return clamp(Math.round((r.steps | 0) / barsOf(L)) || 16, 1, 64);
   }
 
@@ -207,32 +214,57 @@
   }
   const midiOf = (f) => 69 + 12 * Math.log2(Math.max(1, f) / 440);
 
-  // which steps of bar 0 sound, read off the real notes
-  function barHits(L, ns, cyc) {
-    const spb = spbOf(L), barSec = cyc / barsOf(L), lit = new Set();
-    ns.forEach((n) => { if (n.at < barSec - 1e-6) lit.add(clamp(Math.round(n.at / barSec * spb), 0, spb - 1)); });
-    return { spb, lit };
-  }
-  // write one bar's pattern as a DRAWN rhythm repeated across the part
-  function writeBar(L, spb, lit) {
-    const bars = Math.max(1, Math.round(barsOf(L)));
-    const cells = [];
-    for (let b = 0; b < bars; b++) for (let i = 0; i < spb; i++) cells.push(lit.has(i) ? 1 : 0);
-    const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {});
-    r.kind = 'drawn'; r.steps = spb * bars; r.cells = cells; delete r.fig;
-  }
 
   // GRID = THE SIZE OF ONE STEP. The pattern keeps its step positions and the
   // steps get shorter or longer: a finer grid repeats it to fill the bar, a
   // coarser one cuts it short. (Re-spreading the hits evenly on the new grid
   // put them back on the same beats, so the change was silent.)
+  // ── TWO RHYTHMS SIDE BY SIDE (2026-10-01, user: "Pattern should be a parallel
+  // ruleset … or return from Pattern to one generated like it was initially").
+  // The STYLE'S RULE (euclid/pulse/… — what picking a Style writes) and MY PATTERN
+  // (a drawn or figure rhythm). One plays in `part.rhythm`; the other waits in
+  // `part.rhythmAlt` (additive, absent until you switch — the engine never reads
+  // it), so neither switching, a Style pick nor a bar re-roll throws one away.
+  const isMine = (r) => !!r && (r.kind === 'drawn' || r.kind === 'fig');
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  // the steps the rhythm sounds over the WHOLE part, read off the notes with the
+  // extras off (rests, breath, flourish, ghosts, stutter doubles) — the bare rule
+  function partHits(L) {
+    const bare = clone(L); delete bare.restProb; delete bare.breath; delete bare.flourish; delete bare.ghosts;
+    if (bare.part && bare.part.pitch) bare.part.pitch.stutter = 0;
+    const { ns, cyc } = notesNow(bare), spb = spbOf(L), nb = Math.max(1, Math.round(barsOf(L))), tot = spb * nb, lit = new Set();
+    const span = cyc * nb / barsOf(L);
+    ns.forEach((n) => { if (n.at < span - 1e-6) lit.add(clamp(Math.round(n.at / span * tot), 0, tot - 1)); });
+    return { spb, nb, tot, lit };
+  }
+  function writePart(L, spb, nb, lit) {
+    const cells = []; for (let i = 0; i < spb * nb; i++) cells.push(lit.has(i) ? 1 : 0);
+    const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {});
+    r.kind = 'drawn'; r.steps = spb * nb; r.cells = cells; delete r.fig;
+  }
+  // make MY PATTERN the one playing: the stashed one if there is one, else an
+  // exact copy of what the rule plays now (so the switch itself changes nothing)
+  function toMine(L) {
+    const p = L.part; if (isMine(p.rhythm)) return;
+    const alt = p.rhythmAlt, rule = clone(p.rhythm);
+    if (isMine(alt)) { p.rhythm = clone(alt); }
+    else { const h = partHits(L); writePart(L, h.spb, h.nb, h.lit); }
+    p.rhythmAlt = rule;
+  }
+  function toRule(L) {
+    const p = L.part; if (!isMine(p.rhythm) || !p.rhythmAlt || isMine(p.rhythmAlt)) return false;
+    const mine = clone(p.rhythm); p.rhythm = clone(p.rhythmAlt); p.rhythmAlt = mine; return true;
+  }
+  const styleName = (L) => ((STYLES.find((x) => x.k === styleOf(L)) || {}).name || 'The style');
+
   function regrid(n) {
     let msg = '';
     edit((L) => {
-      const { ns, cyc } = notesNow(L), cur = barHits(L, ns, cyc), lit = new Set();
-      for (let j = 0; j < n; j++) if (cur.lit.has(j % cur.spb)) lit.add(j);
+      toMine(L);
+      const cur = partHits(L), lit = new Set();
+      for (let b = 0; b < cur.nb; b++) for (let j = 0; j < n; j++) if (cur.lit.has(b * cur.spb + (j % cur.spb))) lit.add(b * n + j);
       if (!lit.size) lit.add(0);
-      writeBar(L, n, lit);
+      writePart(L, n, cur.nb, lit);
       msg = n === cur.spb ? '' : (n > cur.spb
         ? 'Shorter steps: the pattern plays faster and repeats to fill the bar.'
         : 'Longer steps: the pattern plays slower; steps past ' + n + ' are cut.');
@@ -279,6 +311,7 @@
         ns.forEach((n) => { cells[clamp(Math.round(n.at / barSec * spb), 0, cells.length - 1)] = 1; });
         const sl = cells.slice(bi * spb, (bi + 1) * spb), rot = 1 + ((G.hist.length * 5 + bi * 3) % Math.max(1, spb - 1));
         for (let i = 0; i < spb; i++) cells[bi * spb + ((i + rot) % spb)] = sl[i];
+        if (!isMine(L3.part.rhythm)) L3.part.rhythmAlt = clone(L3.part.rhythm);
         const r = L3.part.rhythm = Object.assign({}, L3.part.rhythm || {});
         r.kind = 'drawn'; r.steps = spb * bars; r.cells = cells; delete r.fig;
       }, '');
@@ -455,7 +488,7 @@
     } else {
       // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
       // Movement), with the finer controls for the same topic beneath it
-      if (G.tab === 'rhythm') h += rhythmHTML(L, ns, cyc);
+      if (G.tab === 'rhythm') h += rhythmHTML(L);
       if (G.tab === 'pitch') h += movementHTML(L);
       h += tabHTML(L, TABS.find((t) => t.id === G.tab));
     }
@@ -501,36 +534,73 @@
     }
     return h;
   }
-  function rhythmHTML(L, ns, cyc) {
+  function rhythmHTML(L) {
     let h = '';
-    // RHYTHM — figures as pictures, the bar you tap, the grid
-    const r = (L.part.rhythm || {});
-    const { spb, lit } = barHits(L, ns, cyc);
-    h += '<div style="display:flex;flex-direction:column;gap:10px"><div style="display:flex;align-items:center;gap:8px"><b>Pattern</b>'
-      + '<span class="g2-hint" style="margin-left:auto">' + lit.size + ' hit' + (lit.size === 1 ? '' : 's') + ' a bar</span>'
-      + '<button type="button" class="g2-btn" data-a="hits" data-d="-1" aria-label="Fewer hits" style="width:40px;min-height:36px;padding:0">−</button>'
-      + '<button type="button" class="g2-btn" data-a="hits" data-d="1" aria-label="More hits" style="width:40px;min-height:36px;padding:0">+</button></div>';
-    h += '<div class="g2-hint">Tap a step to add or remove a hit — every bar plays this pattern.</div>';
-    // the bar, beat-grouped
-    const per = Math.max(1, Math.round(spb / 4));
-    h += '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">';
-    for (let b = 0; b < 4; b++) {
-      const a = Math.round(b * spb / 4), z = Math.round((b + 1) * spb / 4);
-      h += '<div style="display:flex;flex-direction:column;gap:3px;min-width:0"><span style="font-size:11px;color:#8d8ab0">' + (b + 1) + '</span><div style="display:grid;grid-template-columns:repeat(' + Math.max(1, z - a) + ',minmax(0,1fr));gap:' + (spb > 24 ? 2 : 3) + 'px">';
-      for (let i = a; i < z; i++) h += '<button type="button" class="g2-step' + (lit.has(i) ? ' on' : '') + '" data-a="step" data-i="' + i + '" aria-label="Step ' + (i + 1) + (lit.has(i) ? ', on' : ', off') + '"></button>';
-      h += '</div></div>';
+    const p = L.part, r = p.rhythm || {}, mine = isMine(r), sn = styleName(L);
+    const hasRule = !mine || (p.rhythmAlt && !isMine(p.rhythmAlt));
+    const { spb, nb, tot, lit } = partHits(L);
+    const gname = (GRIDS.find((g) => g[0] === spb) || [0, spb + '-a-bar'])[1].toLowerCase();
+    h += '<div style="display:flex;flex-direction:column;gap:10px">';
+    // WHERE THE RHYTHM COMES FROM — said first, and switchable both ways
+    h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>Rhythm from</b><span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
+      + '<button type="button" data-a="rsrc" data-k="rule" class="' + (!mine ? 'on' : '') + '" aria-pressed="' + !mine + '"' + (hasRule ? '' : ' disabled style="opacity:.45"') + '>🎲 ' + esc(sn) + '’s rule</button>'
+      + '<button type="button" data-a="rsrc" data-k="mine" class="' + (mine ? 'on' : '') + '" aria-pressed="' + mine + '">✎ My pattern</button></span></div>';
+    // the steps of EVERY bar, as they play (the preview's columns, one row a bar)
+    const perBar = [];
+    let rows = '';
+    for (let b = 0; b < nb; b++) {
+      let c = 0;
+      rows += '<div style="display:flex;align-items:center;gap:6px;min-width:0"><span style="width:14px;flex:none;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span>'
+        + '<div style="flex:1;min-width:0;display:grid;grid-template-columns:repeat(' + spb + ',minmax(0,1fr));gap:' + (spb > 16 ? 1 : 3) + 'px">';
+      for (let i = 0; i < spb; i++) {
+        const g = b * spb + i, on = lit.has(g), beatGap = (spb % 4 === 0 && i > 0 && i % (spb / 4) === 0) ? 'margin-left:' + (spb > 16 ? 3 : 5) + 'px;' : '';
+        if (on) c++;
+        rows += mine
+          ? '<button type="button" class="g2-step' + (on ? ' on' : '') + '" data-a="step" data-i="' + g + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '" style="' + beatGap + '"></button>'
+          : '<span class="g2-step' + (on ? ' on' : '') + '" style="' + beatGap + 'display:block;opacity:.8"></span>';
+      }
+      rows += '</div></div>';
+      perBar.push(c);
     }
-    void per;
-    h += '</div>';
-    // figure presets as pictures
-    h += '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">' + FIGS.map(([id, nm, st]) => {
-      const on = r.kind === 'fig' && r.fig === id;
-      const dots = Array.from({ length: 16 }, (_, i) => '<span style="width:4px;height:8px;border-radius:2px;background:' + (st.indexOf(i) >= 0 ? (on ? '#fff' : '#a78bfa') : '#33334f') + '"></span>').join('');
-      return '<button type="button" class="g2-pill' + (on ? ' on' : '') + '" data-a="fig" data-k="' + id + '" style="flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 8px;min-height:52px"><span>' + esc(nm) + '</span><span style="display:flex;gap:1px">' + dots + '</span></button>';
-    }).join('') + '</div>';
-    h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><span class="g2-hint">Grid</span>' + GRIDS.map(([n, nm]) =>
+    const lo = Math.min(...perBar), hi = Math.max(...perBar);
+    const perTxt = (lo === hi ? lo : lo + '–' + hi) + ' hits a bar';
+    if (!mine) {
+      // THE RULE, IN WORDS — what made the preview, and why the bars differ
+      let why;
+      if (r.kind === 'euclid' && (perBarRule(L) || nb === 1)) why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over a bar of ' + spb + ' ' + esc(gname) + ', starting at step ' + ((r.rotate | 0) + 1) + (nb > 1 ? ', and every bar repeats it.' : '.');
+      else if (r.kind === 'euclid') why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over all ' + nb + ' bars (' + tot + ' ' + esc(gname) + '), starting at step ' + ((r.rotate | 0) + 1) + (lo === hi ? '.' : ' — so the bars fall differently.');
+      else if (r.kind === 'pulse') why = sn + '’s rule plays <b>evenly spaced hits</b> — ' + perTxt + '.';
+      else if (r.kind === 'chance') why = sn + '’s rule <b>picks hits by chance</b> on each step, so every take differs.';
+      else why = sn + '’s rule makes this rhythm (' + esc(String(r.kind || 'its own')) + ').';
+      h += '<div class="g2-hint">' + why + ' Tap ✎ My pattern to edit the steps — it starts as an exact copy, and this rule is kept.</div>';
+      h += rows;
+      if (r.kind === 'euclid' || r.kind === 'pulse') {
+        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="g2-hint">' + (r.kind === 'euclid' ? 'Hits' : 'Hits a bar') + '</span>'
+          + '<button type="button" class="g2-btn" data-a="rule" data-k="less" aria-label="Fewer hits" style="width:40px;min-height:36px;padding:0">−</button>'
+          + '<button type="button" class="g2-btn" data-a="rule" data-k="more" aria-label="More hits" style="width:40px;min-height:36px;padding:0">+</button>'
+          + (r.kind === 'euclid' ? '<span class="g2-hint" style="margin-left:6px">Shift</span>'
+            + '<button type="button" class="g2-btn" data-a="rule" data-k="left" aria-label="Shift earlier" style="width:40px;min-height:36px;padding:0">◀</button>'
+            + '<button type="button" class="g2-btn" data-a="rule" data-k="right" aria-label="Shift later" style="width:40px;min-height:36px;padding:0">▶</button>'
+            + '<button type="button" class="g2-btn" data-a="rule" data-k="dice" style="min-height:36px;margin-left:auto">🎲 New rhythm</button>' : '')
+          + '</div>';
+      }
+    } else {
+      h += '<div style="display:flex;align-items:center;gap:8px"><span class="g2-hint">Tap a step to add or remove a hit.' + (hasRule ? ' ' + esc(sn) + '’s rule is kept.' : '') + '</span>'
+        + '<span class="g2-hint" style="margin-left:auto;white-space:nowrap">' + perTxt + '</span>'
+        + '<button type="button" class="g2-btn" data-a="hits" data-d="-1" aria-label="Fewer hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">−</button>'
+        + '<button type="button" class="g2-btn" data-a="hits" data-d="1" aria-label="More hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">+</button></div>';
+      h += rows;
+      if (hasRule) h += '<button type="button" class="g2-btn" data-a="recopy" style="align-self:flex-start;min-height:36px;font-size:13px">↺ Copy ' + esc(sn) + '’s rule again</button>';
+      // figure presets: START FROM one (fills every bar)
+      h += '<div class="g2-hint">Start from</div><div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">' + FIGS.map(([id, nm, st]) => {
+        const on = r.kind === 'fig' && r.fig === id;
+        const dots = Array.from({ length: 16 }, (_, i) => '<span style="width:4px;height:8px;border-radius:2px;background:' + (st.indexOf(i) >= 0 ? (on ? '#fff' : '#a78bfa') : '#33334f') + '"></span>').join('');
+        return '<button type="button" class="g2-pill' + (on ? ' on' : '') + '" data-a="fig" data-k="' + id + '" style="flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 8px;min-height:52px"><span>' + esc(nm) + '</span><span style="display:flex;gap:1px">' + dots + '</span></button>';
+      }).join('') + '</div>';
+    }
+    if (mine || r.kind === 'euclid') h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><span class="g2-hint">Grid</span>' + GRIDS.map(([n, nm]) =>
       '<button type="button" class="g2-pill' + (spb === n && r.kind !== 'fig' ? ' on' : '') + '" data-a="grid" data-n="' + n + '">' + esc(nm) + '</button>').join('')
-      + '<label class="g2-hint" style="display:flex;align-items:center;gap:6px">Steps <input type="number" inputmode="numeric" min="1" max="64" value="' + spb + '" data-a="gridn" style="width:58px;height:36px;border-radius:9px;border:1px solid #3a3a5c;background:#1b1b30;color:#fff;text-align:center;font:inherit"></label></div>';
+      + (mine ? '<label class="g2-hint" style="display:flex;align-items:center;gap:6px">Steps <input type="number" inputmode="numeric" min="1" max="64" value="' + spb + '" data-a="gridn" style="width:58px;height:36px;border-radius:9px;border:1px solid #3a3a5c;background:#1b1b30;color:#fff;text-align:center;font:inherit"></label>' : '') + '</div>';
     h += '</div>';
     return h;
   }
@@ -578,7 +648,8 @@
       const s = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!s) return;
       const was = styleOf(layer());
       const dressIt = G.fresh && !G.dressed;
-      edit((L) => { if (dressIt) dress(E, L, s); s.make(E, L); }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
+      const p0 = layer().part || {}, mine0 = isMine(p0.rhythm) ? clone(p0.rhythm) : (isMine(p0.rhythmAlt) ? clone(p0.rhythmAlt) : null);
+      edit((L) => { if (dressIt) dress(E, L, s); s.make(E, L); if (mine0 && !isMine(L.part.rhythm)) L.part.rhythmAlt = mine0; else if (!mine0) delete L.part.rhythmAlt; }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
       if (dressIt) G.dressed = true;
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }
@@ -592,20 +663,53 @@
     if (a === 'release') { edit((L) => { V2.release(G.E, L); }, 'Back on the live rules — the frozen notes are gone (↶ Undo keeps them).'); return; }
     if (a === 'take') { edit((L) => { V2.newTake(L); }, 'A new take of the same rules.'); return; }
     if (a === 'fig') { const id = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {}); r.kind = 'fig'; r.fig = id; }, ''); return; }
+    if (a === 'grid' && !isMine((layer().part || {}).rhythm)) {
+      const n = +b.getAttribute('data-n');
+      edit((L) => {
+        if (!perBarRule(L)) { V2.setSpeed(G.E, L, n); return; }
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), share = (r.pulses | 0) / Math.max(1, r.steps | 0);
+        r.steps = n; r.pulses = clamp(Math.round(share * n), 1, n); r.rotate = ((r.rotate | 0) % n + n) % n;
+      }, ''); return;
+    }
     if (a === 'grid') {
       const n = +b.getAttribute('data-n');
       regrid(n); return;
     }
     if (a === 'step' || a === 'hits') {
       edit((L) => {
-        const { ns, cyc } = notesNow(L), cur = barHits(L, ns, cyc), lit = new Set(cur.lit);
+        toMine(L);
+        const cur = partHits(L), lit = new Set(cur.lit);
         if (a === 'step') { const i = +b.getAttribute('data-i'); if (lit.has(i)) lit.delete(i); else lit.add(i); }
         else {
-          const want = clamp(lit.size + (+b.getAttribute('data-d')), 1, cur.spb);
-          lit.clear(); for (let k = 0; k < want; k++) lit.add(Math.floor(k * cur.spb / want));
+          // EVEN HITS IN EVERY BAR: one more/less than the busiest bar, spread evenly
+          let most = 0; for (let k = 0; k < cur.nb; k++) { let c = 0; for (let i = 0; i < cur.spb; i++) if (lit.has(k * cur.spb + i)) c++; most = Math.max(most, c); }
+          const want = clamp(most + (+b.getAttribute('data-d')), 1, cur.spb);
+          lit.clear(); for (let k = 0; k < cur.nb; k++) for (let j = 0; j < want; j++) lit.add(k * cur.spb + Math.floor(j * cur.spb / want));
         }
-        writeBar(L, cur.spb, lit);
+        writePart(L, cur.spb, cur.nb, lit);
       }, ''); return;
+    }
+    if (a === 'rsrc') {
+      const k = b.getAttribute('data-k');
+      edit((L) => { if (k === 'mine') toMine(L); else toRule(L); },
+        k === 'mine' ? 'Your pattern — a copy of what ' + styleName(layer()) + '’s rule played. The rule is kept: switch back any time.'
+          : styleName(layer()) + '’s rule again. Your pattern is kept under ✎ My pattern.');
+      return;
+    }
+    if (a === 'recopy') {
+      edit((L) => { const p = L.part; if (!p.rhythmAlt || isMine(p.rhythmAlt)) return; const t = clone(L); t.part.rhythm = clone(p.rhythmAlt); const h = partHits(t); writePart(L, h.spb, h.nb, h.lit); }, 'Your pattern is a fresh copy of the rule (↶ Undo brings your edits back).');
+      return;
+    }
+    if (a === 'rule') {   // the rule's own knobs: hits across the part, shift, new rhythm
+      const k = b.getAttribute('data-k');
+      edit((L) => {
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), st = Math.max(1, r.steps | 0);
+        if (r.kind === 'pulse') { const sp = V2.speedOf(L) || 1; V2.setSpeed(G.E, L, Math.max(1, Math.round(sp) + (k === 'more' ? 1 : -1))); return; }
+        if (k === 'more' || k === 'less') r.pulses = clamp((r.pulses | 0) + (k === 'more' ? 1 : -1), 1, st);
+        if (k === 'left' || k === 'right') r.rotate = (((r.rotate | 0) + (k === 'right' ? 1 : -1)) % st + st) % st;
+        if (k === 'dice') { r.pulses = clamp(Math.round(st * (0.3 + Math.random() * 0.35)), 1, st); r.rotate = Math.floor(Math.random() * st); }
+      }, k === 'dice' ? 'A new rhythm from the same rule.' : '');
+      return;
     }
     if (a === 'bar') {
       const L = layer(); if (!L || !(L.part && L.part.kind === 'live')) return;

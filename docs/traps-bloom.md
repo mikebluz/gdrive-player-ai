@@ -256,6 +256,15 @@
 - **`offsetParent` IS NULL INSIDE A POPOVER**, whose wrapper is `position: fixed` — so a control you can see
   and press measures as hidden, and a reachability probe fails on working UI. Test the RECT plus
   `document.elementFromPoint` at its centre (what `test/ui-lifecycle.js`'s `tap` does), never `offsetParent`.
+- **A MISSING PER-PART RECORD IS EITHER A NEW PART OR PER-PART JUST ENGAGING — `L.partN` TELLS
+  THEM APART.** Only a part at or past the count last reconciled is seeded from the part before it
+  (generated → next take; frozen take → live, next take; hand-written → fitted by LENGTH, phrase
+  carried on / cut, `harmonize: 'chordlock'`, `hx` released on the copy). Without the count, engaging
+  per-part would re-roll every other part. The copy's written key is the SOURCE part's
+  (`parts[pi-1].key`, else the AREA key) — `_ambKeyRootPc` is the key sounding NOW and stamped the new
+  part's E on a C phrase. A record's `harmonize` outranks `L.harmony` through `harmOf`/`harmFollows`,
+  defined in BOTH IIFEs; every editor/label site reads it, or the picture and the sound disagree.
+  Before this, a new part got an EMPTY copy of the iced record. Gate: `node test/probe-newpart-seed.mjs`.
 - **⇅ MIX MOVES `e.levelGain`, NOT the note** (`_ambMixMoveTick`, from `_ambTick`) — so it sweeps the
   whole layer including notes already sounding, which is what a fader does and what a per-note volume
   could never do. It has its OWN span (`mixmove.bars`), because 🌒 Arc's only exists while Arc is on.

@@ -23,6 +23,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 (function () {
   'use strict';
+  // WHAT A RECORD DOES WHEN THE CHORDS MOVE: its own `harmonize` (a seeded
+  // ＋ Part copy of hand-written notes) outranks the layer's `harmony`. Defined
+  // in BOTH IIFEs — a bare name from the other half throws into a catch.
+  const harmOf = (L, p) => { const q = p || (L && L.part);
+    return (q && (q.harmonize === 'diatonic' || q.harmonize === 'chordlock')) ? q.harmonize : (L && L.harmony); };
+  const harmFollows = (L, p) => { const h = harmOf(L, p); return h === 'diatonic' || h === 'chordlock'; };
 
   const A4 = () => (typeof masterFreqA === 'number' ? masterFreqA : 440);
   const midiToFreq = (m) => A4() * Math.pow(2, (m - 69) / 12);
@@ -381,8 +387,7 @@
         }
       }
     } catch (e) {}
-    const follows = (L.part.kind !== 'recorded') ||
-      L.harmony === 'diatonic' || L.harmony === 'chordlock';
+    const follows = (L.part.kind !== 'recorded') || harmFollows(L);
     if (follows) try {
       const pg = cfg && cfg.prog;
       if (pg && pg.on) {
@@ -1274,6 +1279,10 @@
     // 'fixed' plays it as written (v2's behaviour until now), the others remap
     // through v1's `_ambLockHarmonizeFreq`. Absent = fixed.
     if (L.harmony !== 'diatonic' && L.harmony !== 'chordlock') delete L.harmony;
+    // per-RECORD harmony (a seeded ＋ Part copy of hand-written notes) — additive,
+    // absent by default; anything else is dropped
+    if (L.part && L.part.harmonize != null && L.part.harmonize !== 'diatonic' && L.part.harmonize !== 'chordlock') delete L.part.harmonize;
+    if (L.partN != null && !(Number.isFinite(L.partN) && L.partN >= 0)) delete L.partN;
     // SCHEDULED TONE — v1's own coercion, verbatim: absent = off, and a step
     // tone of '' means the layer's default voice.
     if (L.toneSeq != null) {
@@ -4485,7 +4494,9 @@
       // loop — so a composed phrase follows the changes identically either
       // side. Resolved per NOTE, at the note's own time, because the chord can
       // move inside one cycle.
-      const hz = (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+      // a record's own `harmonize` (a seeded ＋ Part copy) outranks the layer's
+      const hMode = (p.harmonize === 'diatonic' || p.harmonize === 'chordlock') ? p.harmonize : L.harmony;
+      const hz = (hMode === 'diatonic' || hMode === 'chordlock');
       let kc = null;
       if (hz) {
         // The key the part was WRITTEN in — `_ambLockHarmonizeFreq` transposes
@@ -4524,7 +4535,7 @@
         // DEGREE in the key it was written in is re-indexed into that chord's
         // tones. Same trick `applyHarm` uses (`set.ivs.indexOf(pc)`), and it
         // is in-chord by construction rather than by a snap.
-        if (!n.hx && hz && kc && L.harmony === 'chordlock') {
+        if (!n.hx && hz && kc && hMode === 'chordlock') {
           try {
             // `ctx.E`, not `E` — `notesFor` takes (L, ctx) and has no engine of
             // its own; a bare `E` threw straight into the catch below and the
@@ -9099,6 +9110,60 @@
                 ? _ambSnapBars(b) : Math.round(b * 48) / 48, 0.125, 64);
               if (Math.abs((+rec.bars || 0) - want) > 1e-6) rec.bars = want;
             };
+            // ＋ PART SEEDS FROM THE PART BEFORE IT (2026-10-01). user: generated
+            // layers "re-roll a new take using the previous part's settings";
+            // hand-written ones are "re-harmonized to fit the new part, and
+            // truncated/extended as needed to fit". A missing record means
+            // either a part just ADDED or per-part just ENGAGED (every other
+            // part missing at once) — only the first may re-roll. `L.partN` is
+            // how many parts this layer was last reconciled against: a part at
+            // or past it is new. Absent (first engagement, every older save)
+            // → copy exactly as before.
+            const prevN = Number.isFinite(L.partN) ? (L.partN | 0) : -1;
+            const seedNew = (rec, src, oldBars, pi) => {
+              if (rec.kind === 'live') { rec.take = ((rec.take | 0) + 1) % 1000000; delete rec.takeb; return 'reroll'; }
+              if (rec.kind === 'recorded' && rec.made === 'take') {
+                // a frozen ROLL of the live rules — re-rolling loses nothing
+                rec.kind = 'live'; rec.take = ((rec.take | 0) + 1) % 1000000;
+                delete rec.takeb; delete rec.notes; delete rec.made; return 'reroll';
+              }
+              // HAND-WRITTEN: fit by LENGTH, not by stretch — times are cycle
+              // fractions, so rescale by old/new bars; a shorter part drops what
+              // falls past its end (clipping held notes), a longer one carries
+              // the phrase on into the extra bars.
+              const nb = +rec.bars || 0;
+              if (oldBars > 0 && nb > 0 && Array.isArray(rec.notes) && rec.notes.length) {
+                const k = oldBars / nb, out = [];
+                const reps = Math.max(1, Math.ceil(nb / oldBars - 1e-9));
+                for (let r = 0; r < reps; r++) {
+                  rec.notes.forEach((n) => {
+                    const t = ((+n.t || 0) + r) * k;
+                    if (t >= 1 - 1e-9) return;
+                    const o = Object.assign({}, n, { t, dur: Math.max(0.001, Math.min((+n.dur || 0.01) * k, 1 - t)) });
+                    // re-harmonizing IS the request here, so a hand-placed pin
+                    // (`hx`, "sound exactly this") is released on the COPY only
+                    delete o.hx;
+                    out.push(o);
+                  });
+                }
+                rec.notes = out.sort((a, b) => a.t - b.t);
+              }
+              // …and follows the NEW part's chords: written in the key it was
+              // written in, remapped per note at emit (the chordlock path)
+              rec.harmonize = 'chordlock';
+              // THE SOURCE PART'S key, never "the key sounding now" — that is
+              // time-dependent and stamped the NEW part's key on notes written
+              // in the old one (measured: a C phrase stamped E)
+              if (!(rec.key && Number.isFinite(rec.key.root))) {
+                try {
+                  const pk = ((cfg.prog && cfg.prog.parts) || [])[pi - 1];
+                  rec.key = (pk && pk.key && Number.isFinite(pk.key.root))
+                    ? { root: pk.key.root | 0, scale: pk.key.scale || 'major' }
+                    : { root: _ambAreaKeyRootPc(cfg) | 0, scale: _ambAreaKeyScaleName(cfg) || 'major' };
+                } catch (e) {}
+              }
+              return 'fit';
+            };
             rgs.forEach((rg) => {
               const pi = (rg && Number.isFinite(rg.pi)) ? (rg.pi | 0) : 0;
               pis[String(pi)] = 1;
@@ -9114,10 +9179,23 @@
               // it with no invalidation and no event.
               if (pi === (L.partFor | 0)) { fitTo(L.part, pi); return; }
               if (L.parts[String(pi)]) { fitTo(L.parts[String(pi)], pi); return; }
+              if (prevN >= 0 && pi >= prevN && pi > 0) {
+                const pp = pi - 1;
+                const src = (pp === (L.partFor | 0)) ? L.part : (L.parts[String(pp)] || L.partAll);
+                if (src && typeof src === 'object') {
+                  const rec = JSON.parse(JSON.stringify(src));
+                  const oldBars = +src.bars || 0;
+                  fitTo(rec, pi);
+                  try { seedNew(rec, src, oldBars, pi); } catch (e) {}
+                  L.parts[String(pi)] = rec;
+                  return;
+                }
+              }
               const rec = JSON.parse(JSON.stringify(L.partAll));
               fitTo(rec, pi);
               L.parts[String(pi)] = rec;
             });
+            L.partN = rgs.length;
             Object.keys(L.parts).forEach((k) => { if (!pis[k]) delete L.parts[k]; });
           }
         } catch (e) {}
@@ -9738,6 +9816,13 @@
 (function () {
   'use strict';
   const V2 = window._v2; if (!V2) return;
+  // WHAT A RECORD DOES WHEN THE CHORDS MOVE: its own `harmonize` (a seeded
+  // ＋ Part copy of hand-written notes) outranks the layer's `harmony`. Defined
+  // in BOTH IIFEs — a bare name from the other half throws into a catch.
+  const harmOf = (L, p) => { const q = p || (L && L.part);
+    return (q && (q.harmonize === 'diatonic' || q.harmonize === 'chordlock')) ? q.harmonize : (L && L.harmony); };
+  const harmFollows = (L, p) => { const h = harmOf(L, p); return h === 'diatonic' || h === 'chordlock'; };
+
   // ATTACHED HERE, NOT IN THE EXPORT LITERAL. `window._v2 = { … }` is built in the
   // FIRST IIFE and `paintPartHue` lives in this one, so a `paintPart:` entry up there is
   // a ReferenceError the caller's try/catch swallows — a silent no-op, which is the
@@ -10690,8 +10775,8 @@
       // actually in force — from `FOLLOW_OPTS` once the notes are stored, so it
       // reads back the same words as the card's own select.
       pt.push(kv(rec ? 'Pitch quantize' : 'Follows', rec
-        ? (esc(whyName(FOLLOW_OPTS, L.harmony || 'fixed', 'Off \u2014 keep the stored pitches')) +
-           ((L.harmony === 'diatonic' || L.harmony === 'chordlock') && keyTxt ? ' · ' + esc(keyTxt) : ''))
+        ? (esc(whyName(FOLLOW_OPTS, harmOf(L) || 'fixed', 'Off \u2014 keep the stored pitches')) +
+           (harmFollows(L) && keyTxt ? ' · ' + esc(keyTxt) : ''))
         : ((cfg && cfg.prog && cfg.prog.on ? 'the sounding change' : 'the key') +
            (keyTxt ? ' · ' + esc(keyTxt) : ''))));
       if (I(L.proximity) > 0) pt.push(kv('Proximity', String(I(L.proximity))));
@@ -15285,7 +15370,7 @@
   function neShownMidi(host, L, idx) {
     const n = L.part && Array.isArray(L.part.notes) && L.part.notes[idx];
     if (!n) return 0;
-    if (!n.hx && (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+    if (!n.hx && harmFollows(L)) {
       try {
         const card = host.closest('.v2-layer');
         const cv = card && card.querySelector('.v2-vizcv');
@@ -15552,14 +15637,14 @@
     if (what === 'midi') {
       // the HAND WINS on a remapping part, exactly as the drag and the editor
       // do — otherwise the remap re-voices the note and the move is undone
-      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') ns.forEach((n) => { n.hx = 1; });
+      if (harmFollows(L)) ns.forEach((n) => { n.hx = 1; });
       const lo = Math.min(...ns.map((n) => n.midi | 0)), hi = Math.max(...ns.map((n) => n.midi | 0));
       d = clamp(d, -lo, 127 - hi);
       if (!d) return false;
       ns.forEach((n) => { n.midi = clamp((n.midi | 0) + d, 0, 127); });
     } else if (what === 't') {
       // …and a time move must not re-voice them either (the `pos` rule)
-      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') ns.forEach((n) => { n.hx = 1; });
+      if (harmFollows(L)) ns.forEach((n) => { n.hx = 1; });
       const lo = Math.min(...ns.map((n) => n.t)), hi = Math.max(...ns.map((n) => n.t));
       const loK = Math.round(lo / cell), hiK = Math.round(hi / cell);
       const maxK = Math.max(0, Math.round((1 - cell / 2) / cell));
@@ -15614,7 +15699,7 @@
       // SHOWS the sounding pitch, so `v` arrives in sounding space: PIN the
       // note and write it verbatim — stored IS sounding once pinned, ± is
       // linear, and the keyboard's absolute key lands exactly.
-      if (L.harmony === 'diatonic' || L.harmony === 'chordlock') n.hx = 1;
+      if (harmFollows(L)) n.hx = 1;
       n.midi = clamp(v, 0, 127);
     }
     else if (sf === 'pos') {
@@ -15625,7 +15710,7 @@
       // it up or down toward the nearest note". The hand wins (the drag's own
       // rule): pin at the pitch currently DRAWN, then move it — time and pitch
       // stay independent axes.
-      if (!n.hx && (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+      if (!n.hx && harmFollows(L)) {
         n.midi = clamp(neShownMidi(host, L, NE.idx), 0, 127);
         n.hx = 1;
       }
@@ -15711,7 +15796,7 @@
       // sounding \u2192 stored: pinned exact on a remapping part, shift-corrected
       // under transpose/register otherwise \u2014 the pencil's own two rules, so
       // the chord SOUNDS exactly as picked whatever the part's shifts are.
-      const hz2 = (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+      const hz2 = harmFollows(L);
       const regNow = clamp((L.instrument.register | 0) || 4, 1, 8);
       const tr2 = (p.transpose | 0) + (Number.isFinite(p.reg) ? (regNow - p.reg) * 12 : 0);
       let added = 0;
@@ -20656,7 +20741,7 @@
     }
     const bound = !!L.lenSync;
     const isRec = p.kind === 'recorded';
-    const isFollow = (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+    const isFollow = harmFollows(L, p);
     const st = { len: (p.barsMode === 'fill') ? 'fill' : 'stretch',
                  notes: isFollow ? 'follow' : 'keep' };
     const fmt = (b2) => (Math.round(b2 * 100) / 100) + ' bar' + (b2 === 1 ? '' : 's');
@@ -21045,7 +21130,7 @@
     // drag, the pencil and the note editor all follow.
     const pit = Array.isArray(pitches) ? pitches : null;
     const moved = !!(pit && pit.some((m) => (m | 0) !== (n0.midi | 0)));
-    const pin = moved && (L.harmony === 'diatonic' || L.harmony === 'chordlock');
+    const pin = moved && harmFollows(L);
     const out = []; let acc = 0;
     for (let i = 0; i < w.length; i++) {
       const piece = { t: T + acc * D,
@@ -23526,7 +23611,7 @@
         const t = clamp(Math.floor(fr / cell + 1e-6) * cell, 0, 1 - cell);
         const row = clamp(pg.hiM - Math.floor((py - pg.top) / Math.max(1, pg.rowH)), 0, 127);
         const nn = { t: t, midi: row, dur: cell };
-        if (L.harmony === 'diatonic' || L.harmony === 'chordlock') nn.hx = 1;
+        if (harmFollows(L)) nn.hx = 1;
         L.part.notes.push(nn);
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
         try { E2.getCfg(); } catch (e) {}              // coerce, prune, RE-SORT
@@ -23866,7 +23951,7 @@
           // exact — stored IS sounding, one row per detent, and the note
           // STAYS where it is dropped.
           if (!DRAG.pinned && DRAG.mode === 'move' &&
-              (L.harmony === 'diatonic' || L.harmony === 'chordlock')) {
+              harmFollows(L)) {
             DRAG.pinned = 1;
             if (DRAG.group) {
               // …for the WHOLE gathering. Pinning only the grabbed note would

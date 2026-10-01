@@ -1300,20 +1300,28 @@
       const cfg = _shapeCfg();
       const hasSteps = !!(lane && Array.isArray(lane.steps) && lane.steps.length);
       const anyCustom = !!(lane && _shapeLaneShapes(lane).some(s => _shapeIsCustomized(_shapeNormalize(s))));
-      if ((hasSteps || anyCustom) && typeof confirm === 'function') {
-        if (!confirm('Reset this lane\'s wheels to a single default bar and clear its recorded steps?')) return;
+      const doReset = () => {
+        const lane2 = _shapeLane() || lane;   // re-read: an answered question may have taken time
+        if (lane2) {
+          lane2.shapes = [_shapeDefault()];
+          lane2.shape = null;
+          lane2.shapeBar = 0;
+          lane2._shapeStepsFp = null;     // force the steps to re-sync from the fresh wheel
+        }
+        _shapeMarkEdit();
+        try { _shapeFlushNow(); } catch (e) {}       // lane.steps follow the reset wheel
+        try { _shapeBuildToolbar(); } catch (e) {}   // reflect the reset settings (Nodes/Tone/…)
+        try { _shapeDraw(); } catch (e) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      };
+      // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+      // thread and starved the phone's audio
+      if ((hasSteps || anyCustom) && typeof window.uiConfirm === 'function') {
+        window.uiConfirm('Reset this lane\'s wheels to a single default bar and clear its recorded steps?')
+          .then((ok) => { if (ok) doReset(); });
+        return;
       }
-      if (lane) {
-        lane.shapes = [_shapeDefault()];
-        lane.shape = null;
-        lane.shapeBar = 0;
-        lane._shapeStepsFp = null;     // force the steps to re-sync from the fresh wheel
-      }
-      _shapeMarkEdit();
-      try { _shapeFlushNow(); } catch (e) {}       // lane.steps follow the reset wheel
-      try { _shapeBuildToolbar(); } catch (e) {}   // reflect the reset settings (Nodes/Tone/…)
-      try { _shapeDraw(); } catch (e) {}
-      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      doReset();
     }
 
     // ---- Sequence → Shape conversion ---------------------------------------
@@ -1561,13 +1569,22 @@
         // per-node wrap payloads (Set cycles / Run groups). Warn + let the user
         // back out when any exist; revert the stepper if they cancel.
         const hasWrap = (c.nodes || []).some(nd => nd && (nd.variance || (nd.wrapGroup && nd.wrapType === 'run')));
-        if (n !== c.nodeCount && hasWrap && typeof confirm === 'function'
-            && !confirm('Changing the number of nodes rebuilds the wheel and will reset its Set cycles and Run groups back to plain notes. Continue?')) {
-          nodesEl.value = c.nodeCount;   // revert the stepper, keep the wheel as-is
+        const apply = (c2) => {
+          c2.nodeCount = n; c2.nodes = _shapeEqualNodes(n, c2.nodes);
+          nodesEl.value = n; _shapeDraw(); persist();
+        };
+        // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+        // thread and starved the phone's audio
+        if (n !== c.nodeCount && hasWrap && typeof window.uiConfirm === 'function') {
+          window.uiConfirm('Changing the number of nodes rebuilds the wheel and will reset its Set cycles and Run groups back to plain notes. Continue?')
+            .then((ok) => {
+              const c2 = _shapeCfg() || c;
+              if (!ok) { nodesEl.value = c2.nodeCount; return; }   // revert the stepper, keep the wheel as-is
+              apply(c2);
+            });
           return;
         }
-        c.nodeCount = n; c.nodes = _shapeEqualNodes(n, c.nodes);
-        nodesEl.value = n; _shapeDraw(); persist();
+        apply(c);
       });
       timingEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return; c.timingMode = timingEl.value; _shapeDraw(); persist();
@@ -1734,13 +1751,25 @@
           // warn and let the user back the move out (restore the node's angle).
           if (drag.moved && drag.runGid != null && cfg && drag.runWasContig
               && !_shapeRunGroupContiguous(cfg, drag.runGid)) {
-            const ok = (typeof confirm !== 'function') || confirm('Moving this node out of its Run group will split the run into pieces when the wheel recompiles into the lane. Move it anyway?');
-            if (!ok) {
-              if (cfg.nodes[drag.idx] && Number.isFinite(drag.origAngle)) cfg.nodes[drag.idx].angleFrac = drag.origAngle;
-              _shapeDraw();
+            // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+            // thread and starved the phone's audio. The gesture ends NOW; the
+            // move is kept or backed out when the question is answered.
+            if (typeof window.uiConfirm === 'function') {
+              const idx0 = drag.idx, orig0 = drag.origAngle;
               try { _shapeCanvas.releasePointerCapture(e.pointerId); } catch (ex) {}
               drag = { idx: -1, moved: false, sx: 0, sy: 0 };
-              return;   // backed out — don't persist the rejected move
+              window.uiConfirm('Moving this node out of its Run group will split the run into pieces when the wheel recompiles into the lane. Move it anyway?')
+                .then((ok) => {
+                  const c3 = _shapeCfg() || cfg;
+                  if (!ok) {
+                    if (c3 && c3.nodes[idx0] && Number.isFinite(orig0)) c3.nodes[idx0].angleFrac = orig0;
+                    _shapeDraw();
+                    return;   // backed out — don't persist the rejected move
+                  }
+                  _shapeMarkEdit();
+                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
+                });
+              return;
             }
           }
           _shapeMarkEdit();
@@ -2309,7 +2338,12 @@
       if (!Array.isArray(masterShapes)) return;
       const victims = masterShapes.filter(c => _shapeGroupKey(c) === gkey).map(c => c.id);
       if (!victims.length) return;
-      if (typeof confirm === 'function' && victims.length > 1 && !confirm('Delete all ' + victims.length + ' versions in this group?')) return;
+      // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main thread
+      if (victims.length > 1 && typeof window.uiConfirm === 'function') {
+        window.uiConfirm('Delete all ' + victims.length + ' versions in this group?')
+          .then((ok) => { if (ok) victims.forEach(id => _masterDeleteCopy(id)); });
+        return;
+      }
       victims.forEach(id => _masterDeleteCopy(id));
     }
     // ----- Capture / upload (mirrors master Bloom) ---------------------------
@@ -2455,7 +2489,15 @@
     function _shapeMasterClearAll() {
       const list = Array.isArray(masterShapes) ? masterShapes : [];
       if (!list.length) { if (typeof showToast === 'function') showToast('No shapes to clear'); return; }
-      if (typeof confirm === 'function' && !confirm('Clear all ' + list.length + ' master Shape' + (list.length === 1 ? '' : 's') + '? This can’t be undone.')) return;
+      // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main thread
+      if (typeof window.uiConfirm === 'function') {
+        window.uiConfirm('Clear all ' + list.length + ' master Shape' + (list.length === 1 ? '' : 's') + '? This can’t be undone.')
+          .then((ok) => { if (ok) _shapeMasterClearAllNow(); });
+        return;
+      }
+      _shapeMasterClearAllNow();
+    }
+    function _shapeMasterClearAllNow() {
       try { if (_shapeMasterEditId != null) _shapeMasterEditClose(); } catch (e) {}
       try { _shapeMasterStop(); } catch (e) {}
       masterShapes = [];

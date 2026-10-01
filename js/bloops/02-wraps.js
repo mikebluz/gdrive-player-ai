@@ -48,11 +48,35 @@
       }, 0);
     });
   }
-  window.uiPrompt = (msg, def) => open('prompt', msg, def);
-  window.uiConfirm = (msg) => open('confirm', msg);
+  // A REPLACED window.prompt/confirm IS AN ANSWER, NOT A DIALOG. The test
+  // harness has always auto-answered with `window.confirm = () => true`, and
+  // `page.on('dialog')` accepts the native one; both keep working because a
+  // non-native function (or a page that asked for native dialogs) is called
+  // as-is. Real users get the in-page dialog — nothing on the app's own paths
+  // ever replaces these.
+  const nativePrompt = window.prompt, nativeConfirm = window.confirm, nativeAlert = window.alert;
+  const isNative = (f) => { try { return /\[native code\]/.test(Function.prototype.toString.call(f)); } catch (e) { return false; } };
+  // …and an AUTOMATED page (puppeteer: `navigator.webdriver`) keeps native
+  // dialogs, so the 50-odd probes answering them with page.on('dialog') work
+  // unchanged. `window.__uiNativeDialogs = false` forces the in-page dialog
+  // there (test/probe-ui-dialogs.mjs); a person's browser is never automated.
+  const wantNative = () => window.__uiNativeDialogs === true
+    || (window.__uiNativeDialogs !== false && !!(navigator && navigator.webdriver));
+  window.uiPrompt = (msg, def) => {
+    if (window.prompt !== nativePrompt || !isNative(window.prompt) || wantNative()) {
+      try { return Promise.resolve(window.prompt(msg, def)); } catch (e) { return Promise.resolve(null); }
+    }
+    return open('prompt', msg, def);
+  };
+  window.uiConfirm = (msg) => {
+    if (window.confirm !== nativeConfirm || !isNative(window.confirm) || wantNative()) {
+      try { return Promise.resolve(!!window.confirm(msg)); } catch (e) { return Promise.resolve(false); }
+    }
+    return open('confirm', msg);
+  };
   window.uiAlert = (msg) => open('alert', msg);
   // NOTHING READS alert's return value — route it for every caller at once
-  try { window.alert = (msg) => { try { open('alert', msg); } catch (e) {} }; } catch (e) {}
+  try { window.alert = (msg) => { try { if (wantNative()) return nativeAlert.call(window, msg); open('alert', msg); } catch (e) {} }; } catch (e) {}
 })();
 
     // ---- Wrap cycle ----
@@ -1481,10 +1505,10 @@
 
     // Wipe the whole wrap bank after a confirm, tearing down any armed wrap
     // and cycle state so nothing dangles.
-    function clearWrapBank() {
+    async function clearWrapBank() {
       if (savedWraps.length === 0) return;
       const n = savedWraps.length;
-      if (!confirm(`Clear all ${n} saved wrap${n === 1 ? '' : 's'} from the bank? This can't be undone.`)) return;
+      if (!(await uiConfirm(`Clear all ${n} saved wrap${n === 1 ? '' : 's'} from the bank? This can't be undone.`))) return;
       savedWraps.length = 0;
       activeWrapBankId = null;
       wrapTemplate = null;
@@ -2051,10 +2075,10 @@
     // any track items that referenced a wiped sequence (by name) with
     // silent placeholders so multi-track playback doesn't crash on a
     // missing reference.
-    document.getElementById('clear-bank-btn')?.addEventListener('click', () => {
+    document.getElementById('clear-bank-btn')?.addEventListener('click', async () => {
       if (savedSequences.length === 0) return;
       const n = savedSequences.length;
-      const ok = confirm(`Delete all ${n} saved sequence${n === 1 ? '' : 's'} from the bank? This can't be undone.`);
+      const ok = await uiConfirm(`Delete all ${n} saved sequence${n === 1 ? '' : 's'} from the bank? This can't be undone.`);
       if (!ok) return;
       try { stopSequence(); } catch (e) {}
       const names = new Set(savedSequences.map(s => s && s.name).filter(Boolean));

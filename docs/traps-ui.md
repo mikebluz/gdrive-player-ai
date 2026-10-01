@@ -411,6 +411,17 @@
   (append + next frame) because menus reflow. A list of 200+ belongs in a filterable modal, not a menu.
 - **`_ambSl`'s `hint` goes into a `title`, which a phone NEVER shows.** Say the unit in the READOUT.
   `100`, `0` and `1` are the values most likely to be meaningless — they express a RELATIONSHIP.
+- **NEVER A NATIVE `prompt`/`confirm`/`alert` — use `uiPrompt`/`uiConfirm` (promises, 02-wraps.js).**
+  They freeze the main thread until dismissed, and on the phone that thread carries every frame to the
+  native speaker AND runs the note scheduler: the ring ran dry in ~0.85 s and playback glitched and
+  distorted while you typed a layer name (2026-10-01). `alert` is routed to the in-page dialog
+  wholesale (nothing reads its return); prompt/confirm needed their continuations moved into
+  `.then` — a function that RETURNED a dialog's answer now returns a promise, or `true` at once when
+  it need not ask (`matSwitchOK`/`whenOK`), and anything captured before the await is RE-RESOLVED by
+  id after it (getCfg replaces objects). Lint enforces it (`no-restricted-globals` on every bloops
+  file). Under automation (`navigator.webdriver`) or with a stubbed `window.confirm` the helpers
+  defer to the native/stub, so `page.on('dialog')` probes run unchanged; `window.__uiNativeDialogs =
+  false` forces the in-page one. Gate: `node test/probe-ui-dialogs.mjs`.
 - **Sliders need `.ambient-sl`** or they get no touch handling at all (delegated `pointerdown`: grab
   anywhere, move by DELTA never jump, vertical distance = fine adjust, a HOLD ≥ 480 ms released in
   place = numeric entry). Arm on CUMULATIVE travel, never a per-move delta. **Decide exact entry on

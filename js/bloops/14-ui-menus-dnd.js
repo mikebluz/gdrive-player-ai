@@ -123,12 +123,12 @@
       // Force a project name first — voices are namespaced under the current
       // project so the user always knows what they belong to.
       if (!currentProjectName || !currentProjectName.trim()) {
-        const ok = confirm('Save the project first? Voices are saved with the project\'s name in the filename.');
+        const ok = await uiConfirm('Save the project first? Voices are saved with the project\'s name in the filename.');
         if (!ok) return;
         await saveProjectToDrive();
         if (!currentProjectName) return; // user cancelled the project save
       }
-      const voiceRaw = prompt('Name for this Voice (grid state):', '');
+      const voiceRaw = await uiPrompt('Name for this Voice (grid state):', '');
       if (!voiceRaw || !voiceRaw.trim()) return;
       const voiceName = sanitizeVoiceToken(voiceRaw);
       const projectToken = sanitizeVoiceToken(currentProjectName);
@@ -150,7 +150,7 @@
         const match = existing.find(f => f.name === filename);
         let existingFileId = null;
         if (match) {
-          const ok = confirm(`A voice "${voiceName}" already exists for project "${projectToken}" — overwrite it?`);
+          const ok = await uiConfirm(`A voice "${voiceName}" already exists for project "${projectToken}" — overwrite it?`);
           if (!ok) {
             btn.textContent = origText;
             btn.disabled = false;
@@ -214,7 +214,7 @@
 
     async function saveEffectsToDrive() {
       const btn = document.getElementById('fx-save-btn');
-      const name = prompt('Name for these FX settings:', '');
+      const name = await uiPrompt('Name for these FX settings:', '');
       if (!name || !name.trim()) return;
       const filename = name.trim().replace(/\.json$/i, '') + '.json';
       const origText = btn.textContent;
@@ -233,7 +233,7 @@
         const match = existing.find(f => f.name === filename);
         let existingFileId = null;
         if (match) {
-          const ok = confirm(`FX preset "${name.trim()}" already exists. Overwrite it?`);
+          const ok = await uiConfirm(`FX preset "${name.trim()}" already exists. Overwrite it?`);
           if (!ok) {
             btn.textContent = origText;
             btn.disabled = false;
@@ -2199,9 +2199,9 @@
       if (loadSel) loadSel.addEventListener('change', () => { close(); showEnsembleEditor(loadSel.value || undefined); });
 
       const delBtn = modal.querySelector('#ee-delete');
-      if (delBtn) delBtn.addEventListener('click', () => {
+      if (delBtn) delBtn.addEventListener('click', async () => {
         if (!existing) return;
-        if (typeof confirm === 'function' && !confirm('Delete ensemble "' + (existing.name || existing.id) + '"?')) return;
+        if (typeof uiConfirm === 'function' && !(await uiConfirm('Delete ensemble "' + (existing.name || existing.id) + '"?'))) return;
         if (typeof ensembles !== 'undefined') ensembles.delete(String(existing.id));
         if (typeof persistWorkspace === 'function') persistWorkspace();
         if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
@@ -3023,7 +3023,7 @@
                 x.title = 'Delete sample “' + o.label + '”';
                 x.addEventListener('click', async (e) => {
                   e.stopPropagation();
-                  if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                  if (!(await uiConfirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).'))) return;
                   try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
                   if (p.type === o.value) { p.type = 'sine'; _touched.add('type'); broadcastAll('type', 'sine'); }
                   renderTonePicker();
@@ -4766,7 +4766,7 @@
                 x.title = 'Delete sample “' + o.label + '”';
                 x.addEventListener('click', async (e) => {
                   e.stopPropagation();
-                  if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                  if (!(await uiConfirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).'))) return;
                   try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
                   if (p.type === o.value) _setTone('sine');
                   renderTonePicker();
@@ -5052,10 +5052,10 @@
         pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null,
         autoPan: 0, autoPanFreq: 1, autoPanDepth: 100,
       };
-      modal.querySelector('.sm-reset-sound').addEventListener('click', () => {
+      modal.querySelector('.sm-reset-sound').addEventListener('click', async () => {
         try {
-          if (typeof window !== 'undefined' && window.confirm &&
-              !window.confirm('Reset this step\'s sound — envelope, volume, tune, pan and all effects — to defaults? The note, wave and timing are kept.')) return;
+          if (typeof uiConfirm === 'function' &&
+              !(await uiConfirm('Reset this step\'s sound — envelope, volume, tune, pan and all effects — to defaults? The note, wave and timing are kept.'))) return;
         } catch (e) {}
         Object.keys(SE_SOUND_DEFAULTS).forEach(k => { p[k] = SE_SOUND_DEFAULTS[k]; _touched.add(k); });
         // Re-sync every slider input + its value label to the restored values.

@@ -2082,13 +2082,14 @@
         controls.querySelector('.track-rec').addEventListener('click', () => toggleTrackRecording(trackIdx));
         controls.querySelector('.track-stereo').addEventListener('click', () => toggleTrackStereo(trackIdx));
         controls.querySelector('.track-eq').addEventListener('click', () => showTrackEqDialog(trackIdx));
-        controls.querySelector('.track-clear').addEventListener('click', () => {
+        controls.querySelector('.track-clear').addEventListener('click', async () => {
           if ((track.items || []).length === 0) return;
-          if (!confirm(`Empty ${track.name}? Removes every item in this track but keeps the track itself.`)) return;
+          if (!(await uiConfirm(`Empty ${track.name}? Removes every item in this track but keeps the track itself.`))) return;
           clearTrack(trackIdx);
         });
         controls.querySelector('.track-remove').addEventListener('click', () => {
-          if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
+          if (track.items.length === 0) { removeTrack(trackIdx); return; }
+          uiConfirm(`Remove ${track.name}?`).then((ok) => { if (ok) removeTrack(trackIdx); });
         });
         // Multi-select toggle — global flag, but the checkbox lives on
         // every track row so it's visible no matter which row the user
@@ -2103,8 +2104,8 @@
           });
         }
         const nameEl = controls.querySelector('.track-name');
-        nameEl.addEventListener('dblclick', () => {
-          const name = prompt('Rename track:', track.name);
+        nameEl.addEventListener('dblclick', async () => {
+          const name = await uiPrompt('Rename track:', track.name);
           if (name && name.trim()) { track.name = name.trim(); persistTracks(); renderTracks(); }
         });
         row.appendChild(controls);
@@ -2270,8 +2271,8 @@
               const acts = [];
               if (!isSilent) {
                 acts.push({ label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) });
-                acts.push({ label: 'Change speed…', fn: () => {
-                  const raw = prompt('Speed change %  (positive = faster, negative = slower):', '10');
+                acts.push({ label: 'Change speed…', fn: async () => {
+                  const raw = await uiPrompt('Speed change %  (positive = faster, negative = slower):', '10');
                   if (raw == null) return;
                   const v = parseFloat(raw);
                   if (!Number.isFinite(v)) { alert('Invalid number.'); return; }
@@ -3062,8 +3063,8 @@
         spdBtn.type = 'button';
         spdBtn.className = 'tip-btn';
         spdBtn.textContent = 'Change speed…';
-        spdBtn.addEventListener('click', () => {
-          const raw = prompt('Speed change %  (positive = faster, negative = slower):', '10');
+        spdBtn.addEventListener('click', async () => {
+          const raw = await uiPrompt('Speed change %  (positive = faster, negative = slower):', '10');
           if (raw == null) return;
           const v = parseFloat(raw);
           if (!Number.isFinite(v)) { alert('Invalid number.'); return; }
@@ -3224,8 +3225,8 @@
       if (!item) return;
       const actions = [
         { label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) },
-        { label: 'Change speed…', fn: () => {
-          const raw = prompt('Speed change %  (positive = faster, negative = slower):', '10');
+        { label: 'Change speed…', fn: async () => {
+          const raw = await uiPrompt('Speed change %  (positive = faster, negative = slower):', '10');
           if (raw == null) return;
           const v = parseFloat(raw);
           if (!Number.isFinite(v)) { alert('Invalid number.'); return; }

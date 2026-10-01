@@ -325,7 +325,8 @@
       if (e.target.classList.contains('studio-mute')) { t.mute = !t.mute; e.target.classList.toggle('on', t.mute); applyAllMix(); saveMeta(); return; }
       if (e.target.classList.contains('studio-solo')) { t.solo = !t.solo; e.target.classList.toggle('on', t.solo); applyAllMix(); saveMeta(); return; }
       if (e.target.classList.contains('studio-del')) {
-        if (!confirm('Delete “' + t.name + '”? The take is removed for good.')) return;
+        // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main thread
+        if (!(await window.uiConfirm('Delete “' + t.name + '”? The take is removed for good.'))) return;
         const wasPlaying = playing; if (playing) stop();
         tracks = tracks.filter(x => x !== t);
         try { Object.values(t.nodes || {}).forEach(n => n.disconnect()); } catch (e2) {}
@@ -427,7 +428,7 @@
   // `radio--` prefix, encodes it to AAC and installs it with a manifest entry.
   async function exportToRadio() {
     let name = null;
-    try { name = prompt('Name this radio track:', randomName()); } catch (e) {}
+    try { name = await window.uiPrompt('Name this radio track:', randomName()); } catch (e) {}   // non-blocking
     if (name == null) return;
     const slug = (String(name).trim() || randomName()).toLowerCase()
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mix';
@@ -446,7 +447,7 @@
   }
   async function exportMixdown() {
     let name = null;
-    try { name = prompt('Name this mixdown:', randomName()); } catch (e) {}
+    try { name = await window.uiPrompt('Name this mixdown:', randomName()); } catch (e) {}   // non-blocking
     if (name == null) return;
     name = (String(name).trim() || randomName()).replace(/[\\/:*?"<>|]/g, '-');
     toast('Rendering mixdown…');

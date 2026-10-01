@@ -45,6 +45,9 @@ export const legacyUseBeforeDefine = [
 export default [
   {
     files: ['js/**/*.js', 'test/**/*.js', 'tools/**/*.mjs'],
+    // the legacy list exempts THIS rule only (it used to be a global ignore,
+    // which also hid those files from every other rule below)
+    ignores: legacyUseBeforeDefine,
     languageOptions: { ecmaVersion: 2022, sourceType: 'script' },
     // Existing files carry eslint-disable comments for rules this config does not
     // enable; reporting them as unused is noise about a rule we are not running.
@@ -56,5 +59,24 @@ export default [
     },
   },
   { files: ['test/**/*.js', 'tools/**/*.mjs'], languageOptions: { sourceType: 'module' } },
-  { ignores: legacyUseBeforeDefine },
+  // NO BLOCKING DIALOGS IN THE APP (2026-10-01). Native prompt/confirm freeze
+  // the main thread, which on the phone carries every frame to the speaker and
+  // runs the note scheduler — playback glitched and distorted while one was
+  // open. Use `uiPrompt` / `uiConfirm` (js/bloops/02-wraps.js, promises);
+  // `alert` is routed to an in-page dialog there. Every bloops file, the
+  // legacy ones included; only the helper itself may touch the natives.
+  {
+    files: ['js/bloops/**/*.js'],
+    ignores: ['js/bloops/02-wraps.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'script' },
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    rules: {
+      'no-restricted-globals': ['error',
+        { name: 'prompt', message: 'Blocks the main thread (phone audio glitches) — use uiPrompt().' },
+        { name: 'confirm', message: 'Blocks the main thread (phone audio glitches) — use uiConfirm().' }],
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'prompt', message: 'Blocks the main thread — use uiPrompt().' },
+        { object: 'window', property: 'confirm', message: 'Blocks the main thread — use uiConfirm().' }],
+    },
+  },
 ];

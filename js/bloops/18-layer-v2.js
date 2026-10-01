@@ -13460,19 +13460,27 @@
       // scoped draft TRIM the part as a side effect of choosing another scope.
       // Changed? Ask before throwing it away; declined, the menu goes back.
       const St = V2.stagedOf(id);
-      if (St) {
-        if (V2.draftDirty && V2.draftDirty(E, id)) {
-          let ok = true;
-          try { ok = confirm('Discard what you changed for ' + (cur ? cur.nm : 'the whole part') + '? Nothing has been written \u2014 \u2713 Done writes it.'); } catch (e) {}
-          if (!ok) { s2.value = cur ? cur.key : ''; return; }
-        }
-        V2.draftCancel(E, St);
-      }
       const o = s2.selectedOptions && s2.selectedOptions[0];
       const nm = key ? ((o && o.textContent) || regLabel(key)) : '';
-      genPanelOpen(E, { L: R, card }, key ? { key, nm } : null);
-      // back to the whole part: rebuild so the rows show the PART's values again
-      if (!key) { try { const hh = host(E); if (hh) hh._sig = ''; V2.render(E); } catch (e) {} }
+      const go = () => {
+        if (St) V2.draftCancel(E, St);
+        genPanelOpen(E, { L: R, card }, key ? { key, nm } : null);
+        // back to the whole part: rebuild so the rows show the PART's values again
+        if (!key) { try { const hh = host(E); if (hh) hh._sig = ''; V2.render(E); } catch (e) {} }
+      };
+      if (St && V2.draftDirty && V2.draftDirty(E, id)) {
+        // NON-BLOCKING (window.uiConfirm): a native confirm froze the main
+        // thread and starved the phone's audio. `input` and `change` both land
+        // here — one question at a time.
+        if (onScopePick._asking) return;
+        onScopePick._asking = true;
+        const back = cur ? cur.key : '';
+        window.uiConfirm('Discard what you changed for ' + (cur ? cur.nm : 'the whole part') + '? Nothing has been written \u2014 \u2713 Done writes it.')
+          .then((ok) => { onScopePick._asking = false; if (!ok) { s2.value = back; return; } go(); },
+                () => { onScopePick._asking = false; s2.value = back; });
+        return;
+      }
+      go();
   };
   try {
     document.addEventListener('input', onScopePick, true);
@@ -14857,16 +14865,17 @@
       const made = (p.made === 'compose') ? 'the notes you drew'
         : (p.made === 'phrase') ? ('the phrase' + (p.from ? ' \u201c' + p.from + '\u201d' : ''))
         : 'these ' + n + ' written note' + (n === 1 ? '' : 's');
-      return confirm(lab + ' makes this part GENERATED again.\n\n' + made +
+      return window.uiConfirm(lab + ' makes this part GENERATED again.\n\n' + made +
         ' will be replaced by notes made from its rules' +
         ((p.mem && p.mem[which]) ? ' \u2014 your saved ' + lab + ' settings come back.' : '.') +
-        '\n\nThis cannot be undone.');
+        '\n\nThis cannot be undone.').then((ok) => !!ok, () => false);
     }
-    return confirm(lab + ' re-makes this part\u2019s notes.\n\n' +
+    // true at once, or a Promise<boolean> (window.uiConfirm) — see `whenOK`
+    return window.uiConfirm(lab + ' re-makes this part\u2019s notes.\n\n' +
       ((what === 'restore')
         ? ('Your saved ' + lab + ' settings come back, and the take you have now is replaced.')
         : ('It is built fresh, and the take you have now is replaced.')) +
-      '\n\nCancel keeps what you have. \ud83c\udfb2 New take rolls another of the same material.');
+      '\n\nCancel keeps what you have. \ud83c\udfb2 New take rolls another of the same material.').then((ok) => !!ok, () => false);
   }
   function matSync(card, L) {
     const pv2 = matProv(L);
@@ -15004,33 +15013,38 @@
     let src = L;
     if (L.part.kind !== 'recorded') {
       const notes = V2.takeNotesNow(E, L);
-      if (!notes) return null;
+      if (!notes) return Promise.resolve(null);
       src = Object.assign({}, L, { part: Object.assign({}, L.part, {
         kind: 'recorded', notes: notes, transpose: L.part.transpose | 0 }) });
     }
     const steps = notesToSteps(src);
-    if (!steps) return null;
+    if (!steps) return Promise.resolve(null);
     let dflt = (L.name || 'take');
     try { if (typeof uniqueSeqName === 'function') dflt = uniqueSeqName(dflt); } catch (e) {}
-    let nm = null;
-    try { nm = window.prompt('Save this take as:', dflt); } catch (e) {}
-    if (nm == null) return null;
-    nm = String(nm).trim() || dflt;
-    // A NAME ALREADY IN THE BANK would SHADOW the other entry — a mapping
-    // resolves the first match, so the older one becomes unreachable while
-    // still visible. Ask, exactly as the phrase saver does.
-    let at = -1;
-    try { at = savedSequences.findIndex((x) => x && x.name === nm); } catch (e) {}
-    if (at >= 0 && !window.confirm('\u201c' + nm + '\u201d already exists. Replace it?\n\n' +
-      'Anything mapped to that name will play this take instead.')) return null;
-    let bpm = 120;
-    try { bpm = parseInt(document.getElementById('tempo-input').value, 10) || 120; } catch (e) {}
-    const ent = { name: nm, kind: 'phrase', steps: steps, bpm: bpm, subdivision: 1 };
-    try {
-      if (at >= 0) savedSequences[at] = ent; else savedSequences.push(ent);
-      if (typeof persistSaved === 'function') persistSaved();
-    } catch (e) { return null; }
-    return nm;
+    // ASYNC (window.uiPrompt / uiConfirm): a native dialog froze the main
+    // thread and starved the phone's audio. Resolves to the saved name, or null.
+    return window.uiPrompt('Save this take as:', dflt).then((nm0) => {
+      if (nm0 == null) return null;
+      const nm = String(nm0).trim() || dflt;
+      // A NAME ALREADY IN THE BANK would SHADOW the other entry — a mapping
+      // resolves the first match, so the older one becomes unreachable while
+      // still visible. Ask, exactly as the phrase saver does.
+      let at = -1;
+      try { at = savedSequences.findIndex((x) => x && x.name === nm); } catch (e) {}
+      const write = () => {
+        let bpm = 120;
+        try { bpm = parseInt(document.getElementById('tempo-input').value, 10) || 120; } catch (e) {}
+        const ent = { name: nm, kind: 'phrase', steps: steps, bpm: bpm, subdivision: 1 };
+        try {
+          if (at >= 0) savedSequences[at] = ent; else savedSequences.push(ent);
+          if (typeof persistSaved === 'function') persistSaved();
+        } catch (e) { return null; }
+        return nm;
+      };
+      if (at < 0) return write();
+      return window.uiConfirm('\u201c' + nm + '\u201d already exists. Replace it?\n\n' +
+        'Anything mapped to that name will play this take instead.').then((ok) => (ok ? write() : null));
+    }, () => null);
   }
   // WHAT THE BANK HOLDS, for the Saved tab. Metadata only — reading a phrase's
   // notes is `phraseToNotes`' job and costs a walk per entry.
@@ -15092,10 +15106,18 @@
     // a TRANSFORMED take is work too — a plain roll may be replaced silently,
     // one you reversed or shuffled may not
     if (!c.work) return true;
+    // a PROMISE when it has to ask (window.uiConfirm — a native confirm froze
+    // the main thread and starved the phone's audio); callers go through `whenOK`
     try {
-      return !!window.confirm('Replace ' + c.what + c.where + ' with a fresh roll of this layer\u2019s rules?\n\n' +
-        c.n + ' note' + (c.n === 1 ? '' : 's') + ' will be discarded. This cannot be undone.');
+      return window.uiConfirm('Replace ' + c.what + c.where + ' with a fresh roll of this layer\u2019s rules?\n\n' +
+        c.n + ' note' + (c.n === 1 ? '' : 's') + ' will be discarded. This cannot be undone.').then((ok) => !!ok, () => false);
     } catch (e) { return true; }
+  }
+  // A guard that answers `true` at once, or a Promise<boolean> when it had to
+  // ask: run `fn` now, or once the answer is yes.
+  function whenOK(r, fn) {
+    if (r && typeof r.then === 'function') { r.then((y) => { if (y) fn(); }); return; }
+    if (r) fn();
   }
   // ── KEEP THIS TAKE? — THE ONE GATE IN FRONT OF A PRESS THAT REPLACES IT ──
   // 💾 Save this take used to be its own button on the take bar, sitting beside
@@ -15173,15 +15195,16 @@
     if (!n || !takeIsWork(L) || typeof _ambActionsPopover !== 'function') { run(); return; }
     const save = () => {
       const c = o.ctx(); if (!c) return;
-      const nm = saveTakeFn(E, c.L);
-      // BACKING OUT OF THE NAME PROMPT CANCELS THE WHOLE PRESS. Rolling anyway
-      // would destroy the take the person was in the middle of trying to keep.
-      if (nm == null) {
-        try { if (typeof showToast === 'function') showToast('Nothing saved — this take is still here. Press again when you are ready.', { ms: 4000 }); } catch (e) {}
-        return;
-      }
-      try { if (typeof showToast === 'function') showToast('Saved “' + nm + '” — it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
-      run();
+      saveTakeFn(E, c.L).then((nm) => {
+        // BACKING OUT OF THE NAME PROMPT CANCELS THE WHOLE PRESS. Rolling anyway
+        // would destroy the take the person was in the middle of trying to keep.
+        if (nm == null) {
+          try { if (typeof showToast === 'function') showToast('Nothing saved — this take is still here. Press again when you are ready.', { ms: 4000 }); } catch (e) {}
+          return;
+        }
+        try { if (typeof showToast === 'function') showToast('Saved “' + nm + '” — it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
+        run();
+      });
     };
     _ambActionsPopover(o.title, [
       { disabled: true, label: o.head(n) },
@@ -24531,8 +24554,15 @@
         if (ppt) {
           const ctx = layerOf(ppt); if (!ctx) return;
           if (Number.isFinite(ctx.L.partFor)) {
-            if (!confirm('Back to one content everywhere?\n\nThe per-part contents will be discarded \u2014 the Everywhere content, kept on ice since Per part went on, comes back.')) return;
-            V2.partSelect(E, ctx.L, null);
+            // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+            // thread and starved the phone's audio
+            window.uiConfirm('Back to one content everywhere?\n\nThe per-part contents will be discarded \u2014 the Everywhere content, kept on ice since Per part went on, comes back.').then((ok) => {
+              if (!ok) return;
+              const c2 = ppt.isConnected ? layerOf(ppt) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; }
+              V2.partSelect(E, ctx.L, null);
+              commit(ctx); h._sig = ''; V2.render(E);
+            });
+            return;
           } else {
             let pi0 = curPartPi(E);
             const rgs = partRangesOf(E);
@@ -25385,17 +25415,26 @@
         if (clrb) {
           const ctx = layerOf(clrb); if (!ctx) return;
           const n0 = (ctx.L.part.notes || []).length;
-          if (n0 && typeof confirm === 'function' &&
-              !confirm('Empty this part?\n\n' + n0 + ' note' + (n0 === 1 ? '' : 's') +
+          const doClear = () => {
+            // RE-RESOLVE: after an answered question the layer object may be an orphan
+            { const c2 = clrb.isConnected ? layerOf(clrb) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; } }
+            try { V2.clearPart(E, ctx.L); } catch (e) {}
+            setMode(ctx.L, 'draw');
+            // the live-edit pair: anything already scheduled is stale now
+            try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
+          };
+          // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+          // thread and starved the phone's audio
+          if (n0 && typeof window.uiConfirm === 'function') {
+            window.uiConfirm('Empty this part?\n\n' + n0 + ' note' + (n0 === 1 ? '' : 's') +
                        ' will be cleared. The generated settings are kept, so \u2699 Deep ' +
-                       'brings that material back.\n\nThis cannot be undone.')) return;
-          try { V2.clearPart(E, ctx.L); } catch (e) {}
-          setMode(ctx.L, 'draw');
-          // the live-edit pair: anything already scheduled is stale now
-          try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          h._sig = ''; V2.render(E);
-          try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
+                       'brings that material back.\n\nThis cannot be undone.').then((ok) => { if (ok) doClear(); });
+            return;
+          }
+          doClear();
           return;
         }
         const comp = t.closest('.v2-compose');
@@ -25445,12 +25484,7 @@
                 : (p2.made === 'phrase') ? ('The phrase' + (p2.from ? ' \u201c' + p2.from + '\u201d' : ''))
                 : ('These ' + n2 + ' written note' + (n2 === 1 ? '' : 's')))
               : 'The take you see';
-            if ((p2.kind !== 'recorded' || n2 > 0) &&
-                !confirm('Start empty?\n\n' + lose + ' will be cleared \u2014 the part becomes ' +
-                  'frozen with no notes, and \u270e Draw is switched on so a tap on the ' +
-                  'drawing adds one.' +
-                  (p2.kind !== 'recorded' ? '\n\nIts generated rules are kept \u2014 \u2699 Deep brings them back.' : '') +
-                  '\n\nThis cannot be undone.')) return;
+            const doEmpty = () => {
             if (!V2.clearPart(E, ctx.L)) return;
             setMode(ctx.L, 'draw');
             // the live-edit pair: anything already scheduled is stale now
@@ -25459,6 +25493,22 @@
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             h._sig = ''; V2.render(E);
             try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
+            };
+            // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main
+            // thread and starved the phone's audio
+            if (p2.kind !== 'recorded' || n2 > 0) {
+              window.uiConfirm('Start empty?\n\n' + lose + ' will be cleared \u2014 the part becomes ' +
+                  'frozen with no notes, and \u270e Draw is switched on so a tap on the ' +
+                  'drawing adds one.' +
+                  (p2.kind !== 'recorded' ? '\n\nIts generated rules are kept \u2014 \u2699 Deep brings them back.' : '') +
+                  '\n\nThis cannot be undone.').then((ok) => {
+                if (!ok) return;
+                const c2 = comp.isConnected ? layerOf(comp) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; }
+                doEmpty();
+              });
+              return;
+            }
+            doEmpty();
           };
           // Mid-session the press stays the way back into the open grid
           // (compose() is idempotent for the same layer); no popover shell →
@@ -25541,8 +25591,11 @@
             // THE ONE DELETE PATH — it confirms, names what it costs, and
             // prunes every mapping that pointed at the name (a second copy of
             // that logic here is how a mapping is left pointing at nothing).
-            if (typeof deleteSavedSequence === 'function') deleteSavedSequence(bi);
-            else return;
+            // …and it ASKS without blocking now, so repaint when it is decided
+            if (typeof deleteSavedSequence === 'function') {
+              deleteSavedSequence(bi, { onDone: () => { h._sig = ''; V2.render(E); } });
+            }
+            return;
           } else {
             const to = bi + (bk.classList.contains('v2-bkup') ? -1 : 1);
             if (to < 0 || to >= savedSequences.length) return;
@@ -26281,46 +26334,50 @@
           // another roll. Built FRESH (the remembered spec is dropped), then a
           // new take; Chords, which a take alone does not move (a plain stack
           // draws nothing), also rolls a voicing — a different one each press.
-          if (!matSwitchOK(ctx.L, which)) return;
-          const prevVoicing = [(ctx.L.part.pitch || {}).voices | 0, (ctx.L.part.pitch || {}).inv | 0].join('/');
-          if (ctx.L.part.mem) delete ctx.L.part.mem[which];
-          const info = (which === 'melody') ? V2.makeMelody(E, ctx.L) : V2.makeGround(E, ctx.L);
-          if (!info) return;
-          try { V2.newTake(ctx.L); } catch (e) {}
-          if (which === 'ground') {
-            const pt = ctx.L.part.pitch || (ctx.L.part.pitch = {});
-            for (let guard = 0; guard < 12; guard++) {
-              pt.voices = 3 + Math.floor(Math.random() * 2);          // 3 or 4 notes
-              pt.inv = Math.floor(Math.random() * 3);                 // root, 1st, 2nd
-              if ([pt.voices, pt.inv].join('/') !== prevVoicing) break;
+          // the guard may have to ASK (non-blocking) — the press continues on yes
+          whenOK(matSwitchOK(ctx.L, which), () => {
+            // RE-RESOLVE: after an answered question the layer object may be an orphan
+            { const c2 = (ap && ap.isConnected) ? layerOf(ap) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; } }
+            const prevVoicing = [(ctx.L.part.pitch || {}).voices | 0, (ctx.L.part.pitch || {}).inv | 0].join('/');
+            if (ctx.L.part.mem) delete ctx.L.part.mem[which];
+            const info = (which === 'melody') ? V2.makeMelody(E, ctx.L) : V2.makeGround(E, ctx.L);
+            if (!info) return;
+            try { V2.newTake(ctx.L); } catch (e) {}
+            if (which === 'ground') {
+              const pt = ctx.L.part.pitch || (ctx.L.part.pitch = {});
+              for (let guard = 0; guard < 12; guard++) {
+                pt.voices = 3 + Math.floor(Math.random() * 2);          // 3 or 4 notes
+                pt.inv = Math.floor(Math.random() * 3);                 // root, 1st, 2nd
+                if ([pt.voices, pt.inv].join('/') !== prevVoicing) break;
+              }
             }
-          }
-          try { E.getCfg(); } catch (e) {}
-          const willDo = 'fresh';
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          // THE PANEL STAYS OPEN. Two choices is a comparison — shutting it on
-          // the first press means going back in to hear the other one.
-          AUTOPOP = ctx.L.id | 0;
-          h._sig = ''; V2.render(E);
-          // SILENT, like every other press that REWRITES rather than plays.
-          setTimeout(() => {
+            try { E.getCfg(); } catch (e) {}
+            const willDo = 'fresh';
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            // THE PANEL STAYS OPEN. Two choices is a comparison — shutting it on
+            // the first press means going back in to hear the other one.
+            AUTOPOP = ctx.L.id | 0;
+            h._sig = ''; V2.render(E);
+            // SILENT, like every other press that REWRITES rather than plays.
+            setTimeout(() => {
+              try {
+                const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+                if (c2) drawPartViz(c2, ctx.L, E);
+              } catch (e) {}
+            }, 0);
             try {
-              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) drawPartViz(c2, ctx.L, E);
+              if (typeof showToast === 'function') {
+                const how = (willDo === 'restore') ? ' \u00b7 your saved settings for it came back'
+                                                   : ' \u00b7 rolled \u2014 press again for another';
+                showToast((which === 'melody'
+                  ? 'Melody \u2014 one voice over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
+                    ', moving with the changes. \ud83c\udfb2 New take rolls another line.'
+                  : 'Chords \u2014 one on the 1 and one on every change, each held to the next. ' +
+                    'Its settings are in \u2699 Deep \u25b8 \u26f0 Play the changes.') + how,
+                  { ms: 5000 });
+              }
             } catch (e) {}
-          }, 0);
-          try {
-            if (typeof showToast === 'function') {
-              const how = (willDo === 'restore') ? ' \u00b7 your saved settings for it came back'
-                                                 : ' \u00b7 rolled \u2014 press again for another';
-              showToast((which === 'melody'
-                ? 'Melody \u2014 one voice over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
-                  ', moving with the changes. \ud83c\udfb2 New take rolls another line.'
-                : 'Chords \u2014 one on the 1 and one on every change, each held to the next. ' +
-                  'Its settings are in \u2699 Deep \u25b8 \u26f0 Play the changes.') + how,
-                { ms: 5000 });
-            }
-          } catch (e) {}
+          });
           return;
         }
         // Groundwork's own door and draft-panel are GONE (2026-09-09): it is
@@ -26343,28 +26400,34 @@
           if (!BARPOP || BARPOP.id !== (ctx.L.id | 0)) return;
           const bs = BARPOP.bars.slice();
           const lab2 = BARPOP.nm || bs.map((k2) => V2.regLabel(k2)).join(' + ');
-          if (ctx.L.part.kind === 'recorded') {
-            if (!replaceOK(ctx.L, bs)) return;
-            if (!captureShown(E, ctx.L, bs, 'bar')) {
-              try { showToast('Nothing to roll \u2014 these bars come out empty with these settings.', { ms: 4500 }); } catch (e) {}
-              return;
+          // replacing written notes may have to ASK (non-blocking) — the roll
+          // continues on yes
+          const roll = () => {
+            // RE-RESOLVE: after an answered question the layer object may be an orphan
+            { const c2 = (brl && brl.isConnected) ? layerOf(brl) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; } }
+            if (ctx.L.part.kind === 'recorded') {
+              if (!captureShown(E, ctx.L, bs, 'bar')) {
+                try { showToast('Nothing to roll \u2014 these bars come out empty with these settings.', { ms: 4500 }); } catch (e) {}
+                return;
+              }
+            } else {
+              V2.newTake(ctx.L, bs);
             }
-          } else {
-            V2.newTake(ctx.L, bs);
-          }
-          try { E.getCfg(); } catch (e) {}
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          try { showToast('Rolled ' + lab2 + ' again \u2014 the rest of the drawing held still.', { ms: 3500 }); } catch (e) {}
-          // REDRAW, NEVER PLAY (the documented rule) — and never a card
-          // rebuild, which would throw away the panel under the finger.
-          try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
-          // …AND HAND THE CARD BACK. The point of a roll is to see and hear
-          // what came out, and the panel sits over the drawing that just
-          // changed. Closed AFTER the redraw, so what is revealed is the new
-          // roll rather than the old one for a frame.
-          BARPOP = null;
-          ctx.card.classList.remove('v2-baropen');
-          try { v2TakeHeard(E, ctx.L); } catch (e) {}
+            try { E.getCfg(); } catch (e) {}
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            try { showToast('Rolled ' + lab2 + ' again \u2014 the rest of the drawing held still.', { ms: 3500 }); } catch (e) {}
+            // REDRAW, NEVER PLAY (the documented rule) — and never a card
+            // rebuild, which would throw away the panel under the finger.
+            try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
+            // …AND HAND THE CARD BACK. The point of a roll is to see and hear
+            // what came out, and the panel sits over the drawing that just
+            // changed. Closed AFTER the redraw, so what is revealed is the new
+            // roll rather than the old one for a frame.
+            BARPOP = null;
+            ctx.card.classList.remove('v2-baropen');
+            try { v2TakeHeard(E, ctx.L); } catch (e) {}
+          };
+          if (ctx.L.part.kind === 'recorded') whenOK(replaceOK(ctx.L, bs), roll); else roll();
           return;
         }
         const brs = t.closest('.v2-barreset');
@@ -26518,53 +26581,57 @@
           // ASK BEFORE REPLACING. A mode press that silently re-made the
           // content is what read as a roll happening for no reason.
           const willDo = matWillDo(ctx.L, which);
-          if (!matSwitchOK(ctx.L, which)) return;
-          // a SHAPE press is not a preset — the stamp would name values the
-          // part is about to stop having
-          delete ctx.L.part.preset;
-          const info = (which === 'line') ? V2.makeLine(E, ctx.L)
-            : (which === 'beat') ? V2.makeBeat(E, ctx.L)
-            : (which === 'arp') ? V2.makeArp(E, ctx.L)
-            : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
-            : (which === 'ground') ? V2.makeGround(E, ctx.L)
-            // THE TABLE-DRIVEN DOORS — one call, whichever it was
-            : (V2.matSimple && V2.matSimple[which]) ? V2.makeSimple(E, ctx.L, which)
-            : V2.makeSustain(E, ctx.L, true);
-          if (!info) return;
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          h._sig = ''; V2.render(E);
-          // SILENT, like every other press that REWRITES rather than plays.
-          // Choosing a mode used to audition, which while clicking through the
-          // row reads as a stray note from nowhere; the outcome is the DRAWING
-          // and ▶ Preview stays the only thing that makes sound.
-          setTimeout(() => {
+          // the guard may have to ASK (non-blocking) — the press continues on yes
+          whenOK(matSwitchOK(ctx.L, which), () => {
+            // RE-RESOLVE: after an answered question the layer object may be an orphan
+            { const c2 = (mk && mk.isConnected) ? layerOf(mk) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; } }
+            // a SHAPE press is not a preset — the stamp would name values the
+            // part is about to stop having
+            delete ctx.L.part.preset;
+            const info = (which === 'line') ? V2.makeLine(E, ctx.L)
+              : (which === 'beat') ? V2.makeBeat(E, ctx.L)
+              : (which === 'arp') ? V2.makeArp(E, ctx.L)
+              : (which === 'mixed') ? V2.makeMixed(E, ctx.L)
+              : (which === 'ground') ? V2.makeGround(E, ctx.L)
+              // THE TABLE-DRIVEN DOORS — one call, whichever it was
+              : (V2.matSimple && V2.matSimple[which]) ? V2.makeSimple(E, ctx.L, which)
+              : V2.makeSustain(E, ctx.L, true);
+            if (!info) return;
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            // SILENT, like every other press that REWRITES rather than plays.
+            // Choosing a mode used to audition, which while clicking through the
+            // row reads as a stray note from nowhere; the outcome is the DRAWING
+            // and ▶ Preview stays the only thing that makes sound.
+            setTimeout(() => {
+              try {
+                const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+                if (c2) drawPartViz(c2, ctx.L, E);
+              } catch (e) {}
+            }, 0);
             try {
-              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) drawPartViz(c2, ctx.L, E);
+              if (typeof showToast === 'function') {
+                // …AND WHICH OF THE THREE IT DID. "Built fresh" and "your saved
+                // settings came back" are different events and looked identical.
+                const how = (willDo === 'restore')
+                  ? ' \u00b7 your saved settings for it came back'
+                  : ' \u00b7 built fresh';
+                showToast((which === 'arp'
+                  ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
+                  : which === 'mixed'
+                  ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
+                  : which === 'ground'
+                  ? 'Groundwork — plays the changes: notes on the 1 and on every change, held to the next.'
+                  : (which === 'sustain' && Number.isFinite(info.voices))
+                  ? 'Sustained — ' + info.voices + ' note' + (info.voices === 1 ? '' : 's') +
+                    ' of the first change, held for the whole part (Ring out is on).'
+                  // EVERY OTHER MATERIAL says what IT is — the chain used to end in the
+                  // Sustain sentence, so ♪ Play a line, ⚓ Pedal, ▪ Repeat and ✻ Scatter
+                  // all reported "Sustained — undefined notes…" (their `info` has no voices).
+                  : (mk.getAttribute('title') || mk.textContent || 'Material set.').trim()) + how, { ms: 4500 });
+              }
             } catch (e) {}
-          }, 0);
-          try {
-            if (typeof showToast === 'function') {
-              // …AND WHICH OF THE THREE IT DID. "Built fresh" and "your saved
-              // settings came back" are different events and looked identical.
-              const how = (willDo === 'restore')
-                ? ' \u00b7 your saved settings for it came back'
-                : ' \u00b7 built fresh';
-              showToast((which === 'arp'
-                ? 'Arpeggio — sweeping the chord, ' + info.onsets + ' per cycle over ' + info.octaves + ' octaves.'
-                : which === 'mixed'
-                ? 'Mixed — some onsets play a chord, the rest a single note. Pitch \u25b8 Mix sets the balance.'
-                : which === 'ground'
-                ? 'Groundwork — plays the changes: notes on the 1 and on every change, held to the next.'
-                : (which === 'sustain' && Number.isFinite(info.voices))
-                ? 'Sustained — ' + info.voices + ' note' + (info.voices === 1 ? '' : 's') +
-                  ' of the first change, held for the whole part (Ring out is on).'
-                // EVERY OTHER MATERIAL says what IT is — the chain used to end in the
-                // Sustain sentence, so ♪ Play a line, ⚓ Pedal, ▪ Repeat and ✻ Scatter
-                // all reported "Sustained — undefined notes…" (their `info` has no voices).
-                : (mk.getAttribute('title') || mk.textContent || 'Material set.').trim()) + how, { ms: 4500 });
-            }
-          } catch (e) {}
+          });
           return;
         }
         // SIZE BY — flip which of the two sizes the note. Going to Length
@@ -26619,33 +26686,37 @@
           // take above the drawing does not: its name IS the intent, and
           // press-again-until-you-like-it is what it is for.)
           const willRoll = matWillDo(ctx.L, 'roll');
-          if (!matSwitchOK(ctx.L, 'roll')) return;
-          delete ctx.L.part.preset;                 // see the shape press above
-          const info = V2.rollRun(E, ctx.L);
-          if (!info) return;
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-          h._sig = ''; V2.render(E);
-          // SILENT. The old rule here was "a roll you cannot hear is a dice
-          // throw face-down" — but choosing a MODE is not throwing the dice
-          // (🎲 above the drawing does that, and it is silent too), and while
-          // clicking through the row the audition reads as a stray note.
-          setTimeout(() => {
+          // the guard may have to ASK (non-blocking) — the press continues on yes
+          whenOK(matSwitchOK(ctx.L, 'roll'), () => {
+            // RE-RESOLVE: after an answered question the layer object may be an orphan
+            { const c2 = (rr && rr.isConnected) ? layerOf(rr) : null; if (c2) { ctx.L = c2.L; ctx.card = c2.card; } }
+            delete ctx.L.part.preset;                 // see the shape press above
+            const info = V2.rollRun(E, ctx.L);
+            if (!info) return;
+            try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            h._sig = ''; V2.render(E);
+            // SILENT. The old rule here was "a roll you cannot hear is a dice
+            // throw face-down" — but choosing a MODE is not throwing the dice
+            // (🎲 above the drawing does that, and it is silent too), and while
+            // clicking through the row the audition reads as a stray note.
+            setTimeout(() => {
+              try {
+                const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
+                if (c2) drawPartViz(c2, ctx.L, E);
+              } catch (e) {}
+            }, 0);
             try {
-              const c2 = document.querySelector('.v2-layer[data-v2id="' + (ctx.L.id | 0) + '"]');
-              if (c2) drawPartViz(c2, ctx.L, E);
+              if (typeof showToast === 'function') {
+                // NOT "press again to re-roll" — a repeat press on the lit door
+                // ADOPTS (it stops replacing your take, which is the whole point
+                // of the lit-chip rule). 🎲 New take is what rolls another.
+                showToast('Rolled a run \u2014 ' + info.pulses + ' of ' + info.steps +
+                  ' steps over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
+                  (willRoll === 'restore' ? ' \u00b7 your saved Roll settings came back' : ' \u00b7 built fresh') +
+                  '. \ud83c\udfb2 New take rolls another; edit it in Rhythm and Pitch.', { ms: 4500 });
+              }
             } catch (e) {}
-          }, 0);
-          try {
-            if (typeof showToast === 'function') {
-              // NOT "press again to re-roll" — a repeat press on the lit door
-              // ADOPTS (it stops replacing your take, which is the whole point
-              // of the lit-chip rule). 🎲 New take is what rolls another.
-              showToast('Rolled a run \u2014 ' + info.pulses + ' of ' + info.steps +
-                ' steps over ' + info.bars + ' bar' + (info.bars === 1 ? '' : 's') +
-                (willRoll === 'restore' ? ' \u00b7 your saved Roll settings came back' : ' \u00b7 built fresh') +
-                '. \ud83c\udfb2 New take rolls another; edit it in Rhythm and Pitch.', { ms: 4500 });
-            }
-          } catch (e) {}
+          });
           return;
         }
         const menu = t.closest('.v2-menu');
@@ -26701,12 +26772,20 @@
                   h._sig = ''; V2.render(E);
                 }, 0) },
               { label: '\u270e Rename\u2026', fn: () => setTimeout(() => {
-                  const v = (typeof prompt === 'function') ? prompt('Name this layer:', ctx.L.name) : null;
-                  if (v == null) return;
-                  ctx.L.name = String(v).trim() || ('Layer ' + ctx.L.id);
-                  h._sig = '';
-                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                  V2.render(E);
+                  // NON-BLOCKING (window.uiPrompt): the native prompt froze the
+                  // main thread and the phone's audio glitched while you typed.
+                  // The layer is RE-RESOLVED by id on the answer — getCfg replaces
+                  // objects, so the one captured at the press may be an orphan.
+                  if (typeof window.uiPrompt !== 'function') return;
+                  const lid = ctx.L.id;
+                  window.uiPrompt('Name this layer:', ctx.L.name).then((v) => {
+                    if (v == null) return;
+                    const L2 = ((E.getCfg().layers) || []).find((x) => x && x.id === lid); if (!L2) return;
+                    L2.name = String(v).trim() || ('Layer ' + L2.id);
+                    h._sig = '';
+                    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                    V2.render(E);
+                  });
                 }, 0) },
               // \u29c9 CLONE \u2014 under Rename and above the two destructive rows,
               // because it is the other thing you do to a layer you already
@@ -26734,23 +26813,33 @@
               // setting and the notes, which is exactly the press people mean
               // to make deliberately and never by accident.
               { label: '\u21ba Restore to default\u2026', fn: () => setTimeout(() => {
-                  if (typeof confirm === 'function' &&
-                      !confirm('Restore "' + ctx.L.name + '" to default?\n\n' +
+                  // NON-BLOCKING (window.uiConfirm); re-resolved by id on the answer
+                  const lid = ctx.L.id;
+                  window.uiConfirm('Restore "' + ctx.L.name + '" to default?\n\n' +
                         'Every setting goes back to a new layer\u2019s \u2014 instrument, content, ' +
                         'shape, mix, FX \u2014 and its notes are cleared. The name stays. ' +
-                        'This cannot be undone.')) return;
-                  if (!V2.resetLayer(E, ctx.L)) return;
-                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                  try { if (typeof showToast === 'function') showToast('\u21ba "' + ctx.L.name + '" restored to default.'); } catch (e) {}
-                  h._sig = ''; V2.render(E);
+                        'This cannot be undone.').then((ok) => {
+                    if (!ok) return;
+                    const L2 = ((E.getCfg().layers) || []).find((x) => x && x.id === lid); if (!L2) return;
+                    if (!V2.resetLayer(E, L2)) return;
+                    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                    try { if (typeof showToast === 'function') showToast('\u21ba "' + L2.name + '" restored to default.'); } catch (e) {}
+                    h._sig = ''; V2.render(E);
+                  });
                 }, 0) },
               { label: '\u2715 Remove layer', danger: true, fn: () => setTimeout(() => {
-                  if (typeof confirm === 'function' && !confirm('Remove "' + ctx.L.name + '"?')) return;
-                  const c2 = E.getCfg();
-                  c2.layers = (c2.layers || []).filter(x => x !== ctx.L);
-                  try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
-                  try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-                  h._sig = ''; V2.render(E);
+                  // NON-BLOCKING (window.uiConfirm). Removed BY ID: after the answer
+                  // the captured object may be an orphan, and an identity filter
+                  // would then remove nothing.
+                  const lid = ctx.L.id;
+                  window.uiConfirm('Remove "' + ctx.L.name + '"?').then((ok) => {
+                    if (!ok) return;
+                    const c2 = E.getCfg();
+                    c2.layers = (c2.layers || []).filter(x => !(x && x.id === lid));
+                    try { if (E._v2Phase) delete E._v2Phase['v2:' + lid]; } catch (e) {}
+                    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                    h._sig = ''; V2.render(E);
+                  });
                 }, 0) },
             ]);
           }, 0);

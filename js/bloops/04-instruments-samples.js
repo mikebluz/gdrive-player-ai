@@ -2162,7 +2162,7 @@
         del.type = 'button'; del.className = 'sbm-del'; del.textContent = '×';
         del.title = 'Delete sample “' + (info.name || id) + '”';
         del.addEventListener('click', async () => {
-          if (!confirm('Delete sample “' + (info.name || id) + '”? This removes it from your tones (can’t be undone). Steps still using it fall back to a sine.')) return;
+          if (!(await uiConfirm('Delete sample “' + (info.name || id) + '”? This removes it from your tones (can’t be undone). Steps still using it fall back to a sine.'))) return;
           const ok = await deleteUserSample(id);
           if (!ok) return;
           row.remove();
@@ -2490,7 +2490,7 @@
         alert('Google Drive is not available in this build.'); return;
       }
       let folder;
-      try { folder = prompt('Google Drive folder to import samples from (e.g. bloops/samples):', _lastDriveSampleFolder); }
+      try { folder = await uiPrompt('Google Drive folder to import samples from (e.g. bloops/samples):', _lastDriveSampleFolder); }
       catch (e) { folder = null; }
       if (folder == null) return;
       folder = String(folder).trim();

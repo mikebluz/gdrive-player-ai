@@ -100,10 +100,12 @@
     function _sdEditPatch(id) { _sdOpenDesign('user:' + id); }
     function _sdRenamePatch(id) {
       const pch = userPatches.get(String(id)); if (!pch) return;
-      const nn = window.prompt('Rename sound:', pch.name);
-      if (nn == null) return;
-      const t = nn.trim(); if (!t) return;
-      pch.name = t.slice(0, 40); _sdSaveUserPatches(); _sdRefreshToneMenu();
+      // NON-BLOCKING (window.uiPrompt) — a native prompt froze the main thread
+      window.uiPrompt('Rename sound:', pch.name).then((nn) => {
+        if (nn == null) return;
+        const t = String(nn).trim(); if (!t) return;
+        pch.name = t.slice(0, 40); _sdSaveUserPatches(); _sdRefreshToneMenu();
+      });
     }
     function _sdDuplicatePatch(id) {
       const pch = userPatches.get(String(id)); if (!pch) return;
@@ -113,8 +115,11 @@
     }
     function _sdDeletePatchUI(id) {
       const pch = userPatches.get(String(id)); if (!pch) return;
-      if (!window.confirm('Delete the User sound “' + pch.name + '”?')) return;
-      _sdDeleteUserPatch(id); _sdRefreshToneMenu(); _sdToast('Deleted “' + pch.name + '”');
+      // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main thread
+      window.uiConfirm('Delete the User sound “' + pch.name + '”?').then((ok) => {
+        if (!ok) return;
+        _sdDeleteUserPatch(id); _sdRefreshToneMenu(); _sdToast('Deleted “' + pch.name + '”');
+      });
     }
     function _sdExportPatch(id) {
       const pch = userPatches.get(String(id)); if (!pch) return;
@@ -1261,15 +1266,21 @@
     // reads _sdState.params live, so the change is heard on the next tick.
     function _sdResetParams() {
       if (!_sdState) return;
-      try {
-        if (typeof window !== 'undefined' && window.confirm &&
-            !window.confirm('Reset all settings to defaults? This clears your current envelope, filter, LFO and matrix edits.')) return;
-      } catch (e) {}
-      _sdState.params = (typeof _sdNewPatchParams === 'function')
-        ? _sdNewPatchParams(_sdState.baseType)
-        : Object.assign({ attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 }, _sdDesignDefaults());
-      _sdRenderEditor();   // rebuild knobs to reflect the restored defaults
-      try { if (typeof showToast === 'function') showToast('Sound settings reset to defaults'); } catch (e) {}
+      const doReset = () => {
+        if (!_sdState) return;
+        _sdState.params = (typeof _sdNewPatchParams === 'function')
+          ? _sdNewPatchParams(_sdState.baseType)
+          : Object.assign({ attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 }, _sdDesignDefaults());
+        _sdRenderEditor();   // rebuild knobs to reflect the restored defaults
+        try { if (typeof showToast === 'function') showToast('Sound settings reset to defaults'); } catch (e) {}
+      };
+      // NON-BLOCKING (window.uiConfirm) — a native confirm froze the main thread
+      if (typeof window.uiConfirm === 'function') {
+        window.uiConfirm('Reset all settings to defaults? This clears your current envelope, filter, LFO and matrix edits.')
+          .then((ok) => { if (ok) doReset(); });
+        return;
+      }
+      doReset();
     }
 
     // ---- Surprise me: randomize every design parameter --------------------

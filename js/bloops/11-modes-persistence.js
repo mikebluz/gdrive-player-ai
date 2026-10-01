@@ -261,7 +261,7 @@
           ? `  • ${m.path}  (folder)`
           : `  • ${m.parentPath}/${m.name}  (file)`
       ).join('\n');
-      const ok = confirm(
+      const ok = await uiConfirm(
         `Bloops needs to set up the following in your Google Drive:\n\n` +
         `${lines}\n\n` +
         `Create them now?`
@@ -927,11 +927,11 @@
     }
     function _lsRestoreBackup(file) {
       const r = new FileReader();
-      r.onload = () => {
+      r.onload = async () => {
         let obj = null; try { obj = JSON.parse(r.result); } catch (e) {}
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { alert('That doesn’t look like a Bloops backup file.'); return; }
         const nSamp = (obj.__bloops === 2 && Array.isArray(obj.samples)) ? obj.samples.length : 0;
-        if (!confirm('Restore this backup' + (nSamp ? ' (incl. ' + nSamp + ' sample' + (nSamp === 1 ? '' : 's') + ')' : '') + '? It replaces your current saved data, then reloads the app.')) return;
+        if (!(await uiConfirm('Restore this backup' + (nSamp ? ' (incl. ' + nSamp + ' sample' + (nSamp === 1 ? '' : 's') + ')' : '') + '? It replaces your current saved data, then reloads the app.'))) return;
         _bloopsApplyBackup(obj).then(() => location.reload())
           .catch((e) => alert('Restore failed — ' + ((e && e.message) || 'storage may be full. Free space first, then restore.')));
       };
@@ -985,9 +985,9 @@
         const fileInp = ov.querySelector('.ls-file');
         ov.querySelector('.ls-restore').addEventListener('click', () => fileInp.click());
         fileInp.addEventListener('change', () => { if (fileInp.files && fileInp.files[0]) _lsRestoreBackup(fileInp.files[0]); });
-        ov.querySelectorAll('.ls-item-del').forEach(btn => btn.addEventListener('click', () => {
+        ov.querySelectorAll('.ls-item-del').forEach(btn => btn.addEventListener('click', async () => {
           const k = btn.getAttribute('data-k');
-          if (!confirm('Remove "' + _lsLabel(k) + '"?\n\nThis frees ' + _lsMB(((k || '').length + (localStorage.getItem(k) || '').length) * 2) + ' MB. Make sure you\'ve downloaded a backup — the app will reload.')) return;
+          if (!(await uiConfirm('Remove "' + _lsLabel(k) + '"?\n\nThis frees ' + _lsMB(((k || '').length + (localStorage.getItem(k) || '').length) * 2) + ' MB. Make sure you\'ve downloaded a backup — the app will reload.'))) return;
           try { localStorage.removeItem(k); } catch (e) {}
           location.reload();
         }));
@@ -1232,7 +1232,7 @@
       // project is a one-tap flow even when the user hasn't changed anything.
       const fallbackName = `bloops-project-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
       const defaultName = (currentProjectName && currentProjectName.trim()) || fallbackName;
-      const projectName = prompt('Name for this project:', defaultName);
+      const projectName = await uiPrompt('Name for this project:', defaultName);
       if (!projectName) return false;
       const filename = projectName.trim().replace(/\.json$/i, '') + '.json';
       const projectBase = filename.replace(/\.json$/i, '');
@@ -1262,7 +1262,10 @@
           // again would just be friction. Any other name match still asks.
           const isReSavingLoaded = currentProjectName && projectName.trim() === currentProjectName.trim();
           if (!isReSavingLoaded) {
-            const ok = confirm(`A project named "${projectName.trim()}" already exists in "bloops/projects".\n\nOverwrite it?`);
+            // the saving modal sits above every dialog — step it aside for the question
+            _bloopsHideSavingModal();
+            const ok = await uiConfirm(`A project named "${projectName.trim()}" already exists in "bloops/projects".\n\nOverwrite it?`);
+            if (ok) _bloopsShowSavingModal('Checking…');
             if (!ok) {
               setBtn(origText);
               if (btn) btn.disabled = false;

@@ -337,11 +337,15 @@
         const followers = areas.map((a, i) => ({ a, i })).filter(x => x.i !== act && x.a && x.a.keyOn && x.a.keyFollow !== false);
         if (!followers.length) return;
         const names = followers.map(x => { try { return _ambAreaLabel(x.a, x.i); } catch (e) { return 'Area ' + (x.i + 1); } }).join(', ');
-        const lock = window.confirm('Changing the workspace key also re-keys ' + followers.length + ' other Bloom area' + (followers.length > 1 ? 's' : '') + ' still following it (' + names + ').\n\nOK — lock ' + (followers.length > 1 ? 'them' : 'it') + ' at the current key first (safe)\nCancel — change all together');
-        if (lock) {
-          followers.forEach(x => { x.a.keyRoot = _ambKeyRootPc(x.a); x.a.keyScale = _ambKeyScaleName(x.a); x.a.keyFollow = false; });
+        // NON-BLOCKING: the caller applies the new key the moment this returns,
+        // so the PRE-change key is captured NOW and OK pins each follower to it
+        // when the answer arrives (a blocking dialog froze the phone's audio).
+        const snap = followers.map(x => ({ a: x.a, root: _ambKeyRootPc(x.a), scale: _ambKeyScaleName(x.a) }));
+        uiConfirm('Changing the workspace key also re-keys ' + followers.length + ' other Bloom area' + (followers.length > 1 ? 's' : '') + ' still following it (' + names + ').\n\nOK — lock ' + (followers.length > 1 ? 'them' : 'it') + ' at the current key first (safe)\nCancel — change all together').then((lock) => {
+          if (!lock) return;
+          snap.forEach(x => { x.a.keyRoot = x.root; x.a.keyScale = x.scale; x.a.keyFollow = false; });
           if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
-        }
+        });
       } catch (e) {}
     }
     // ---- AREA PRESETS -----------------------------------------------------
@@ -1500,8 +1504,9 @@
           const usr = _ambAreaPresetsUser();
           if (usr.length) { items.push('hr', { label: 'Saved', disabled: true }); usr.forEach(p2 => items.push({ label: '★ ' + p2.name, fn: () => _ambAddAreaFromPreset(p2) })); }
           items.push('hr', { label: '＋ Save current area as preset…', fn: () => {
-            let nm = null; try { nm = prompt('Preset name:', (_ambAreas()[_ambActiveAreaIdx()] || {}).name || ''); } catch (e) {}
-            if (nm != null && nm.trim()) { _ambSaveAreaPreset(nm.trim()); if (typeof showToast === 'function') showToast('Area preset saved.'); }
+            uiPrompt('Preset name:', (_ambAreas()[_ambActiveAreaIdx()] || {}).name || '').then((nm) => {
+              if (nm != null && nm.trim()) { _ambSaveAreaPreset(nm.trim()); if (typeof showToast === 'function') showToast('Area preset saved.'); }
+            });
           } });
           showCtxMenu(ax, ay, items);
         };
@@ -1577,34 +1582,41 @@
       const ren = host.querySelector('.ambient-area-ren');
       if (ren) ren.addEventListener('click', () => {
         const i = _ambActiveAreaIdx();
-        if (typeof prompt !== 'function') return;
-        const cur = _ambAreas()[i]; const nm = prompt('Area name — used by every readout (blank = "Area ' + (i + 1) + '"):', (cur && cur.name) || '');
-        if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
+        if (typeof uiPrompt !== 'function') return;
+        const cur = _ambAreas()[i];
+        uiPrompt('Area name — used by every readout (blank = "Area ' + (i + 1) + '"):', (cur && cur.name) || '').then((nm) => {
+          if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
+        });
       });
       const clrArea = host.querySelector('.ambient-area-clear');
       if (clrArea) clrArea.addEventListener('click', () => {
-        if (typeof confirm === 'function' && !confirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.')) return;
-        _ambClearArea(_masterEng);
+        uiConfirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.').then((ok) => {
+          if (ok) _ambClearArea(_masterEng);
+        });
       });
       const del = host.querySelector('.ambient-area-del');
       if (del) del.addEventListener('click', () => {
         if (_ambAreas().length <= 1) return;
-        if (typeof confirm === 'function' && !confirm('Delete this area? This can’t be undone.')) return;
-        _ambDeleteArea(_ambActiveAreaIdx());
-        _ambApplyAreaGlobals(masterAmbient);
-        _ambRebuildMaster();
-        try { persistWorkspace(); } catch (e) {}
+        uiConfirm('Delete this area? This can’t be undone.').then((ok) => {
+          if (!ok || _ambAreas().length <= 1) return;
+          _ambDeleteArea(_ambActiveAreaIdx());
+          _ambApplyAreaGlobals(masterAmbient);
+          _ambRebuildMaster();
+          try { persistWorkspace(); } catch (e) {}
+        });
       });
       const clr = host.querySelector('.ambient-orch-clear');
       if (clr) clr.addEventListener('click', () => {
-        if (typeof confirm === 'function' && !confirm('Clear all areas? This deletes every area and starts over with one empty area. This can’t be undone.')) return;
-        // Stop playback first — the engine would otherwise keep generating
-        // against the areas we're about to delete/rebuild (stale state / glitch).
-        if (E.timer) { try { _ambStopGenerator(E); } catch (e) {} }
-        _ambClearAreas();
-        _ambApplyAreaGlobals(masterAmbient);
-        _ambRebuildMaster();
-        try { persistWorkspace(); } catch (e) {}
+        uiConfirm('Clear all areas? This deletes every area and starts over with one empty area. This can’t be undone.').then((ok) => {
+          if (!ok) return;
+          // Stop playback first — the engine would otherwise keep generating
+          // against the areas we're about to delete/rebuild (stale state / glitch).
+          if (E.timer) { try { _ambStopGenerator(E); } catch (e) {} }
+          _ambClearAreas();
+          _ambApplyAreaGlobals(masterAmbient);
+          _ambRebuildMaster();
+          try { persistWorkspace(); } catch (e) {}
+        });
       });
       // Orchestration mode — ONE toggle cycling Single → Sequence → Shuffle →
       // Single (folds the old Single/Sequence + Shuffle pair into one control).
@@ -10720,12 +10732,12 @@
         if (distinct.length > 1) {
           const shown = distinct.slice().sort((a, b) => a - b).map(_ambFmtBpc).join(', ');
           const to = raw ? _ambFmtBpc(f) : _ambFmtBpc(dflt) + ' (the default)';
-          let ok = false;
-          try {
-            ok = window.confirm('These ' + list.length + ' chords have ' + distinct.length + ' different lengths (' + shown + ').\n\n'
-              + 'Set every one of them to ' + to + ' bars? The individual lengths will be lost.');
-          } catch (e) { ok = false; }
-          if (!ok) { _ambPeRender(); return; }                 // put the field back as it was
+          uiConfirm('These ' + list.length + ' chords have ' + distinct.length + ' different lengths (' + shown + ').\n\n'
+              + 'Set every one of them to ' + to + ' bars? The individual lengths will be lost.').then((ok) => {
+            if (ok) list.forEach(x => { if (raw) x.c.bars = f; else delete x.c.bars; });
+            _ambPeRender();                                      // !ok puts the field back as it was
+          });
+          return;
         }
         list.forEach(x => { if (raw) x.c.bars = f; else delete x.c.bars; });
         _ambPeRender();
@@ -10840,11 +10852,13 @@
         }
       }
       else if (op === 'sectog') { if (!ed._secOpen) ed._secOpen = {}; ed._secOpen[arg] = !ed._secOpen[arg]; }
-      else if (op === 'progren') { let nm = null; try { nm = window.prompt('Name for these changes', _ambPeProgName(ed)); } catch (e) {}
-        if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) ed.name = v; } }
+      else if (op === 'progren') { uiPrompt('Name for these changes', _ambPeProgName(ed)).then((nm) => {
+          if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) ed.name = v; }
+          if (_ambProgEd === ed) _ambPeRender(); }); return; }
       else if (op === 'partren') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10);
-        if (ps && ps[pi]) { let nm = null; try { nm = window.prompt('Name for these changes', ps[pi].name || ('Changes ' + (pi + 1))); } catch (e) {}
-          if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; } } }
+        if (ps && ps[pi]) { uiPrompt('Name for these changes', ps[pi].name || ('Changes ' + (pi + 1))).then((nm) => {
+          if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) ps[pi].name = v; }
+          if (_ambProgEd === ed) _ambPeRender(); }); return; } }
       else if (op === 'partplays') { const ps = _ambPeParts(ed), pi = parseInt(arg, 10), d = parseInt(a[2], 10) || 0;
         if (ps && ps[pi]) { const v = Math.max(1, Math.min(64, (Math.max(1, (ps[pi].plays | 0) || 1)) + d));
           if (v > 1) ps[pi].plays = v; else delete ps[pi].plays;
@@ -10955,11 +10969,12 @@
         const r0 = sole ? null : _ambPePartRange(ed, pi);
         const nCh = sole ? ed.chords.length : Math.max(0, (r0 ? r0.to - r0.from : 0));
         const nm0 = sole ? '' : (ps0[pi].name || ('Changes ' + (pi + 1)));
-        if (typeof confirm === 'function' && !confirm(sole
+        uiConfirm(sole
             ? ('Delete the whole progression — all ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
                'This is the only set of changes, so it IS the progression. The Progression switch will be turned off.')
             : ('Delete "' + nm0 + '" and its ' + nCh + ' chord' + (nCh === 1 ? '' : 's') + '?\n\n' +
-               'The chords go with it. To keep them, merge it into a neighbour instead.'))) return;
+               'The chords go with it. To keep them, merge it into a neighbour instead.')).then((ok) => {
+        if (!ok || _ambProgEd !== ed) return;
         try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply((ed.name || 'Prog').trim() || 'Prog', serialize()); } catch (e) {}
         if (!_ambProgDeletePart(E, pi)) { if (typeof showToast === 'function') showToast('Could not delete that part.'); return; }
         try {
@@ -10993,7 +11008,9 @@
         // popover after user confirms right away") — the part you opened it for is
         // gone, so reopening on a neighbour was editing something you did not pick.
         try { _ambSyncControls(E); } catch (e) {}
-        _ambPeClose(); return;
+        _ambPeClose();
+        });
+        return;
       }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
@@ -11018,8 +11035,7 @@
         // whatever the editor happened to be called.
         const E = ed.E;
         const chords = serialize();
-        let nm = null;
-        try { nm = prompt('Export to the seed list as:', (ed.name || 'Prog').trim() || 'Prog'); } catch (e) {}
+        uiPrompt('Export to the seed list as:', (ed.name || 'Prog').trim() || 'Prog').then((nm) => {
         if (nm == null) return;
         nm = String(nm).trim(); if (!nm) return;
         let parts = null;
@@ -11034,6 +11050,7 @@
         try { _ambSyncControls(E); } catch (e) {}
         if (typeof persistWorkspace === 'function') persistWorkspace();
         if (typeof showToast === 'function') showToast('Exported "' + nm + '" to the seed list.');
+        });
         return;   // stay open — exporting is not finishing
       }
       _ambPeRender();
@@ -17975,7 +17992,7 @@
         return;
       }
       const base = (L.kit ? (L.kit + ' edit') : 'My kit');
-      const nm = (typeof prompt === 'function') ? prompt('Save these ' + spec.filled + ' lane sounds as a kit named:', base) : base;
+      const nm = (typeof uiPrompt === 'function') ? await uiPrompt('Save these ' + spec.filled + ' lane sounds as a kit named:', base) : base;
       if (nm == null) return;
       const name = (String(nm).trim() || 'My kit').slice(0, 40);
       const id = 'kit-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -22196,14 +22213,14 @@
       { const sv = el('euclidpresetsave'); if (sv) sv.addEventListener('click', () => {
           _E = E; const L = getL(); if (!L) return;
           const suggested = _ambPresetLabel(L) || 'My rhythm';
-          let nm = null;
-          try { nm = window.prompt('Name this rhythm', suggested); } catch (e) {}
-          nm = (nm || '').trim();
-          if (!nm) return;
-          _ambSaveRhythmPreset(nm, L);
-          L.euclidPreset = nm;
-          render(); syncPreset(); persist();
-          try { if (typeof showToast === 'function') showToast('Saved rhythm “' + nm + '”'); } catch (e) {}
+          uiPrompt('Name this rhythm', suggested).then((nm0) => {
+            const nm = (nm0 || '').trim();
+            if (!nm) return;
+            _ambSaveRhythmPreset(nm, L);
+            L.euclidPreset = nm;
+            render(); syncPreset(); persist();
+            try { if (typeof showToast === 'function') showToast('Saved rhythm “' + nm + '”'); } catch (e) {}
+          });
         }); }
       // Refresh the has-fx dot on every cell in the current edit scope (called after
       // a slider/select edit, since those don't re-render — keeps the drag alive).
@@ -24094,8 +24111,9 @@
         let idx = -1;
         try { idx = savedSequences.findIndex(x => x && x.name === nm); } catch (e) { idx = -1; }
         if (idx < 0) { _ambSeqMapRender(); return; }
-        let res = null;
-        try { res = deleteSavedSequence(idx); } catch (e) { res = null; }
+        // the delete ASKS without blocking now — everything below runs once
+        // it is decided (`onDone`, with null on a cancel)
+        const after = (res) => {
         if (res) {
           // The builder may have been pointing at the entry that just went.
           if (st.n === nm) { const b2 = _ambSeqMapBank(); st.n = b2.length ? b2[0].name : ''; }
@@ -24112,6 +24130,8 @@
           try { _ambRefreshSeedModes(E); } catch (e) {}
         }
         _ambSeqMapRender();
+        };
+        try { deleteSavedSequence(idx, { onDone: after }); } catch (e) { after(null); }
         return;
       }
       if (op === 'map') {
@@ -29450,7 +29470,8 @@
       const span = lay ? lay.querySelector('.ambient-layer-name') : null;
       const cur = (typeof layer.label === 'string' && layer.label.trim())
         ? layer.label.trim() : (span ? span.textContent.trim() : '');
-      const next = (typeof prompt === 'function') ? prompt('Layer name (leave blank to reset):', cur) : null;
+      if (typeof uiPrompt !== 'function') return;
+      uiPrompt('Layer name (leave blank to reset):', cur).then((next) => {
       if (next === null) return;                       // cancelled
       const name = String(next).trim();
       if (name) layer.label = name; else delete layer.label;
@@ -29470,6 +29491,7 @@
       }
       if (typeof persistWorkspace === 'function') persistWorkspace();
       try { _ambRenderMixer(E); } catch (e) {}
+      });
     }
     // The KEY for a layer object — the reverse of _ambLayerByKey. Primaries are
     // named; everything else is '<type>:<id>', the convention used everywhere.
@@ -30983,13 +31005,15 @@
       try { _ambRefreshSeedModes(E); } catch (e) {}
       return true;
     }
-    function _ambPhraseSave(ge0, asNew) {
+    // ASYNC — resolves true/false. Both questions are in-page dialogs now
+    // (a native prompt froze the phone's audio), so the answer arrives later.
+    async function _ambPhraseSave(ge0, asNew) {
       const ge = ge0 || _bloomGridEdit;
       if (!ge || !ge.lane) return false;
       let nm = ge.seqName;
       if (asNew || !nm) {
         const dflt = nm || ((typeof uniqueSeqName === 'function') ? uniqueSeqName('phrase') : 'phrase');
-        const t = prompt('Save this phrase as:', dflt);
+        const t = await uiPrompt('Save this phrase as:', dflt);
         if (t == null) return false;
         nm = String(t).trim() || dflt;
       }
@@ -30998,7 +31022,7 @@
       // other one — a mapping resolves the first match, so the older entry
       // becomes unreachable while still visible. Ask rather than shadow.
       if (at >= 0 && nm !== ge.seqName &&
-          !confirm('"' + nm + '" already exists. Replace it?\n\nAnything mapped to that name will play this phrase instead.')) return false;
+          !(await uiConfirm('"' + nm + '" already exists. Replace it?\n\nAnything mapped to that name will play this phrase instead.'))) return false;
       const ent = _ambPhraseEntry(nm, ge.lane.steps);
       try {
         if (at >= 0) savedSequences[at] = ent; else savedSequences.push(ent);
@@ -31055,7 +31079,7 @@
         if (!b) { if (ev.target === host) close(); return; }
         const a = b.dataset.pg;
         if (a === 'cancel') { close(); return; }
-        if (a === 'save') { if (!_ambPhraseSave(ge)) return; close(); ge._pgSkip = true; proceed(); return; }
+        if (a === 'save') { _ambPhraseSave(ge).then((ok) => { if (!ok) return; close(); ge._pgSkip = true; proceed(); }); return; }
         // Discard: accept the loss, then let the action through exactly once.
         ge._pgSkip = true;
         close(); proceed();
@@ -31835,7 +31859,8 @@
     // layers / ramps. Published wraps + progressions (a shared library, not
     // instance state) are preserved on the master.
     function _ambResetInstance(E) {
-      if (typeof confirm === 'function' && !confirm('Reset this Bloom to defaults? This clears its layers, ramps, and settings.')) return;
+      uiConfirm('Reset this Bloom to defaults? This clears its layers, ramps, and settings.').then((ok) => {
+      if (!ok) return;
       _E = E;
       const wasPlaying = !!E.timer;
       try { _ambStopGenerator(E); } catch (e) {}
@@ -31857,6 +31882,7 @@
       _ambSyncControls(E);
       if (wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
     }
     function _ambStartRampClock(E) {
       if (!E || E.rampTimer) return;
@@ -33373,11 +33399,12 @@
         { label: '2 min',  fn: () => go(120) },
         { label: '4 min',  fn: () => go(240) },
         { label: '⌨ Custom seconds…', fn: () => {
-          let sv = null; try { sv = prompt('Length in seconds:', '60'); } catch (e) {}
-          if (sv == null) return;
-          const n = parseInt(sv, 10);
-          if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
-          go(n);
+          uiPrompt('Length in seconds:', '60').then((sv) => {
+            if (sv == null) return;
+            const n = parseInt(sv, 10);
+            if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
+            go(n);
+          });
         } },
         'hr',
         // Open-ended is REAL TIME by nature — there is no length to render.
@@ -34571,10 +34598,12 @@
     }
     function _ambRenameBankItem(item) {
       if (!item) return;
-      const nn = (typeof window !== 'undefined' && window.prompt) ? window.prompt('Rename capture:', item.name) : null;
-      if (typeof nn !== 'string' || !nn.trim()) return;
-      item.name = nn.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 80) || item.name;
-      _ambRenderCaptureBank();
+      if (typeof uiPrompt !== 'function') return;
+      uiPrompt('Rename capture:', item.name).then((nn) => {
+        if (typeof nn !== 'string' || !nn.trim()) return;
+        item.name = nn.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 80) || item.name;
+        _ambRenderCaptureBank();
+      });
     }
     function _ambStopBankPreview() {
       const a = _ambBankPreviewAudio;
@@ -41833,15 +41862,14 @@
           if (D.moved) { el.dispatchEvent(new Event('change', { bubbles: true })); return; }   // handlers that commit on change
           // a deliberate HOLD, released where it started = type an exact value
           if (ev.type !== 'pointerup' || performance.now() - (D.t0 || 0) < 480) return;
-          setTimeout(() => {
-            let v = null; try { v = window.prompt(labelOf(el), el.value); } catch (e) {}
+          uiPrompt(labelOf(el), el.value).then((v) => {
             if (v == null) return;
             const n = parseFloat(v); if (!isFinite(n)) return;
             const mn = parseFloat(el.min) || 0, mx = parseFloat(el.max);
             el.value = String(Math.max(mn, Math.min(isFinite(mx) ? mx : n, n)));
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-          }, 0);
+          });
         };
         document.addEventListener('pointerup', end);
         document.addEventListener('pointercancel', end);
@@ -44686,9 +44714,9 @@
         }
         return;
       }
-      if (op === 'progren') { const nm = (typeof prompt === 'function') ? prompt('Name for these changes', _ambProgTitle(prog.name)) : null;
-        if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) prog.name = v; persist(); refresh(); } return; }
-      if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; const nm = (typeof prompt === 'function') ? prompt('Name for these changes', parts[pi].name) : null; if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } return; }
+      if (op === 'progren') { if (typeof uiPrompt !== 'function') return; uiPrompt('Name for these changes', _ambProgTitle(prog.name)).then((nm) => {
+        if (nm != null) { const v = String(nm).trim().slice(0, 32); if (v) prog.name = v; persist(); refresh(); } }); return; }
+      if (op === 'partren') { const pi = a[1] | 0; const parts = prog.parts; if (!parts || !parts[pi]) return; if (typeof uiPrompt !== 'function') return; uiPrompt('Name for these changes', parts[pi].name).then((nm) => { if (nm != null) { const v = String(nm).trim().slice(0, 16); if (v) parts[pi].name = v; persist(); refresh(); } }); return; }
       if (op === 'partmv') { _ambProgMovePart(prog, a[1] | 0, a[2] | 0); persist(); refresh(); return; }
       if (op === 'partrm') { _ambProgRemovePart(prog, a[1] | 0); persist(); refresh(); return; }
       if (op === 'ver') { _ambProgSwitchVersion(prog, a[1] | 0); try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} persist(); refresh(); return; }
@@ -44697,12 +44725,15 @@
       // progression playing now is untouched — removing a version only forgets it.
       if (op === 'verdel') {
         const vi = a[1] | 0; if (!Array.isArray(prog.versions) || !prog.versions[vi]) return;
-        let ok = true; try { if (typeof confirm === 'function') ok = confirm('Delete the version \u201c' + prog.versions[vi].name + '\u201d? The progression playing now is not changed.'); } catch (e) {}
-        if (!ok) return;
-        prog.versions.splice(vi, 1);
-        if (Number.isFinite(prog.versionIdx)) { if (prog.versionIdx === vi) delete prog.versionIdx; else if (prog.versionIdx > vi) prog.versionIdx--; }
-        if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
-        persist(); refresh(); return;
+        const vName = prog.versions[vi].name;
+        uiConfirm('Delete the version \u201c' + vName + '\u201d? The progression playing now is not changed.').then((ok) => {
+          if (!ok || !Array.isArray(prog.versions) || !prog.versions[vi] || prog.versions[vi].name !== vName) return;
+          prog.versions.splice(vi, 1);
+          if (Number.isFinite(prog.versionIdx)) { if (prog.versionIdx === vi) delete prog.versionIdx; else if (prog.versionIdx > vi) prog.versionIdx--; }
+          if (!prog.versions.length) { delete prog.versions; delete prog.versionIdx; }
+          persist(); refresh();
+        });
+        return;
       }
       // ❄ CAPTURE — resolve the pass currently sounding into literal chords and
       // store it as a version with salt cleared, so it replays exactly. The LIVE
@@ -44716,8 +44747,8 @@
         })();
         const chords = _ambProgCaptureCycle(E, cfg, cyc);
         if (!chords) { if (typeof showToast === 'function') showToast('Nothing to capture yet.'); return; }
-        let nm = null;
-        try { nm = window.prompt('Name this captured pass', _ambRandProgName()); } catch (e) {}
+        // the pass is captured NOW (above); only its name waits for the answer
+        uiPrompt('Name this captured pass', _ambRandProgName()).then((nm) => {
         if (nm == null) return;
         const name = String(nm).trim().slice(0, 24) || _ambRandProgName();
         if (!Array.isArray(prog.versions)) prog.versions = [];
@@ -44729,7 +44760,9 @@
         const _pts = Array.isArray(chords.parts) ? chords.parts : null;
         prog.versions.push({ name: name, chords: chords.map(_ambCloneChord), ...(_pts ? { parts: _pts } : {}) });
         if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it in Versions to loop it.');
-        persist(); refresh(); return;
+        persist(); refresh();
+        });
+        return;
       }
       // DEFERRED: this strip acts on POINTERDOWN (it repaints on the viz timer,
       // so a click would drop), and showCtxMenu arms its own document-level
@@ -48035,9 +48068,12 @@
       return (layer && typeof layer.label === 'string' && layer.label.trim()) ? layer.label.trim() : fallback;
     }
     // Confirm before removing a layer (delete is destructive + not undoable).
+    // Resolves true/false — an in-page dialog (a native confirm froze the
+    // phone's audio). Callers ask FIRST, then re-resolve the layer: the config
+    // can be normalized (objects replaced) while the question is open.
     function _ambConfirmDeleteLayer(name) {
-      if (typeof confirm !== 'function') return true;
-      return confirm('Delete layer “' + (name || 'this layer') + '”? This can’t be undone.');
+      if (typeof uiConfirm !== 'function') return Promise.resolve(true);
+      return uiConfirm('Delete layer “' + (name || 'this layer') + '”? This can’t be undone.');
     }
     // LAYER TYPE AS AN ATTRIBUTE. A key is either a bare primary name ('bed') or
     // '<type>:<id>' ('bass:1', 'seq:2'), so the type is the part before the colon.
@@ -50669,8 +50705,8 @@
       const sc = c0.sections[si];                       // for LABELS only, never written
       const items = [
         { label: '✎ Rename “' + sc.name + '”', fn: () => {
-          const nm = prompt('Section name:', sc.name);
-          if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); } },
+          uiPrompt('Section name:', sc.name).then((nm) => {
+            if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); }); } },
         // LENGTH as a unit ratio, so a boundary lands on a unit boundary by
         // construction and rescales with the Area Unit. The absolute-bars escape
         // pins ref:'bar' and deliberately will NOT rescale.
@@ -50694,10 +50730,11 @@
             _ambFmtBpc(auB / 2) + ' bar' + (auB / 2 === 1 ? '' : 's') + ')',
             fn: () => put({ num: 1, den: 2, ref: 'area' }) });
           opts.push({ label: (cur.ref === 'bar' ? '✓ ' : '') + '⇢ Absolute bars…  (does not rescale)', fn: () => {
-            const b2 = prompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(s2.bars)));
-            const v2 = parseFloat(b2); if (!Number.isFinite(v2) || v2 <= 0) return;
-            const r2 = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
-            put(r2 ? { num: r2.num, den: r2.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' });
+            uiPrompt('Section length in bars (pins it to an absolute length — it will NOT follow the Area Unit):', String(_ambFmtBpc(s2.bars))).then((b2) => {
+              const v2 = parseFloat(b2); if (!Number.isFinite(v2) || v2 <= 0) return;
+              const r2 = _ambRatioOf(Math.max(0.25, Math.min(64, v2)), 1);
+              put(r2 ? { num: r2.num, den: r2.den, ref: 'bar' } : { num: 4, den: 1, ref: 'bar' });
+            });
           } });
           // DEFER: the parent menu runs this fn and then dismisses itself, which
           // would tear the submenu down inside the same dispatch.
@@ -50705,37 +50742,40 @@
         } },
         // MODULATION: semitones the whole harmonic frame moves while this runs.
         { label: '⇅ Key (' + ((sc.key | 0) ? (((sc.key | 0) > 0 ? '+' : '') + (sc.key | 0) + ' st') : 'no change') + ')', fn: () => {
-          const k2 = prompt('Key offset for “' + sc.name + '” in semitones (0 = no change, e.g. 2 = up a tone):', String(sc.key | 0));
-          if (k2 == null) return;
-          const v3 = parseInt(k2, 10); if (!Number.isFinite(v3)) return;
-          const cl = Math.max(-12, Math.min(12, v3));
-          set('key', cl ? cl : undefined);
+          uiPrompt('Key offset for “' + sc.name + '” in semitones (0 = no change, e.g. 2 = up a tone):', String(sc.key | 0)).then((k2) => {
+            if (k2 == null) return;
+            const v3 = parseInt(k2, 10); if (!Number.isFinite(v3)) return;
+            const cl = Math.max(-12, Math.min(12, v3));
+            set('key', cl ? cl : undefined);
+          });
         } },
         // RELATIVE MODE — the area's keyModeRot, overridden per section. Only
         // meaningful with the area Key on, so the prompt says so.
         { label: '◑ Mode (' + (Number.isFinite(sc.keyModeRot) && (sc.keyModeRot | 0) ? ('+' + (sc.keyModeRot | 0)) : 'area') + ')', fn: () => {
-          const m2 = prompt('Relative mode for “' + sc.name + '” (0-6 scale degrees; 0 = follow the area)'
+          uiPrompt('Relative mode for “' + sc.name + '” (0-6 scale degrees; 0 = follow the area)'
             + (!c0.keyOn ? '\n\nNote: the area Key is OFF, so mode has no effect until you turn it on.' : ''),
-            String((sc.keyModeRot | 0) || 0));
-          if (m2 == null) return;
-          const v4 = parseInt(m2, 10); if (!Number.isFinite(v4)) return;
-          const cl2 = (((v4 % 7) + 7) % 7);
-          set('keyModeRot', cl2 ? cl2 : undefined);
+            String((sc.keyModeRot | 0) || 0)).then((m2) => {
+            if (m2 == null) return;
+            const v4 = parseInt(m2, 10); if (!Number.isFinite(v4)) return;
+            const cl2 = (((v4 % 7) + 7) % 7);
+            set('keyModeRot', cl2 ? cl2 : undefined);
+          });
         } },
         // GROOVE — sparse: only the knobs you set are overridden.
         { label: '🕺 Groove (' + (sc.groove ? Object.keys(sc.groove).map(k3 => k3 + ' ' + sc.groove[k3]).join(', ') : 'area') + ')', fn: () => {
           const cur = sc.groove || {};
-          const txt = prompt('Groove overrides for “' + sc.name + '” — comma-separated name=value, 0-100.'
+          uiPrompt('Groove overrides for “' + sc.name + '” — comma-separated name=value, 0-100.'
             + '\nKnobs: swing, accent, density, ghost, rolls.'
             + '\nLeave EMPTY to clear all overrides and follow the area.',
-            Object.keys(cur).map(k3 => k3 + '=' + cur[k3]).join(', '));
-          if (txt == null) return;
-          const g2 = {};
-          String(txt).split(',').forEach(pair => {
-            const mm = /^\s*(swing|accent|density|ghost|rolls)\s*=\s*(-?\d+)\s*$/i.exec(pair);
-            if (mm) g2[mm[1].toLowerCase()] = Math.max(0, Math.min(100, parseInt(mm[2], 10) || 0));
+            Object.keys(cur).map(k3 => k3 + '=' + cur[k3]).join(', ')).then((txt) => {
+            if (txt == null) return;
+            const g2 = {};
+            String(txt).split(',').forEach(pair => {
+              const mm = /^\s*(swing|accent|density|ghost|rolls)\s*=\s*(-?\d+)\s*$/i.exec(pair);
+              if (mm) g2[mm[1].toLowerCase()] = Math.max(0, Math.min(100, parseInt(mm[2], 10) || 0));
+            });
+            set('groove', Object.keys(g2).length ? g2 : undefined);
           });
-          set('groove', Object.keys(g2).length ? g2 : undefined);
         } },
       ];
       // HARMONY: bind this section to one PART of the progression — verse changes
@@ -50787,7 +50827,7 @@
       // not reached yet still fires for THAT event — so an undeferred menu is
       // created and destroyed in one gesture. The documented trap.
       if (typeof showCtxMenu === 'function') setTimeout(() => { try { showCtxMenu(x, y, items); } catch (e) {} }, 0);
-      else { const nm = prompt('Section name:', sc.name); if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); }
+      else { uiPrompt('Section name:', sc.name).then((nm) => { if (nm != null && nm.trim()) set('name', nm.trim().slice(0, 12)); }); }
     }
     // THE ARRANGEMENT IN BARS: one entry per part PASS, with where it starts.
     // Built from cfg.prog.parts, NOT from the chord chain — a part that carries
@@ -51240,13 +51280,14 @@
       try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
       try { _ambSyncLayerUnits(E); } catch (e) {} // header unit + bar-length readouts
     }
-    function _ambDeleteSeqLayer(E, id) {
+    async function _ambDeleteSeqLayer(E, id) {
+      { const c0 = E.getCfg(); const l0 = c0 && _ambSeqById(c0, id); if (!l0) return;
+        if (!(await _ambConfirmDeleteLayer(_ambLayerLabel(l0, 'Seq' + (_ambSeqList(c0).indexOf(l0) + 1))))) return; }
       _E = E;
       const cfg = E.getCfg(); if (!cfg) return;
       const live = _ambSeqById(cfg, id);
       if (!live) return;
       const li = _ambSeqList(cfg).indexOf(live);
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Seq' + (li + 1)))) return;
       // C3: extras is the single home (the legacy array no longer exists
       // post-normalize; the guarded splice covers unnormalized area builds).
       { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'seq' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
@@ -51490,13 +51531,14 @@
       try { const c = E.getCfg(); _ambSampleList(c).forEach(s => { if (s && s.sampleId && (s._applyDefaults || !(_ambSampleDurMs(s.sampleId) > 0))) pending = true; }); } catch (e) {}
       if (pending && tries < 30) setTimeout(() => _ambSampleMaxPoll(E, tries + 1), 250);
     }
-    function _ambDeleteSampleLayer(E, id) {
+    async function _ambDeleteSampleLayer(E, id) {
+      { const c0 = E.getCfg(); const l0 = c0 && _ambSampleById(c0, id); if (!l0) return;
+        if (!(await _ambConfirmDeleteLayer(_ambLayerLabel(l0, 'Sample' + (_ambSampleList(c0).indexOf(l0) + 1))))) return; }
       _E = E;
       const cfg = E.getCfg(); if (!cfg) return;
       const live = _ambSampleById(cfg, id);
       if (!live) return;
       const li = _ambSampleList(cfg).indexOf(live);
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Sample' + (li + 1)))) return;
       // C3: extras is the single home (guarded legacy splice covers
       // unnormalized area builds only).
       { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'samp' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
@@ -54704,15 +54746,17 @@
       _E = E; const L = _ambLayerByKey(E, key), type = String(key).split(':')[0];
       if (!L || !_AMB_LAYER_SCHEMA[type]) { try { if (typeof showToast === 'function') showToast('Only Bloom layers can be saved as presets.'); } catch (e) {} return; }
       const dflt = (L.name && String(L.name).trim()) || (type.charAt(0).toUpperCase() + type.slice(1));
-      let name = null; try { name = prompt('Save this layer as a preset — name:', dflt); } catch (e) {}
-      if (name == null) return;   // cancelled
-      name = String(name).trim() || dflt;
+      // the layer is copied NOW — what you asked to save is what it was when you asked
       let copy = {}; try { copy = JSON.parse(JSON.stringify(L)); } catch (e) {}
       delete copy.id; delete copy.present;
-      const list = _ambLoadLayerPresets();
-      list.push({ name: name, type: type, cfg: copy });
-      _ambSaveLayerPresets(list);
-      try { if (typeof showToast === 'function') showToast('Saved preset “' + name + '”'); } catch (e) {}
+      uiPrompt('Save this layer as a preset — name:', dflt).then((name) => {
+        if (name == null) return;   // cancelled
+        name = String(name).trim() || dflt;
+        const list = _ambLoadLayerPresets();
+        list.push({ name: name, type: type, cfg: copy });
+        _ambSaveLayerPresets(list);
+        try { if (typeof showToast === 'function') showToast('Saved preset “' + name + '”'); } catch (e) {}
+      });
     }
     // Add a saved preset as a new extras layer (deep-copy its cfg onto a fresh id).
     function _ambAddPreset(E, preset) {
@@ -54750,12 +54794,13 @@
       const nm = list[idx].name; list.splice(idx, 1); _ambSaveLayerPresets(list);
       try { if (typeof showToast === 'function') showToast('Deleted preset “' + nm + '”'); } catch (e) {}
     }
-    function _ambDeleteExtra(E, type, id) {
+    async function _ambDeleteExtra(E, type, id) {
+      { const c0 = E.getCfg(); const x0 = c0 && Array.isArray(c0.extras) ? c0.extras.find(x => x.id === id && x.type === type) : null; if (!x0) return;
+        const sch0 = _AMB_LAYER_SCHEMA[type];
+        if (!(await _ambConfirmDeleteLayer(_ambLayerLabel(x0, (sch0 && sch0.label) || type)))) return; }
       _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
       const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
       if (idx < 0) return;
-      const sch = _AMB_LAYER_SCHEMA[type];
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.extras[idx], (sch && sch.label) || type))) return;
       const key = type + ':' + id;
       cfg.extras.splice(idx, 1);
       try { if (E.mod[key]) _ambTeardownMod(key); } catch (e) {}
@@ -55762,10 +55807,11 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }  // build its chain if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
-    function _ambRemoveLayer(E, layer) {
+    async function _ambRemoveLayer(E, layer) {
+      { const c0 = E.getCfg(); if (!c0 || !c0[layer]) return;
+        if (!(await _ambConfirmDeleteLayer(_ambLayerLabel(c0[layer], layer.charAt(0).toUpperCase() + layer.slice(1))))) return; }
       _E = E;
       const cfg = E.getCfg(); if (!cfg || !cfg[layer]) return;
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg[layer], layer.charAt(0).toUpperCase() + layer.slice(1)))) return;
       cfg[layer].present = false;
       _ambSyncControls(E);                                   // hides the card
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }  // tears down its chain
@@ -57785,7 +57831,7 @@
       });
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
-      host.addEventListener('click', (e) => {
+      host.addEventListener('click', async (e) => {   // async: ⬇ Save awaits its name (see .amb-seedsave)
         const rb = e.target && e.target.closest && e.target.closest('.ambient-rename-btn');
         if (rb) { e.stopPropagation(); try { _ambRenameLayer(E, rb); } catch (err) { console.warn('Rename failed', err); } return; }
         const mb = e.target && e.target.closest && e.target.closest('.ambient-morph-btn');
@@ -57939,8 +57985,8 @@
               if (typeof saveAsNewSeq === 'function' && typeof currentSequenceSnapshot === 'function') {
                 const L1 = _ambLayerByKey(E, key);
                 const dflt = (L1 && (L1.name || _ambLayerLabel(L1, String(key).split(':')[0]))) || 'Phrase';
-                const nm = (typeof prompt === 'function')
-                  ? prompt('Name this sequence (it will appear under Sequences on the layer):', dflt) : dflt;
+                const nm = (typeof uiPrompt === 'function')
+                  ? await uiPrompt('Name this sequence (it will appear under Sequences on the layer):', dflt) : dflt;
                 if (nm === null) return;                   // cancelled: stay in the grid
                 const before = Array.isArray(savedSequences) ? savedSequences.length : -1;
                 saveAsNewSeq(String(nm).trim() || dflt);
@@ -58926,10 +58972,11 @@
         const _pgReharm = () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) {
               try { if (typeof showToast === 'function') showToast('No progression to reharmonize.'); } catch (e) {} return; }
-            let amt = null;
-            try { amt = prompt('Reharmonize — how much? (0-100: the chance each chord is substituted)', '50'); } catch (e) {}
+            uiPrompt('Reharmonize — how much? (0-100: the chance each chord is substituted)', '50').then((amt) => {
             if (amt == null) return;
             const v = Math.max(0, Math.min(100, parseInt(amt, 10) || 0)); if (!v) return;
+            // RE-RESOLVE — the config may have been normalized while the question was open
+            const c = E.getCfg(); if (!c || !c.prog || !Array.isArray(c.prog.chords) || !c.prog.chords.length) return;
             if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Reharmonize progression'); } catch (e) {} }
             const salt = (c.prog.chords.length * 7919) ^ (Date.now() & 0xffff);   // a fresh roll each press
             const r = _ambReharmonize(c, c.prog.chords, v, salt);
@@ -58939,6 +58986,7 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Reharmonized ' + r.changed.length + ': ' + r.changed.slice(0, 3).map(x => x.from + '→' + x.to).join(' · ') + (r.changed.length > 3 ? ' …' : '')); } catch (e) {}
+            });
           };
         // 🔍 Key — detect and OFFER; never silently re-key the area.
         const _pgDetectKey = () => {
@@ -58955,15 +59003,16 @@
             const cur = _ambKeyRootPc(c), curS = _ambKeyScaleName(c);
             const same = (cur === d.root && curS === d.scale) && !!c.keyOn;
             if (same) { try { if (typeof showToast === 'function') showToast('These chords are already in ' + nm + '.'); } catch (e) {} return; }
-            let ok = false;
-            try { ok = confirm('These chords look like ' + nm + '.\n\nSet the area key to it?' + (c.keyOn ? ('\n(currently ' + CHROMATIC[cur] + ' ' + curS + ')') : '\n(the area currently has no key set)')); } catch (e) {}
+            uiConfirm('These chords look like ' + nm + '.\n\nSet the area key to it?' + (c.keyOn ? ('\n(currently ' + CHROMATIC[cur] + ' ' + curS + ')') : '\n(the area currently has no key set)')).then((ok) => {
             if (!ok) return;
+            const c2 = E.getCfg(); if (!c2) return;      // re-resolve after the question
             if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Set key from progression'); } catch (e) {} }
-            c.keyOn = true; c.keyFollow = false; c.keyRoot = d.root; c.keyScale = d.scale;
+            c2.keyOn = true; c2.keyFollow = false; c2.keyRoot = d.root; c2.keyScale = d.scale;
             try { _ambSyncControls(E); _ambRenderProgOverview(E); _ambRenderScheduler(E); } catch (e) {}
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Key set to ' + nm + '.'); } catch (e) {}
+            });
           };
         // ⌨ Numerals — type the changes instead of clicking them in.
         const _pgRoman = (aOpts) => {
@@ -58976,9 +59025,9 @@
             const _vsR = _ambProgViewShift(E, c, c.prog && c.prog.chords);
             const cur = (c.prog && Array.isArray(c.prog.chords) && c.prog.chords.length)
               ? c.prog.chords.map(ch => _ambPeRoman(_ambChordShift(ch, _vsR), kRoot, kScale)).filter(Boolean).join(' ') : '';
-            let txt = null;
-            try { txt = prompt('Progression as roman numerals in ' + CHROMATIC[kRoot] + ' ' + kScale + ':\n(e.g. "ii V I"  ·  "i bVII bVI V"  ·  "IVmaj7 V7 iii7 vi7")', cur); } catch (e) {}
+            uiPrompt('Progression as roman numerals in ' + CHROMATIC[kRoot] + ' ' + kScale + ':\n(e.g. "ii V I"  ·  "i bVII bVI V"  ·  "IVmaj7 V7 iii7 vi7")', cur).then((txt) => {
             if (txt == null) return;
+            const c = E.getCfg(); if (!c) return;          // re-resolve after the question
             const chords = _ambParseRomanProg(txt, kRoot, kScale);
             if (!chords) { try { if (typeof showToast === 'function') showToast('Couldn’t read any numerals in that — progression unchanged.'); } catch (e) {} return; }
             if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
@@ -58997,6 +59046,7 @@
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
             if (typeof persistWorkspace === 'function') persistWorkspace();
             try { if (typeof showToast === 'function') showToast('Progression set — ' + chords.length + ' chords.'); } catch (e) {}
+            });
           };
         // 🧂 Salt knobs → cfg.prog.salt (normalize deletes the key when all zero,
         // so untouched projects stay byte-identical). Engine reads per onset —
@@ -59524,8 +59574,7 @@
             }
             if (ev.target.closest && ev.target.closest('.pg-save')) {
               if (!bs.built.length) return;
-              let nm = null;
-              try { nm = window.prompt('Name this progression', _ambRandProgName()); } catch (e) {}
+              uiPrompt('Name this progression', _ambRandProgName()).then((nm) => {
               if (nm == null) return;                       // cancelled — keep the build
               const name = String(nm).trim().slice(0, 24) || _ambRandProgName();
               // Strip the builder's display name: a chord is root + intervals, and
@@ -59534,6 +59583,7 @@
               try { _ambApplyGenProg(E, chords, name, aOpts); } catch (e) { console.warn('Create failed', e); }
               if (typeof showToast === 'function') showToast('Created “' + name + '” — ' + chords.length + ' chords.');
               try { ov.remove(); } catch (e) {}
+              });
               return;
             }
             if (ev.target === ov || ev.target.closest('.pg-cancel')) { try { ov.remove(); } catch (e) {} return; }
@@ -59580,7 +59630,7 @@
             if (!lc.write || typeof lc.write !== 'object') lc.write = { on: false, bars: 2, times: 4 };
             return lc.write;
           };
-          hostEl.addEventListener('click', (ev) => {
+          hostEl.addEventListener('click', async (ev) => {   // async: 💾 bank awaits its name
             const sq = ev.target && ev.target.closest && ev.target.closest('.ambient-sgseq');
             if (sq) {
               ev.stopPropagation();
@@ -59667,7 +59717,7 @@
                 const _lk = sb.dataset.sgk || '';
                 const L0 = _ambLayerByKey(E, _lk);
                 const dflt = (L0 && (L0.name || _ambLayerLabel(L0, String(_lk).split(':')[0]))) || 'Phrase';
-                const nm = (typeof prompt === 'function') ? prompt('Save this phrase to the sequence bank as:', dflt) : dflt;
+                const nm = (typeof uiPrompt === 'function') ? await uiPrompt('Save this phrase to the sequence bank as:', dflt) : dflt;
                 if (nm == null) return;                       // cancelled
                 const before = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences.length : -1;
                 let failed = null;
@@ -60353,8 +60403,9 @@
         { const c = cfg0();
           const hasLayers = !!(c && (['bed', 'motif', 'texture', 'beat'].some(k => c[k] && c[k].present !== false) || (Array.isArray(c.extras) && c.extras.length) || (Array.isArray(c.seqs) && c.seqs.length) || (Array.isArray(c.samples) && c.samples.length) || (Array.isArray(c.layers) && c.layers.length)));
           if (hasLayers) actions.push('hr', { label: '✕ Clear area — remove all layers', danger: true, fn: () => {
-            if (typeof confirm === 'function' && !confirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.')) return;
-            _ambClearArea(E);
+            uiConfirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.').then((ok) => {
+              if (ok) _ambClearArea(E);
+            });
           } });
         }
         _ambActionsPopover('Add a layer', actions);

@@ -321,13 +321,13 @@
       if (delBtn) delBtn.disabled = false;
     });
 
-    document.getElementById('grid-state-save-btn').addEventListener('click', () => {
-      const name = (prompt('Name this grid state:') || '').trim();
+    document.getElementById('grid-state-save-btn').addEventListener('click', async () => {
+      const name = ((await uiPrompt('Name this grid state:', '')) || '').trim();
       if (!name) return;
       const idx = savedGridStates.findIndex(s => s.name === name);
       const snap = currentGridStateSnapshot(name);
       if (idx >= 0) {
-        if (!confirm(`A grid state named "${name}" already exists. Overwrite?`)) return;
+        if (!(await uiConfirm(`A grid state named "${name}" already exists. Overwrite?`))) return;
         savedGridStates[idx] = snap;
       } else {
         savedGridStates.push(snap);
@@ -336,11 +336,11 @@
       refreshGridStateDropdown(name);
     });
 
-    document.getElementById('grid-state-delete-btn').addEventListener('click', () => {
+    document.getElementById('grid-state-delete-btn').addEventListener('click', async () => {
       const sel = document.getElementById('grid-state-select');
       if (!sel.value) return;
       const name = sel.value;
-      if (!confirm(`Delete grid state "${name}"?`)) return;
+      if (!(await uiConfirm(`Delete grid state "${name}"?`))) return;
       savedGridStates = savedGridStates.filter(s => s.name !== name);
       persistGridStates();
       refreshGridStateDropdown('');
@@ -1833,7 +1833,7 @@
       } catch (e) {}
       panel.innerHTML =
         '<div class="xport-sec xport-home-sec"><a class="home-bar" href="index.html" title="' + _homeTitle +
-        '" onclick="return confirm(\'' + _homeAsk + '\');">' + _homeTxt + '</a></div>' +
+        '" onclick="var h=this.href;event.preventDefault();uiConfirm(\'' + _homeAsk + '\').then(function(ok){if(ok)location.href=h;});return false;">' + _homeTxt + '</a></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Edit</div><div class="xport-row" id="xport-edit-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +

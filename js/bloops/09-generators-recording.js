@@ -1267,6 +1267,10 @@
     // schedules a phrase BY NAME — every mapping that named it must be dropped,
     // in EVERY area, or those cells point at nothing and the layer silently
     // falls back to its own phrase with nothing saying why.
+    // NON-BLOCKING CONFIRM: when it has to ask, this returns null at once and
+    // does the delete after the answer, handing the result to `opts.onDone`
+    // (callers that act on the result pass it). `opts.silent` = no question,
+    // synchronous exactly as before.
     function deleteSavedSequence(seqIndex, opts) {
       const i = seqIndex | 0;
       const removed = savedSequences[i];
@@ -1280,9 +1284,15 @@
         const msg = 'Delete “' + name + '”?' +
           (warn ? ('\n\nThis will also remove ' + warn + '. Layers that adopted it as their own phrase keep playing it — they hold their own copy.')
                 : '\n\nNothing is mapped to it.');
-        let ok = false;
-        try { ok = (typeof confirm === 'function') ? confirm(msg) : true; } catch (e) { ok = false; }
-        if (!ok) return null;
+        const ask = (typeof uiConfirm === 'function') ? uiConfirm(msg) : Promise.resolve(true);
+        ask.then((ok) => {
+          if (!ok) { if (typeof o.onDone === 'function') { try { o.onDone(null); } catch (e) {} } return; }
+          // re-find by identity — the bank may have moved while the question was open
+          const j = savedSequences.indexOf(removed);
+          const res = (j >= 0) ? deleteSavedSequence(j, Object.assign({}, o, { silent: true, onDone: null })) : null;
+          if (typeof o.onDone === 'function') { try { o.onDone(res); } catch (e) {} }
+        }, () => {});
+        return null;
       }
       savedSequences.splice(i, 1);
       if (activeSeqIndex === i) { activeSeqIndex = null; sequence = []; try { renderSequence(); } catch (e) {} }
@@ -1505,9 +1515,18 @@
       // it is offered first; declining suffixes rather than silently shadowing.
       const dupAt = savedSequences.findIndex(x => x && x.name === name);
       if (dupAt >= 0) {
-        const replace = (typeof confirm === 'function')
-          ? confirm('“' + name + '” already exists.\n\nReplace it? Layers that play “' + name + '” will follow the new phrase.\n\nCancel to save alongside it under a new name.')
-          : false;
+        // NON-BLOCKING: the answer arrives later, so the rest runs from here
+        // (`_saveAsNewSeqAfter`) — the no-duplicate path below stays synchronous.
+        const ask = (typeof uiConfirm === 'function')
+          ? uiConfirm('“' + name + '” already exists.\n\nReplace it? Layers that play “' + name + '” will follow the new phrase.\n\nCancel to save alongside it under a new name.')
+          : Promise.resolve(false);
+        ask.then((replace) => _saveAsNewSeqAfter(name, savedSequences.findIndex(x => x && x.name === name), replace));
+        return;
+      }
+      _saveAsNewSeqAfter(name, -1, false);
+    }
+    function _saveAsNewSeqAfter(name, dupAt, replace) {
+      if (dupAt >= 0) {
         if (replace) {
           const _up = { name, ...currentSequenceSnapshot() };
           savedSequences[dupAt] = _up;
@@ -2006,7 +2025,7 @@
     // a drifting lane's button clears the drift and re-syncs the lane
     // at the next iteration boundary. Each lane carries its own factor,
     // so multiple lanes can drift by different amounts.
-    document.getElementById('drift-btn')?.addEventListener('click', () => {
+    document.getElementById('drift-btn')?.addEventListener('click', async () => {
       const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
       if (!lane) return;
       // State C → A: Reset. Drop offset entirely and re-sync the live
@@ -2037,7 +2056,7 @@
         return;
       }
       // State A → B: prompt for factor and start drifting.
-      const raw = prompt(`Drift factor for lane ${lane.name} (ms per iteration). Iteration N will be delayed by factor × N.`, '10');
+      const raw = await uiPrompt(`Drift factor for lane ${lane.name} (ms per iteration). Iteration N will be delayed by factor × N.`, '10');
       if (raw == null) return;
       const ms = parseFloat(raw);
       if (!Number.isFinite(ms) || ms <= 0) return;

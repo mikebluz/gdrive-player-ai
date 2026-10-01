@@ -1903,8 +1903,8 @@
         // first if the lane has any steps (undo can still recover it).
         { label: 'Delete lane', danger: true, disabled: lanes.length <= 1, fn: () => {
             const hasSteps = !!(lane.steps && lane.steps.length);
-            if (hasSteps && !confirm(`Delete "${lane.name}" and its ${lane.steps.length} step(s)?`)) return;
-            _deleteLane(laneIdx);
+            if (!hasSteps) { _deleteLane(laneIdx); return; }
+            uiConfirm(`Delete "${lane.name}" and its ${lane.steps.length} step(s)?`).then((ok) => { if (ok) _deleteLane(laneIdx); });
           } },
       ];
       // Lane Bloom (per-lane generative) is on ice — the "🌸 Send to Bloom ▸"

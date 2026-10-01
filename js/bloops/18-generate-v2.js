@@ -324,9 +324,9 @@
   .g2-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
   .g2-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .g2-chip{min-width:0;height:62px;padding:0 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:14px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:12px;font-weight:600}
-  .g2-seg{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap}
-  .g2-seg button{min-height:36px;padding:0 12px;border-radius:18px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600}
-  .g2-seg button.on{background:#8b5cf6;border-color:#8b5cf6;color:#fff}
+  .g2-seg{display:inline-flex;padding:2px;gap:2px;border-radius:17px;border:1px solid #3a3a5c;background:#15152a}
+  .g2-seg button{min-height:32px;padding:0 10px;border-radius:15px;border:0;background:transparent;color:#c9c5e3;font-size:13px;font-weight:600}
+  .g2-seg button.on{background:#8b5cf6;color:#fff}
   .g2-nt{cursor:pointer}.g2-nt::before{content:'';position:absolute;inset:-5px -4px}
   .g2-roll{position:relative;height:150px;flex-shrink:0;border-radius:14px;background:#0c0c18;border:1px solid #262640;overflow:hidden}
   .g2-mv{min-height:46px;padding:6px 10px;display:flex;align-items:center;gap:8px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600;text-align:left}
@@ -387,12 +387,6 @@
     const yOf = (m) => TOP + (hi - m) * rowH;
     // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
     const info = G.rollMode === 'info' || !live;
-    if (live) {
-      h += '<div class="g2-seg" role="group" aria-label="Tapping the picture">'
-        + '<span class="g2-cap" style="margin-right:auto">Tap to</span>'
-        + '<button type="button" data-a="rollmode" data-k="reroll" class="' + (!info ? 'on' : '') + '" aria-pressed="' + !info + '">🎲 Re-roll a bar</button>'
-        + '<button type="button" data-a="rollmode" data-k="info" class="' + (info ? 'on' : '') + '" aria-pressed="' + info + '">ⓘ See a note</button></div>';
-    }
     h += '<div class="g2-roll" style="height:' + rollH + 'px">';
     // the key column + row shading
     for (let m = hi; m >= lo; m--) {
@@ -435,7 +429,12 @@
     });
     if (!ns.length) h += '<div class="g2-hint" style="position:absolute;inset:0;left:' + KEYW + 'px;display:flex;align-items:center;justify-content:center">' + (live ? 'Silent — these rules make no notes.' : 'Empty — pick a style to generate.') + '</div>';
     h += '</div>';
-    h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7"><span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (info ? ' · tap a note to see it' : ' · tap a bar to re-roll it') + '</span>'
+    // the mode switch shares the line under the picture — its own row was mostly air
+    h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7;flex-wrap:wrap">'
+      + (live ? '<span class="g2-seg" role="group" aria-label="Tapping the picture">'
+        + '<button type="button" data-a="rollmode" data-k="reroll" class="' + (!info ? 'on' : '') + '" aria-pressed="' + !info + '" title="Tap a bar to re-roll it">🎲 Re-roll</button>'
+        + '<button type="button" data-a="rollmode" data-k="info" class="' + (info ? 'on' : '') + '" aria-pressed="' + info + '" title="Tap a note to see what it is">ⓘ Info</button></span>' : '')
+      + '<span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';
     if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf);
     if (G.rollNote) h += '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6">' + esc(G.rollNote) + '</div>';

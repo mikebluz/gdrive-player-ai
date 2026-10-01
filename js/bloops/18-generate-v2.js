@@ -183,7 +183,7 @@
     const before = JSON.stringify(L);
     try { fn(L); } catch (e) { try { console.warn('[genV2]', e); } catch (x) {} }
     persist();
-    if (snapNow() !== before) G.hist.push(before);
+    if (snapNow() !== before) { G.hist.push(before); G.pick = -1; }
     if (note !== undefined) G.note = note;
     paint();
   }
@@ -290,6 +290,22 @@
     setTimeout(() => { if (G && G.flash === bi) { G.flash = -1; paint(); } }, 450);
   }
 
+  // WHAT A PICKED NOTE IS AND WHERE IT LANDS on the Grid: bar · beat · step, and
+  // how far off the grid it sits when it does not land on a line (swing, nudge).
+  function noteInfoHTML(L, n, cyc, spb, bpb, nameOf) {
+    const barSec = cyc / barsOf(L), m = Math.round(midiOf(n.freq));
+    const bar = Math.floor(n.at / barSec + 1e-6), inBarSteps = (n.at - bar * barSec) / barSec * spb;
+    const st = Math.round(inBarSteps), off = inBarSteps - st;
+    const gname = (GRIDS.find((g) => g[0] === spb) || [0, spb + ' steps a bar'])[1].toLowerCase();
+    const where = 'bar ' + (bar + 1) + (bpb < spb ? ' · beat ' + (Math.floor(st / bpb) + 1) : '')
+      + ' · step ' + (st + 1) + ' of ' + spb;
+    const offTxt = Math.abs(off) < 0.05 ? 'on the grid' : (Math.round(Math.abs(off) * 100) + '% of a step ' + (off > 0 ? 'late' : 'early'));
+    const lenSteps = (n.durMs / 1000) / barSec * spb;
+    const lenTxt = Math.round(lenSteps * 10) / 10;
+    return '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#1b1b30;border:1px solid #3a3a5c;color:#ece8f8">'
+      + '<b style="font-size:16px">' + nameOf(m) + '</b> · ' + esc(where) + ' (' + esc(gname) + ') · ' + offTxt + ' · lasts ' + lenTxt + ' step' + (lenTxt === 1 ? '' : 's') + '</div>';
+  }
+
   const css = `
   .g2-ov{position:fixed;inset:0;z-index:10350;background:rgba(5,5,12,.6);display:flex;align-items:flex-end;justify-content:center}
   .g2{width:100%;max-width:520px;max-height:94vh;display:flex;flex-direction:column;background:#12121f;color:#ece8f8;border:1px solid #2d2d4a;border-radius:20px 20px 0 0;overflow:hidden;font-size:15px}
@@ -308,6 +324,10 @@
   .g2-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
   .g2-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .g2-chip{min-width:0;height:62px;padding:0 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:14px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:12px;font-weight:600}
+  .g2-seg{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap}
+  .g2-seg button{min-height:36px;padding:0 12px;border-radius:18px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600}
+  .g2-seg button.on{background:#8b5cf6;border-color:#8b5cf6;color:#fff}
+  .g2-nt{cursor:pointer}.g2-nt::before{content:'';position:absolute;inset:-5px -4px}
   .g2-roll{position:relative;height:150px;flex-shrink:0;border-radius:14px;background:#0c0c18;border:1px solid #262640;overflow:hidden}
   .g2-mv{min-height:46px;padding:6px 10px;display:flex;align-items:center;gap:8px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600;text-align:left}
   .g2-mvcard{grid-column:1/-1;border-radius:14px;border:2px solid #a78bfa;background:#211a40;overflow:hidden}
@@ -365,6 +385,14 @@
     const KEYW = 34, TOP = 18, rollH = TOP + rows * rowH + 4;
     const col = sty ? sty.col : '#a78bfa';
     const yOf = (m) => TOP + (hi - m) * rowH;
+    // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
+    const info = G.rollMode === 'info' || !live;
+    if (live) {
+      h += '<div class="g2-seg" role="group" aria-label="Tapping the picture">'
+        + '<span class="g2-cap" style="margin-right:auto">Tap to</span>'
+        + '<button type="button" data-a="rollmode" data-k="reroll" class="' + (!info ? 'on' : '') + '" aria-pressed="' + !info + '">🎲 Re-roll a bar</button>'
+        + '<button type="button" data-a="rollmode" data-k="info" class="' + (info ? 'on' : '') + '" aria-pressed="' + info + '">ⓘ See a note</button></div>';
+    }
     h += '<div class="g2-roll" style="height:' + rollH + 'px">';
     // the key column + row shading
     for (let m = hi; m >= lo; m--) {
@@ -374,33 +402,42 @@
       if (blk) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + y + 'px;height:' + rowH + 'px;background:rgba(255,255,255,.025);pointer-events:none"></div>';
       if (m % 12 === 0) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + (y + rowH - 1) + 'px;height:1px;background:#2a2a46;pointer-events:none"></div>';
     }
+    // THE STEP GRID: a line per step of the Grid, stronger on each beat (4 a bar;
+    // Triplets beat every 3). Too dense to read (< 5px a step) → beats only.
+    const spb = spbOf(L), bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
+    const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
+    const stepPx = rollPx / (bars * spb);
+    for (let k = 1; k < Math.round(bars * spb); k++) {
+      if (k % spb === 0) continue;                       // the bar line is the bar button's edge
+      const beat = k % bpb === 0;
+      if (!beat && stepPx < 5) continue;
+      h += '<div style="position:absolute;top:' + TOP + 'px;bottom:0;width:1px;pointer-events:none;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + (k / (bars * spb)).toFixed(5) + ');background:' + (beat ? '#2c2c4a' : '#1b1b2e') + '"></div>';
+    }
     // the bars you tap (offset past the keys)
     for (let b = 0; b < nb; b++) {
+      if (info) {   // Info mode: the bar is a number and an edge, not a button
+        h += '<div style="position:absolute;top:0;bottom:0;pointer-events:none;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + (b / bars).toFixed(4) + ');border-left:1px solid #2a2a46"><span style="position:absolute;top:3px;left:6px;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span></div>';
+        continue;
+      }
       h += '<button type="button" data-a="bar" data-b="' + b + '" aria-label="Re-roll bar ' + (b + 1) + '" style="position:absolute;top:0;bottom:0;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + (b / bars).toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + (1 / bars).toFixed(4) + ');border:0;border-left:1px solid #2a2a46;background:' + (G.flash === b ? 'rgba(167,139,250,.18)' : 'transparent') + ';padding:0">'
         + '<span style="position:absolute;top:3px;left:6px;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span></button>';
     }
-    // LABELS ONLY WHERE THEY READ: a dense part labelled every note and piled into a
-    // smear. A note is named when its row has room since its last name (~26px), and a
-    // run of the same note is named once; the keys still read every row.
-    const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
-    const lastX = {}, lastM = { v: null };
-    const sorted = ns.slice().sort((p1, p2) => p1.at - p2.at);
-    const labelled = new Set();
-    sorted.forEach((n) => {
-      const m = Math.round(midiOf(n.freq)), xp = n.at / cyc * rollPx;
-      if ((lastX[m] == null || xp - lastX[m] >= 26) && !(lastM.v === m && lastX[m] != null && xp - lastX[m] < 60)) { labelled.add(n); lastX[m] = xp; }
-      lastM.v = m;
-    });
-    ns.forEach((n) => {
+    // the notes — in Info mode each is a button (with a padded hit area: a note
+    // can be 3px wide); the picked one is outlined and read out under the roll
+    ns.forEach((n, i) => {
       const m = Math.round(midiOf(n.freq));
       const x = n.at / cyc, w = Math.max(0.006, (n.durMs / 1000) / cyc);
-      h += '<div style="position:absolute;pointer-events:none;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + col + '">'
-        + (labelled.has(n) ? '<span style="position:absolute;z-index:3;left:calc(100% + 2px);top:50%;transform:translateY(-50%);font-size:9px;line-height:10px;font-weight:700;color:#ece8f8;white-space:nowrap;text-shadow:0 0 3px #0c0c18,0 0 3px #0c0c18">' + nameOf(m) + '</span>' : '') + '</div>';
+      const pos = 'left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + col
+        + (G.pick === i ? ';outline:2px solid #fff;outline-offset:1px;z-index:4' : '');
+      h += info
+        ? '<button type="button" class="g2-nt" data-a="note" data-i="' + i + '" aria-label="' + nameOf(m) + '" style="position:absolute;border:0;padding:0;' + pos + '"></button>'
+        : '<div style="position:absolute;pointer-events:none;' + pos + '"></div>';
     });
     if (!ns.length) h += '<div class="g2-hint" style="position:absolute;inset:0;left:' + KEYW + 'px;display:flex;align-items:center;justify-content:center">' + (live ? 'Silent — these rules make no notes.' : 'Empty — pick a style to generate.') + '</div>';
     h += '</div>';
-    h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7"><span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (live ? ' · tap a bar to re-roll it' : '') + '</span>'
+    h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7"><span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (info ? ' · tap a note to see it' : ' · tap a bar to re-roll it') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';
+    if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf);
     if (G.rollNote) h += '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6">' + esc(G.rollNote) + '</div>';
     // 3. TABS
     h += '<div class="g2-tabs" role="tablist">' + TABS.map((t) => {
@@ -551,6 +588,8 @@
     if (a === 'move') { const k = b.getAttribute('data-k'); G.moveOpen = false; edit((L) => applyMove(L, k), ''); return; }
     if (a === 'sub') { const k = b.getAttribute('data-k'), i = +b.getAttribute('data-i'); edit((L) => { applyMove(L, k); SUB[k].set(L, i); }, ''); return; }
     if (a === 'harm') { const k = b.getAttribute('data-k'); edit((L) => { if (k === 'fixed') delete L.harmony; else L.harmony = k; }, ''); return; }
+    if (a === 'rollmode') { G.rollMode = b.getAttribute('data-k'); G.pick = -1; G.rollNote = ''; paint(); return; }
+    if (a === 'note') { const i = +b.getAttribute('data-i'); G.pick = (G.pick === i) ? -1 : i; paint(); return; }
     if (a === 'release') { edit((L) => { V2.release(G.E, L); }, 'Back on the live rules — the frozen notes are gone (↶ Undo keeps them).'); return; }
     if (a === 'take') { edit((L) => { V2.newTake(L); }, 'A new take of the same rules.'); return; }
     if (a === 'fig') { const id = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {}); r.kind = 'fig'; r.fig = id; }, ''); return; }

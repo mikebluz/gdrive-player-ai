@@ -9295,7 +9295,11 @@
         list.forEach((t) => { sub.push({ label: '  ' + t.name, fn: () => apply(t.name, t.chords) }); });
         if (!sub.length) return;
         famItems.push({ label: famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
-          { label: '‹ Back', fn: () => setTimeout(() => _ambOpenGlobalProgMenu(E, x, y), 0) },
+          // ‹ Back MUST CARRY `opts`: without it the menu reopens as the plain
+          // area menu, `apply` takes the non-append branch, and a "＋ Part in E"
+          // replaced the whole progression in the workspace key and deleted
+          // every existing part (reported 2026-10-01 as "new part ignores the key").
+          { label: '‹ Back', fn: () => setTimeout(() => _ambOpenGlobalProgMenu(E, x, y, opts), 0) },
           { label: famLabel, disabled: true },
           ...sub,
         ]), 0) });
@@ -33246,6 +33250,85 @@
     // bank to retry. The bank is per-session (in-memory blobs).
     let _ambCaptureBank = [];   // [{ id, name, ext, mime, folder, durSec, bytes, blob, url, uploaded }]
     let _ambCapBankSeq = 0;
+    // HARVEST SURVIVES A RELOAD (2026-10-01). The bank was in-memory only, and
+    // the phone app reloads often (relaunch, a killed background app, the
+    // bfcache-teardown reload) — "captured audio not showing up in harvest".
+    // IndexedDB holds the Blobs (WKWebView stores them fine). INCREMENTAL: a
+    // repaint writes only items whose metadata changed and deletes the ones that
+    // went, debounced — never a clear-and-rewrite of every blob, which would be
+    // heavy and, if one field failed to clone after the clear, would lose them
+    // all. Only fields that survive structured cloning are stored; `url` is
+    // rebuilt from the blob on load.
+    const _ambCapIdb = { db: null, opening: null, saved: new Map(), timer: 0, loaded: false };
+    function _ambCapDb() {
+      if (_ambCapIdb.db) return Promise.resolve(_ambCapIdb.db);
+      if (_ambCapIdb.opening) return _ambCapIdb.opening;
+      _ambCapIdb.opening = new Promise((res, rej) => {
+        try {
+          const q = indexedDB.open('bloops-harvest', 1);
+          q.onupgradeneeded = () => { try { q.result.createObjectStore('caps', { keyPath: 'id' }); } catch (e) {} };
+          q.onsuccess = () => { _ambCapIdb.db = q.result; res(q.result); };
+          q.onerror = () => rej(q.error);
+        } catch (e) { rej(e); }
+      });
+      return _ambCapIdb.opening;
+    }
+    function _ambCapRecord(it) {
+      const o = {};
+      Object.keys(it).forEach((k) => {
+        if (k === 'url') return;
+        const v = it[k];
+        if (typeof v === 'function') return;
+        try { if (typeof structuredClone === 'function') structuredClone(v); o[k] = v; } catch (e) {}
+      });
+      return o;
+    }
+    const _ambCapSig = (it) => [it.name, it.uploaded ? 1 : 0, it.bytes | 0, it.folder || '', it.blob ? it.blob.size : 0].join('|');
+    function _ambCapSaveSoon() {
+      if (!_ambCapIdb.loaded) return;            // never write before the saved bank is back in
+      if (_ambCapIdb.timer) clearTimeout(_ambCapIdb.timer);
+      _ambCapIdb.timer = setTimeout(() => {
+        _ambCapIdb.timer = 0;
+        _ambCapDb().then((db) => {
+          const t = db.transaction('caps', 'readwrite'), st = t.objectStore('caps');
+          const live = new Set();
+          _ambCaptureBank.forEach((it) => {
+            if (!it || !it.blob) return;
+            live.add(it.id);
+            const sig = _ambCapSig(it);
+            if (_ambCapIdb.saved.get(it.id) === sig) return;
+            try { st.put(_ambCapRecord(it)); _ambCapIdb.saved.set(it.id, sig); } catch (e) {}
+          });
+          Array.from(_ambCapIdb.saved.keys()).forEach((id) => {
+            if (!live.has(id)) { try { st.delete(id); } catch (e) {} _ambCapIdb.saved.delete(id); }
+          });
+        }).catch(() => {});
+      }, 400);
+    }
+    function _ambCapLoad() {
+      _ambCapDb().then((db) => {
+        const q = db.transaction('caps').objectStore('caps').getAll();
+        q.onsuccess = () => {
+          const rows = (q.result || []).sort((a, b) => (a.id | 0) - (b.id | 0));
+          const have = new Set(_ambCaptureBank.map((x) => x.id));
+          const back = [];
+          rows.forEach((it) => {
+            if (!it || !it.blob) return;
+            _ambCapIdb.saved.set(it.id, _ambCapSig(it));
+            _ambCapBankSeq = Math.max(_ambCapBankSeq, it.id | 0);
+            if (have.has(it.id)) return;
+            try { it.url = URL.createObjectURL(it.blob); } catch (e) {}
+            back.push(it);
+          });
+          // restored takes go BEFORE anything captured in the moments since load
+          if (back.length) _ambCaptureBank.unshift(...back);
+          _ambCapIdb.loaded = true;
+          try { _ambRenderCaptureBank(); } catch (e) {}
+        };
+        q.onerror = () => { _ambCapIdb.loaded = true; };
+      }).catch(() => { _ambCapIdb.loaded = true; });
+    }
+    try { if (typeof indexedDB !== 'undefined') setTimeout(_ambCapLoad, 0); } catch (e) {}
     let _ambBankPreviewAudio = null;
     function _ambCaptureToBank(E) {
       E = E || _laneEng;
@@ -34242,7 +34325,8 @@
         const ac = Tone.getContext().rawContext;
         let audioBuf = null, rawBlob = null;
         if (r && r.mode === 'worklet') {
-          if (!r.frames) return;
+          // SAY SO: a capture that recorded nothing used to vanish without a word
+          if (!r.frames) { try { showToast('Capture recorded no audio — nothing was added to Harvest.', { warn: true }); } catch (e) {} return; }
           audioBuf = ac.createBuffer(2, r.frames, r.sr || ac.sampleRate);
           const o0 = audioBuf.getChannelData(0), o1 = audioBuf.getChannelData(1);
           let pos = 0;
@@ -34250,7 +34334,7 @@
           r.L = null; r.R = null;
         } else {
           const chunks = r ? r.chunks : null;
-          if (!chunks || !chunks.length) return;
+          if (!chunks || !chunks.length) { try { showToast('Capture recorded no audio — nothing was added to Harvest.', { warn: true }); } catch (e) {} return; }
           rawBlob = new Blob(chunks, { type: (r.rec && r.rec.mimeType) || 'audio/webm' });
           try {
             audioBuf = await ac.decodeAudioData(await rawBlob.arrayBuffer());
@@ -34533,6 +34617,7 @@
       } catch (e) {}
     }
     function _ambRenderCaptureBank() {
+      try { _ambCapSaveSoon(); } catch (e) {}    // every mutation path repaints — one hook covers them all
       const fmtBytes = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
       document.querySelectorAll('.ambient-capture-bank').forEach(host => {
         if (!host._capWired) {
@@ -41687,18 +41772,20 @@
           const r0 = el.getBoundingClientRect();
           D.vert = r0.height > r0.width * 1.5;
           try { el.setPointerCapture(ev.pointerId); } catch (e) {}
-          clear();
-          D.lp = setTimeout(() => {
-            D.lp = 0; if (D.moved || !D.el) return;
-            const el2 = D.el; D.el = null;                              // a press with no drag = type an exact value
-            let v = null; try { v = window.prompt(labelOf(el2), el2.value); } catch (e) {}
-            if (v == null) return;
-            const n = parseFloat(v); if (!isFinite(n)) return;
-            const mn = parseFloat(el2.min) || 0, mx = parseFloat(el2.max);
-            el2.value = String(Math.max(mn, Math.min(isFinite(mx) ? mx : n, n)));
-            el2.dispatchEvent(new Event('input', { bubbles: true }));
-            el2.dispatchEvent(new Event('change', { bubbles: true }));
-          }, 480);
+          // EXACT ENTRY IS DECIDED ON RELEASE, NOT BY A TIMER. A 480 ms timer
+          // armed here fired whenever a finger RESTED on a fader before dragging
+          // (resting jitter stays under the 3 px arm), so the prompt opened
+          // mid-gesture and dropped the drag — "the input popups get in the way,
+          // I'm not sure what triggers them" (2026-10-01). Now: a press held
+          // ≥ 480 ms that is released without ever moving opens it; anything that
+          // moved never does. See `end`.
+          D.t0 = performance.now();
+        }, { passive: false });
+        // THE NATIVE TAP-TO-POSITION. `preventDefault` on pointerdown does not
+        // reach it, so a tap jumped a fader to the tap point (measured 65 → 50).
+        document.addEventListener('touchstart', (ev) => {
+          const t = ev.target && ev.target.closest && ev.target.closest('input.ambient-sl, input.ambient-mix-slider');
+          if (t && !t.disabled) { try { ev.preventDefault(); } catch (e) {} }
         }, { passive: false });
         // WHILE WE OWN THE DRAG, THE BROWSER MUST NOT ALSO DRIVE THE INPUT. Its
         // native range handling ran alongside this one — two drivers on one value,
@@ -41717,7 +41804,7 @@
           // drag arrives as many sub-pixel moves that would never cross a threshold.
           if (!D.moved) {
             if (Math.hypot(ev.clientX - D.sx, ev.clientY - D.sy) < 3) return;
-            D.moved = true; clear();
+            D.moved = true;
           }
           const dx = ev.clientX - D.lastX, dy = ev.clientY - D.sy;
           const dyStep = ev.clientY - D.lastY;
@@ -41743,7 +41830,18 @@
           const el = D.el; clear(); D.el = null;
           if (!el) return;
           try { el.releasePointerCapture(ev.pointerId); } catch (e) {}
-          if (D.moved) el.dispatchEvent(new Event('change', { bubbles: true }));   // handlers that commit on change
+          if (D.moved) { el.dispatchEvent(new Event('change', { bubbles: true })); return; }   // handlers that commit on change
+          // a deliberate HOLD, released where it started = type an exact value
+          if (ev.type !== 'pointerup' || performance.now() - (D.t0 || 0) < 480) return;
+          setTimeout(() => {
+            let v = null; try { v = window.prompt(labelOf(el), el.value); } catch (e) {}
+            if (v == null) return;
+            const n = parseFloat(v); if (!isFinite(n)) return;
+            const mn = parseFloat(el.min) || 0, mx = parseFloat(el.max);
+            el.value = String(Math.max(mn, Math.min(isFinite(mx) ? mx : n, n)));
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, 0);
         };
         document.addEventListener('pointerup', end);
         document.addEventListener('pointercancel', end);

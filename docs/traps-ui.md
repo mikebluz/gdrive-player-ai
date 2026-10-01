@@ -412,8 +412,12 @@
 - **`_ambSl`'s `hint` goes into a `title`, which a phone NEVER shows.** Say the unit in the READOUT.
   `100`, `0` and `1` are the values most likely to be meaningless — they express a RELATIONSHIP.
 - **Sliders need `.ambient-sl`** or they get no touch handling at all (delegated `pointerdown`: grab
-  anywhere, move by DELTA never jump, vertical distance = fine adjust, tap = numeric entry). Arm on
-  CUMULATIVE travel, never a per-move delta.
+  anywhere, move by DELTA never jump, vertical distance = fine adjust, a HOLD ≥ 480 ms released in
+  place = numeric entry). Arm on CUMULATIVE travel, never a per-move delta. **Decide exact entry on
+  RELEASE, never by a timer:** a 480 ms `setTimeout` fired whenever a finger RESTED before dragging
+  (resting jitter stays under the 3 px arm), opened `prompt` mid-gesture and dropped the drag — "the
+  input popups get in the way". The native tap-to-position needs a `touchstart` `preventDefault`
+  (pointerdown's does not reach it; a tap jumped 65 → 50).
 - **On touch, the NATIVE range control drives the input alongside our handler, and `touch-action`
   does NOT stop it.** Measured on the ⇅ Mix faders: 12 finger moves produced 18 `input` events and
   values that jumped BACKWARDS — "finicky and hard to move". `touch-action: pinch-zoom` narrows what

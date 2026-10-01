@@ -87,6 +87,30 @@ const ok = (name, cond, detail) => {
     const backwards = upList.some((v, i) => i > 0 && v < upList[i - 1]);
     ok('…and exactly one thing is driving it', upEv <= 11 && !backwards,
       upEv + ' input events for 10 moves' + (backwards ? ', and it jumped backwards: ' + upList.join(',') : ''));
+    // THE POPUP (2026-10-01, "the input popups get in the way, I'm not sure what
+    // triggers them"): a 480 ms timer opened `prompt` whenever a finger RESTED
+    // before dragging, and killed the drag. Exact entry is now a deliberate hold,
+    // released in place. `prompt` is stubbed to count, never to block.
+    await page.evaluate(() => { window.__prompts = 0; window.prompt = () => { window.__prompts++; return null; }; });
+    const prompts = () => page.evaluate(() => window.__prompts);
+    // rest 600 ms with resting jitter, THEN drag
+    await setLvl(50);
+    await touch('touchStart', box.x, box.y); await touch('touchMove', box.x + 1, box.y + 1); await zz(600);
+    for (let i = 1; i <= 10; i++) { await touch('touchMove', box.x, box.y - 3 * i); await zz(16); }
+    await touch('touchEnd', box.x, box.y - 30); await zz(250);
+    const restDrag = await lvl(), p1 = await prompts();
+    ok('resting before a drag opens NO popup, and the drag still lands', p1 === 0 && restDrag > 55,
+      'prompts ' + p1 + ', 50 → ' + restDrag);
+    // a quick tap must not jump the fader
+    await setLvl(65);
+    await touch('touchStart', box.x, box.y + 30); await zz(80); await touch('touchEnd', box.x, box.y + 30); await zz(250);
+    const tapped = await lvl(), p2 = await prompts();
+    ok('a quick tap neither jumps the fader nor opens the popup', tapped === 65 && p2 === 0,
+      '65 → ' + tapped + ', prompts ' + p2);
+    // a deliberate hold, released in place, is the door to exact entry
+    await touch('touchStart', box.x, box.y); await zz(700); await touch('touchEnd', box.x, box.y); await zz(250);
+    const p3 = await prompts();
+    ok('…a deliberate hold released in place opens exact entry', p3 === 1, 'prompts ' + p3);
   }
 
   // ---- the card sliders (horizontal) share that handler --------------------

@@ -252,8 +252,24 @@
     p.rhythmAlt = rule;
   }
   function toRule(L) {
-    const p = L.part; if (!isMine(p.rhythm) || !p.rhythmAlt || isMine(p.rhythmAlt)) return false;
-    const mine = clone(p.rhythm); p.rhythm = clone(p.rhythmAlt); p.rhythmAlt = mine; return true;
+    const p = L.part; if (!isMine(p.rhythm)) return false;
+    const mine = clone(p.rhythm);
+    const rule = ruleOf(L); if (!rule) return false;
+    p.rhythm = rule.rhythm;
+    if (rule.barsMode) p.barsMode = rule.barsMode;
+    p.rhythmAlt = mine; return true;
+  }
+  // the style's rule: the kept one, or — when none was kept (a pattern drawn
+  // before rules were kept) — built on a scratch copy, taking ONLY its rhythm,
+  // so the pitch, sound and everything else stay as they are
+  function ruleOf(L) {
+    const p = L.part;
+    if (p.rhythmAlt && !isMine(p.rhythmAlt)) return { rhythm: clone(p.rhythmAlt) };
+    const s = STYLES.find((x) => x.k === styleOf(L)); if (!s) return null;
+    const t = clone(L);
+    try { s.make(G.E, t); } catch (e) { return null; }
+    if (!t.part || isMine(t.part.rhythm)) return null;
+    return { rhythm: clone(t.part.rhythm), barsMode: t.part.barsMode };
   }
   const styleName = (L) => ((STYLES.find((x) => x.k === styleOf(L)) || {}).name || 'The style');
 
@@ -537,7 +553,7 @@
   function rhythmHTML(L) {
     let h = '';
     const p = L.part, r = p.rhythm || {}, mine = isMine(r), sn = styleName(L);
-    const hasRule = !mine || (p.rhythmAlt && !isMine(p.rhythmAlt));
+    const hasRule = !mine || (p.rhythmAlt && !isMine(p.rhythmAlt)) || !!styleOf(L);
     const { spb, nb, tot, lit } = partHits(L);
     const gname = (GRIDS.find((g) => g[0] === spb) || [0, spb + '-a-bar'])[1].toLowerCase();
     h += '<div style="display:flex;flex-direction:column;gap:10px">';
@@ -697,7 +713,7 @@
       return;
     }
     if (a === 'recopy') {
-      edit((L) => { const p = L.part; if (!p.rhythmAlt || isMine(p.rhythmAlt)) return; const t = clone(L); t.part.rhythm = clone(p.rhythmAlt); const h = partHits(t); writePart(L, h.spb, h.nb, h.lit); }, 'Your pattern is a fresh copy of the rule (↶ Undo brings your edits back).');
+      edit((L) => { const rule = ruleOf(L); if (!rule) return; const t = clone(L); t.part.rhythm = rule.rhythm; if (rule.barsMode) t.part.barsMode = rule.barsMode; const h = partHits(t); writePart(L, h.spb, h.nb, h.lit); if (!L.part.rhythmAlt) L.part.rhythmAlt = rule.rhythm; }, 'Your pattern is a fresh copy of the rule (↶ Undo brings your edits back).');
       return;
     }
     if (a === 'rule') {   // the rule's own knobs: hits across the part, shift, new rhythm

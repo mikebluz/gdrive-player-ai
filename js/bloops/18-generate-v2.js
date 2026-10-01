@@ -228,6 +228,7 @@
   .g2 button{font:inherit;cursor:pointer}
   .g2-head{flex:none;display:flex;align-items:center;gap:10px;padding:14px 14px 12px 18px;border-bottom:1px solid #262640}
   .g2-body{flex:1;overflow-y:auto;padding:14px 14px 18px;display:flex;flex-direction:column;gap:16px;overscroll-behavior:contain}
+  .g2-body>*{flex-shrink:0}
   .g2-foot{flex:none;display:flex;gap:8px;padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid #262640}
   .g2-cap{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#a9a6c7}
   .g2-hint{font-size:13px;line-height:1.4;color:#a9a6c7}
@@ -330,10 +331,17 @@
     let h = '';
     // MOVEMENT — the selected option is a card holding its own setting
     const mv = moveOf(L);
-    h += '<div style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;align-items:center;gap:8px"><b>Movement</b><span class="g2-hint" style="margin-left:auto">'
-      + esc((MOVES.find((m) => m.k === mv) || {}).label || '—') + '</span></div><div class="g2-grid2">';
+    if (styleOf(L) === 'beat') {
+      h += '<div style="display:flex;flex-direction:column;gap:6px"><b>Movement</b><div class="g2-hint">Beat plays drums, so there is no pitch to move — shape it with Rhythm below.</div></div>';
+    } else {
+    // COLLAPSES LIKE STYLE: once an option is chosen only its card shows (with its own
+    // setting still inside it — the thing you reach for most) and "Change ▾" opens the list
+    const openList = G.moveOpen || !mv;
+    h += '<div style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;align-items:center;gap:8px"><b>Movement</b>'
+      + (mv ? '<button type="button" class="g2-btn" data-a="' + (openList ? 'moveclose' : 'moveopen') + '" style="margin-left:auto;min-height:36px">' + (openList ? 'Close ▴' : 'Change ▾') + '</button>' : '')
+      + '</div><div class="g2-grid2">';
     MOVES.forEach((m) => {
-      if (m.k !== mv) { h += '<button type="button" class="g2-mv" data-a="move" data-k="' + m.k + '">' + ico(m.icon, 26) + '<span>' + esc(m.label) + '</span></button>'; return; }
+      if (m.k !== mv) { if (openList) h += '<button type="button" class="g2-mv" data-a="move" data-k="' + m.k + '">' + ico(m.icon, 26) + '<span>' + esc(m.label) + '</span></button>'; return; }
       const sb = SUB[m.k];
       h += '<div class="g2-mvcard"><div style="min-height:46px;padding:6px 12px;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700">' + ico(m.icon, 26) + '<span>' + esc(m.label) + '</span><span style="margin-left:auto;color:#a78bfa">✓</span></div>'
         + '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px 12px;border-top:1px solid #3b2f6e;background:#1a1534">';
@@ -348,6 +356,7 @@
       h += '</div></div>';
     });
     h += '</div></div>';
+    }
     // RHYTHM — figures as pictures, the bar you tap, the grid
     const r = (L.part.rhythm || {});
     const { spb, lit } = barHits(L, ns, cyc);
@@ -427,7 +436,9 @@
       if (dressIt) G.dressed = true;
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }
-    if (a === 'move') { const k = b.getAttribute('data-k'); edit((L) => applyMove(L, k), ''); return; }
+    if (a === 'moveopen') { G.moveOpen = true; paint(); return; }
+    if (a === 'moveclose') { G.moveOpen = false; paint(); return; }
+    if (a === 'move') { const k = b.getAttribute('data-k'); G.moveOpen = false; edit((L) => applyMove(L, k), ''); return; }
     if (a === 'sub') { const k = b.getAttribute('data-k'), i = +b.getAttribute('data-i'); edit((L) => { applyMove(L, k); SUB[k].set(L, i); }, ''); return; }
     if (a === 'harm') { const k = b.getAttribute('data-k'); edit((L) => { if (k === 'fixed') delete L.harmony; else L.harmony = k; }, ''); return; }
     if (a === 'take') { edit((L) => { V2.newTake(L); }, 'A new take of the same rules.'); return; }

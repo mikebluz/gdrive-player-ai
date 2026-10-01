@@ -81,7 +81,7 @@ const ok = (name, cond, detail) => {
   await page.evaluate(() => { const b = document.getElementById('mix-bloom-add-layer'); if (b) b.click(); });
   await zz(450);
   await page.evaluate(() => { const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
-    if (bs.length) (bs.find((x) => x.textContent.trim() === 'Layer') || bs[0]).click(); });
+    if (bs.length) (bs.find((x) => x.textContent.trim() === 'Layer') || bs[0]).click() || void setTimeout(() => { const _e = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60); });
   await zz(1000);
   const opened = await page.evaluate(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));

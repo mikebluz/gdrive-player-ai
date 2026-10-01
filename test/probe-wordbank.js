@@ -45,7 +45,7 @@ const ok = (name, cond, detail) => {
     await page.evaluate(() => { document.getElementById('mix-bloom-add-layer').click(); });
     await zz(500);
     await page.evaluate(() => { [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')]
-      .find((x) => x.textContent.trim() === 'Layer').click(); });
+      .find((x) => x.textContent.trim() === 'Layer').click() || void setTimeout(() => { const _e = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60); });
     await zz(800);
   }
   await page.evaluate(() => { _ambRebuildMaster(); });

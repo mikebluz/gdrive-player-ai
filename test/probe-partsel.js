@@ -114,7 +114,7 @@ const ok = (name, cond, detail) => {
     if (b) { b.scrollIntoView({ block: 'center' }); b.click(); } });
   await zz(450);
   await page.evaluate(() => { const bs = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')];
-    if (bs.length) (bs.find((x) => x.textContent.trim() === 'Layer') || bs[0]).click(); });
+    if (bs.length) (bs.find((x) => x.textContent.trim() === 'Layer') || bs[0]).click() || void setTimeout(() => { const _e = [...document.querySelectorAll('.ambient-addpop-ov .addpop-btn')].find((y) => /^Empty/.test(y.textContent.trim())); if (_e) _e.click(); }, 60); });
   await zz(900);
   const madeLayer = await page.evaluate(() => document.querySelectorAll('.v2-layer').length);
   ok('a layer exists to follow the part', madeLayer >= 1, String(madeLayer));

@@ -351,5 +351,10 @@
   after their own start time (the only way the engine itself makes jank — Web Audio is otherwise
   sample-accurate); the own-capture IN-vs-OUT score covers the ring. On the user's 6-layer project
   (2026-09-30): 0 late of ~2000, lead ≥ 1.27 s; ring added no gaps/jumps. The ring's growth from
-  the 350 ms prime to 850 ms is ~28 splices in the first ~30 s after Play (≈5% slow for ~7 s) —
-  slowing it to 2% cut the Play-then-lock reserve 118 → 14 ms, 1.2% ran dry. Not changed.
+  the 350 ms prime to 850 ms was ~28 splices in the first ~30 s after Play — and THAT was the
+  user's "rhythm skips and skitters for the first 10 seconds" (their own log: 13 splices in 3.6 s
+  after a Play), reported as a Variation bug because Groove's bypass could not touch it. **The
+  splice count is fixed by the growth needed, not its rate:** slowing growth only spreads the same
+  jumps (2% cut the Play-then-lock reserve 118 → 14 ms; a 400 ms target failed 4 lock scenarios).
+  The user chose PRIME = TARGET_VIS = 850 ms: ~0.9 s to sound, 0 splices after Play, NAMED by the
+  starting modal — which until then existed only on the MSE path, so the phone showed nothing.

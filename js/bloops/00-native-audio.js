@@ -260,6 +260,71 @@
     } catch (e) {}
     let armMse = () => Promise.resolve(false);
     let armNativePlugin = () => {};
+    // STARTING MODAL — SHARED BY BOTH OUTPUT PATHS. Press-to-sound is ~1 s on
+    // either (the MSE broadcast cushion; the native ring's 850 ms prime), and
+    // that second must be NAMED, not silent. It lived only in the MSE branch,
+    // so on the phone's native path Play went quiet for a second with nothing
+    // on screen. Shown on the transport's off→on edge (after 300 ms — a
+    // flashed modal reads as a glitch), hidden the moment `sounding(edgeAt)`
+    // says sound has reached the speaker, or after 6 s whatever happens.
+    // `opts.cal` = run the MSE calibration on the stop edge.
+    const armStartingModal = (sounding, opts) => {
+      try {
+        const ov = document.createElement('div');
+        ov.className = 'sm-overlay'; ov.id = 'bloops-starting-modal';
+        ov.innerHTML = '<div class="sm-modal" style="text-align:center;padding:18px 22px;max-width:260px">'
+          + '<div style="font-size:1.5rem;margin-bottom:6px">♪</div>'
+          + '<div>Starting the music…</div>'
+          + '<div class="ambient-hint" style="margin-top:6px">Filling the audio buffer first, so playback stays smooth — even if the phone locks.</div></div>';
+        document.body.appendChild(ov);
+        let shownFlag = false;
+        const show = (on) => {
+          try { ov.style.setProperty('display', on ? 'flex' : 'none', 'important'); } catch (e) {}
+          if (on === shownFlag) return;
+          shownFlag = on;
+          // MEASURED, not assumed: a 0×0 rect is a modal nobody saw
+          try {
+            const m = ov.querySelector('.sm-modal'), r = m ? m.getBoundingClientRect() : null;
+            log('starting-modal ' + (on ? 'SHOWN' : 'hidden') + ' +' + (shownAt ? Date.now() - shownAt : 0) + 'ms'
+              + (on && r ? ' rect=' + Math.round(r.width) + 'x' + Math.round(r.height) + ' visible=' + (getComputedStyle(ov).display !== 'none' && r.width > 0) : ''));   // fixed → offsetParent is always null
+          } catch (e) {}
+        };
+        show(false);
+        let tWasOn = false, shownAt = 0;
+        setInterval(() => {
+          try {
+            const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
+            const on = !!(E && E.timer);
+            if (on && !tWasOn) { shownAt = Date.now(); }
+            if (!on && tWasOn && opts && opts.cal) { setTimeout(() => { try { if (window.__bloopsCal) window.__bloopsCal(); } catch (e) {} }, 2200); }
+            if (!on) { if (shownAt) { show(false); shownAt = 0; } }
+            else if (shownAt) {
+              let ok = false;
+              try { ok = !!sounding(shownAt, E); } catch (e) {}
+              if (ok || (Date.now() - shownAt > 6000)) { show(false); shownAt = 0; }
+              else if (Date.now() - shownAt > 300) show(true);
+            }
+            // PROJECT SNAPSHOT on the play edge: the phone has no console, so
+            // bloomDump (quiet — no toast/clipboard) is written into the app
+            // container beside the flight log. Harvest with devicectl and
+            // replay with `npm run test:replay`. (MSE-only until 2026-09-30, so
+            // the native path's snapshot sat at 09-28.)
+            if (on && !tWasOn) {
+              setTimeout(() => {
+                try {
+                  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+                  const txt = (typeof window.bloomDump === 'function') ? window.bloomDump(true) : null;
+                  if (FS && txt) FS.writeFile({ path: 'bloops-project.json', directory: 'DOCUMENTS', encoding: 'utf8', data: txt })
+                    .then(() => log('project snapshot written (' + (txt.length / 1024).toFixed(1) + ' KB)'), () => {});
+                } catch (e) {}
+              }, 1200);
+            }
+            tWasOn = on;
+          } catch (e) {}
+        }, 120);
+        log('starting-modal armed');
+      } catch (e) { log('starting-modal failed: ' + e.message); }
+    };
     const f0ref = { fn: null };
     try {
       out.disconnect();            // severs output → rawContext.destination
@@ -565,10 +630,37 @@
             // clear TARGET_HID plus a hidden-state delivery burst (~2 s).
             // Play/Stop latency is untouched: both edges flush, so press-to-sound
             // is PRIME_MS whatever the depth was.
-            const RING_MS = 6000, LAT_MS = 4500, PRIME_MS = 350, TARGET_VIS = 850, TARGET_HID = 2000;
+            // PRIME = TARGET_VIS (2026-09-30). Priming at 350 and growing to 850 by
+            // splicing put ~28 waveform repeats into the first ~10 s of EVERY
+            // Play — reported as "rhythm skips and skitters for the first 10
+            // seconds", and blamed on Variation. The user chose ~0.9 s to sound,
+            // NAMED by the starting modal, over the skitter. Gate:
+            // bloops-native tools/splice-test.swift (PRIME_MS mirrors this).
+            const RING_MS = 6000, LAT_MS = 4500, PRIME_MS = 850, TARGET_VIS = 850, TARGET_HID = 2000;
             plug.start({ sampleRate: bridge.sampleRate, bufferMs: RING_MS, latencyMs: LAT_MS, primeMs: PRIME_MS, targetMs: TARGET_VIS }).then(
               () => {
                 engineUp = true;
+                // STARTING MODAL, native path: sound has started when a stats
+                // reply ASKED after the press (so after the PLAY flush) says
+                // the ring is primed and frames are moving out of it.
+                {
+                  let edge = 0, sound = false, inflight = false, base = -1;
+                  armStartingModal((edgeAt) => {
+                    if (edgeAt !== edge) { edge = edgeAt; sound = false; base = -1; }
+                    if (!sound && !inflight) {
+                      inflight = true;
+                      const asked = Date.now();
+                      plug.stats().then((st) => {
+                        inflight = false;
+                        if (edge !== edgeAt || asked < edgeAt + 150 || !st) return;
+                        const pl = Number(st.played) || 0;
+                        if (base < 0) { base = pl; return; }
+                        if (st.primed && pl > base) sound = true;
+                      }, () => { inflight = false; });
+                    }
+                    return sound;
+                  });
+                }
                 // THE DISPLAY'S RENDER→SPEAKER LAG, for the native path too. Every
                 // play head, visualiser and audible clock reads it through
                 // `_bloopsMseOutLag` (07-playback-scheduler, 05-sequencer-core,
@@ -1194,60 +1286,17 @@
             }
           }, 150);
         } catch (e) { log('interactive monitor FAILED: ' + e.message); }
-        // STARTING MODAL: the broadcast cushion makes press-to-sound ~1 s, and
-        // that second must be NAMED, not silent. Shown on the transport's
-        // off→on edge, hidden the moment the AUDIBLE clock (Tone.now − the
-        // measured broadcast lag) reaches the take's start — i.e. exactly when
-        // sound arrives at the speaker. The display clock subtracts the same
-        // lag (see _shapeAudibleNow), so bars hold at zero under this modal
-        // and start sweeping in sync with the first audible note.
-        try {
-          const ov = document.createElement('div');
-          ov.className = 'sm-overlay'; ov.id = 'bloops-starting-modal';
-          ov.innerHTML = '<div class="sm-modal" style="text-align:center;padding:18px 22px;max-width:260px">'
-            + '<div style="font-size:1.5rem;margin-bottom:6px">♪</div>'
-            + '<div>Starting the music…</div></div>';
-          document.body.appendChild(ov);
-          const show = (on) => { try { ov.style.setProperty('display', on ? 'flex' : 'none', 'important'); } catch (e) {} };
-          show(false);
-          let tWasOn = false, shownAt = 0;
-          setInterval(() => {
-            try {
-              const E = (typeof _masterEng !== 'undefined') ? _masterEng : null;
-              const on = !!(E && E.timer);
-              if (on && !tWasOn) { shownAt = Date.now(); }
-              if (!on && tWasOn) { setTimeout(() => { try { if (window.__bloopsCal) window.__bloopsCal(); } catch (e) {} }, 2200); }
-              if (!on) { if (shownAt) { show(false); shownAt = 0; } }
-              else if (shownAt) {
-                const lag = (typeof window._bloopsMseOutLag === 'function') ? window._bloopsMseOutLag() : 0;
-                const audible = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) - lag;
-                const start = Number.isFinite(E._playStartAt) ? E._playStartAt : null;
-                if ((start != null && audible >= start + 0.15) || (Date.now() - shownAt > 6000)) { show(false); shownAt = 0; }
-                // DELAYED REVEAL (the warm-panel idiom): only show if the
-                // wait is still running at 300 ms — the foreground stream
-                // path starts in ~0.1 s and a flashed modal reads as a glitch
-                else if (Date.now() - shownAt > 300) show(true);
-              }
-              // PROJECT SNAPSHOT on the play edge: the phone has no console, so
-              // bloomDump (quiet — no toast/clipboard) is written into the app
-              // container beside the flight log. Harvest with devicectl and
-              // replay with `npm run test:replay` — the in-situ instrument the
-              // hang-era retrospective demands on any repeated "it's broken".
-              if (on && !tWasOn) {
-                setTimeout(() => {
-                  try {
-                    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-                    const txt = (typeof window.bloomDump === 'function') ? window.bloomDump(true) : null;
-                    if (FS && txt) FS.writeFile({ path: 'bloops-project.json', directory: 'DOCUMENTS', encoding: 'utf8', data: txt })
-                      .then(() => log('project snapshot written (' + (txt.length / 1024).toFixed(1) + ' KB)'), () => {});
-                  } catch (e) {}
-                }, 1200);
-              }
-              tWasOn = on;
-            } catch (e) {}
-          }, 120);
-          log('starting-modal armed');
-        } catch (e) { log('starting-modal failed: ' + e.message); }
+        // STARTING MODAL (see armStartingModal): hidden the moment the AUDIBLE
+        // clock (Tone.now − the measured broadcast lag) reaches the take's
+        // start. The display clock subtracts the same lag (_shapeAudibleNow),
+        // so bars hold at zero under the modal and start sweeping with the
+        // first audible note.
+        armStartingModal((edgeAt, E) => {
+          const lag = (typeof window._bloopsMseOutLag === 'function') ? window._bloopsMseOutLag() : 0;
+          const audible = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) - lag;
+          const start = Number.isFinite(E._playStartAt) ? E._playStartAt : null;
+          return start != null && audible >= start + 0.15;
+        }, { cal: true });
       } else {
         log('MSE unavailable — falling back to native/stream path');
         armNativePlugin();

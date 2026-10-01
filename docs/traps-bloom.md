@@ -264,7 +264,10 @@
   to the worklet. Switched off it puts every fader back once (`E._mixMoved`), or a layer stays parked at
   a moved level and the mix looks broken. The level you set is the CEILING; the range is learned from
   `mixSeen`, recorded ONLY on the two paths a person moves a fader — record ⇅ Mix's own movement there
-  and the range would widen itself every pass.
+  and the range would widen itself every pass. **Judge a level move in dB, not level points:** below 70
+  the level is LINEAR amplitude, so the first defaults (move 45 × down-to 40) peaked at −2.6 dB with a
+  ~1 dB median — and a −1…+1 die with `lift` 0 parked every positive draw ON the ceiling, so half the
+  slices never moved. Shipped and "built" for a day before the arithmetic said it was inaudible.
 - **"SWITCHED OFF" MEANS INDISTINGUISHABLE FROM NEVER SET** — `probe-variation-audit` measures every
   ✺ Variation switch that way (never set → set hard → off, and the third must equal the first, note for
   note). It caught ⏸/✦ still playing under 🕺 Groove's bypass: a control's switch is the one on the CARD

@@ -233,12 +233,13 @@ const ok = (name, cond, detail) => {
     };
   });
   console.log('     live: ' + JSON.stringify(empty.live) + '  dead: ' + empty.dead.length);
-  ok('with no changes ONLY 🌒 Arc is live — every other axis needs the chord clock',
-    JSON.stringify(empty.live) === '["🌒 Arc"]', JSON.stringify(empty.live));
+  // ⇅ Mix (9ce36eb) counts BARS like 🌒 Arc, so it is live with no changes too
+  ok('with no changes ONLY 🌒 Arc and ⇅ Mix are live — every other axis needs the chord clock',
+    JSON.stringify(empty.live) === '["🌒 Arc","⇅ Mix"]', JSON.stringify(empty.live));
   ok('…the dead rows say WHY rather than showing a number that cannot act',
-    empty.whys.every(w => /needs changes|two sets|Tone set/.test(w || '')), JSON.stringify(empty.whys));
-  ok('…Apply writes only the one that can be heard',
-    empty.applied === 1 && empty.arcSet > 0, JSON.stringify([empty.applied, empty.arcSet]));
+    empty.whys.every(w => /needs changes|needs a layer|two sets|Tone set/.test(w || '')), JSON.stringify(empty.whys));
+  ok('…Apply writes only the ones that can be heard',
+    empty.applied === 2 && empty.arcSet > 0, JSON.stringify([empty.applied, empty.arcSet]));
   ok('…and stores NO harmony or time key it could not act on',
     empty.harmonyKeys.length === 0, JSON.stringify(empty.harmonyKeys));
   ok('…while the sentence describes the density, not a harmony that is not there',
@@ -307,7 +308,8 @@ const ok = (name, cond, detail) => {
   });
   await zz(700);
   await page.evaluate(() => {
-    const h = document.querySelector('.ambient-proggrp .ambient-grp-head[data-grp="▤ Parts"]');
+    // ✺ Variation is its own group since ababd3d; ▤ Parts no longer holds the door
+    const h = document.querySelector('.ambient-proggrp[data-grp="✺ Variation"] > .ambient-grp-head');
     if (h) h.click();
   });
   await zz(600);

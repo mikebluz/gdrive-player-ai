@@ -3274,7 +3274,7 @@
         else {
           mm.amount = Math.max(0, Math.min(100, mm.amount | 0));
           mm.glide = Math.max(0, Math.min(100, Number.isFinite(mm.glide) ? (mm.glide | 0) : 50));
-          mm.depth = Math.max(0, Math.min(100, Number.isFinite(mm.depth) ? (mm.depth | 0) : 40));
+          mm.depth = Math.max(0, Math.min(100, Number.isFinite(mm.depth) ? (mm.depth | 0) : 60));
           mm.bars = Math.max(2, Math.min(128, Number.isFinite(mm.bars) ? (mm.bars | 0) : 16));
           if (!mm.amount) delete prog.mixmove;
         }
@@ -7385,14 +7385,20 @@
       const amt = m ? Math.max(0, Math.min(100, m.amount | 0)) : 0;
       if (!amt || !L) return base;
       const r = (L.mixRange && typeof L.mixRange === 'object') ? L.mixRange : null;
-      const drop = Math.max(0, Math.min(100, (r && Number.isFinite(r.drop)) ? (r.drop | 0) : ((m.depth | 0) || 40)));
+      const drop = Math.max(0, Math.min(100, (r && Number.isFinite(r.drop)) ? (r.drop | 0) : (Number.isFinite(m.depth) ? (m.depth | 0) : 60)));
       const lift = Math.max(0, Math.min(100, (r && Number.isFinite(r.lift)) ? (r.lift | 0) : 0));
       if (!drop && !lift) return base;
       const _lb = Number.isFinite(L.id) ? (L.id | 0) : ({ bed: 0, motif: 101, texture: 211, beat: 307 }[L.type] || 0);
       const lid = (_lb + 1) * 53 + 29;                  // its own stream — never in step with 🌒 Arc
       const slice = _ambMixSliceAt(E, atSec, cfg);
-      const v = _ambChordHash01(slice + 1, lid) * 2 - 1;   // −1 … +1
-      const move = (v >= 0) ? v * lift : v * drop;
+      const h = _ambChordHash01(slice + 1, lid);
+      // NO DEAD HALF. A two-sided die over (−drop … +lift) with lift at its
+      // default 0 put every positive draw exactly ON the ceiling, so half the
+      // slices never moved at all (measured 2026-09-30: 50% unmoved, and the
+      // rest a median ~1 dB at the old defaults — inaudible on a slow fade).
+      // With no lift the die spans ceiling → floor; a learned range that has
+      // headroom above keeps the two-sided draw.
+      const move = lift > 0 ? ((h * 2 - 1) >= 0 ? (h * 2 - 1) * lift : (h * 2 - 1) * drop) : -h * drop;
       return Math.max(0, Math.min(100, base + (amt / 100) * move));
     }
     // One ramp, whichever kind of param this is.
@@ -7702,7 +7708,7 @@
       // it counts bars, not chords. The fade and the floor are kept where they are:
       // Novelty states how much the mix MOVES, not how it should sound settling.
       {
-        const mmAmt = Math.round(X * 0.6);
+        const mmAmt = Math.round(X);   // 1:1 — at 0.6 the middle of the axis wrote 30, which moved nothing audible
         const mm0 = p.mixmove || null;
         out.push({ label: '\u21c5 Mix', axis: 'x', live: true,
           from: (mm0 && mm0.amount | 0) || 0, to: mmAmt,
@@ -7711,7 +7717,7 @@
             const prev = q.mixmove || null;
             q.mixmove = { amount: mmAmt,
               glide: (prev && Number.isFinite(prev.glide)) ? (prev.glide | 0) : 55,
-              depth: (prev && Number.isFinite(prev.depth)) ? (prev.depth | 0) : 40,
+              depth: (prev && Number.isFinite(prev.depth)) ? (prev.depth | 0) : 60,
               bars: (prev && Number.isFinite(prev.bars)) ? (prev.bars | 0) : 16 };
           } });
       }
@@ -56001,7 +56007,7 @@
                     ? '\u21c5 Mix is ON \u2014 click to turn off (every fader stays where you put it)'
                     : '\u21c5 Mix \u2014 raise and lower the layers as the piece plays. OFF = flat. Click to turn on.'; }
                 [['ambient-mixmove-amt', mv.amount | 0, 0], ['ambient-mixmove-glide', mv.glide, 55],
-                 ['ambient-mixmove-depth', mv.depth, 40]].forEach((pr) => {
+                 ['ambient-mixmove-depth', mv.depth, 60]].forEach((pr) => {
                   const el = document.getElementById(tr(pr[0])); if (!el) return;
                   if (el.parentElement) el.parentElement.style.display = mOn ? '' : 'none';
                   if (document.activeElement !== el) el.value = String(Number.isFinite(pr[1]) ? (pr[1] | 0) : pr[2]);
@@ -56679,7 +56685,7 @@
                 '<option value="4">every 4 bars</option><option value="8">every 8 bars</option><option value="16">every 16 bars</option>' +
                 '<option value="32">every 32 bars</option><option value="64">every 64 bars</option></select>' +
               '<span class="ambient-sched-grp ambient-mixmove-grp"><span class="ambient-sched-lbl">down to</span>' +
-                '<input type="number" class="ambient-salt-in ambient-mixmove-depth" id="ambient-mixmove-depth" min="0" max="100" step="5" value="40" ' +
+                '<input type="number" class="ambient-salt-in ambient-mixmove-depth" id="ambient-mixmove-depth" min="0" max="100" step="5" value="60" ' +
                   'title="How far BELOW its own level a layer may be pulled, for layers that have no range of their own. The level you set stays the ceiling.">' +
               '</span>' +
               '<button type="button" class="ambient-seg ambient-mixmove-learn" id="ambient-mixmove-learn" ' +
@@ -59176,14 +59182,15 @@
             try { _ambRenderProgOverview(E); } catch (e) {}
           });
         });
-        // ⇅ Mix — the ↻ Order idiom again. ON seeds a musical middle (45 over a
-        // 40-point floor, a little over a bar to settle); OFF deletes the key, and
+        // ⇅ Mix — the ↻ Order idiom again. ON seeds a musical middle (70 over a
+        // 60-point floor — at level 70 that is ~−3 dB typical, −8 dB deepest; the
+        // first defaults, 45 over 40, moved a median ~1 dB and read as nothing); OFF deletes the key, and
         // `_ambMixMoveTick` puts every fader back the moment it sees it gone.
         { const mTog = G('ambient-mixmove-toggle');
           if (mTog) mTog.addEventListener('click', () => {
             _E = E; const c = E.getCfg(); if (!c || !c.prog) return;
             if (c.prog.mixmove && (c.prog.mixmove.amount | 0) > 0) delete c.prog.mixmove;
-            else c.prog.mixmove = { amount: 45, glide: 55, depth: 40, bars: 16 };
+            else c.prog.mixmove = { amount: 70, glide: 55, depth: 60, bars: 16 };
             persist();
             try { _ambSyncControls(E); } catch (e) {}
           }); }
@@ -59197,7 +59204,7 @@
             const num = (k, d) => { const q = G(k); const v = parseInt(q && q.value, 10); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : d; };
             const v = num('ambient-mixmove-amt', 0);
             if (!v) delete c.prog.mixmove;
-            else c.prog.mixmove = { amount: v, glide: num('ambient-mixmove-glide', 55), depth: num('ambient-mixmove-depth', 40),
+            else c.prog.mixmove = { amount: v, glide: num('ambient-mixmove-glide', 55), depth: num('ambient-mixmove-depth', 60),
               bars: (function () { const q = G('ambient-mixmove-bars'); const b = parseInt(q && q.value, 10); return Number.isFinite(b) ? Math.max(2, Math.min(128, b)) : 16; })() };
             persist();
             try { _ambSyncControls(E); } catch (e) {}

@@ -65,6 +65,27 @@ const ok = (name, cond, detail) => {
     o.layersDiffer = new Set(o.t[1].split(',')).size > 1;
     o.stable = (at(20) === o.t[1]);
     o.neverAbove = o.t.every((s) => s.split(',').every((v, i) => +v <= 70 + i * 5 + 0.5));
+    // AUDIBLE AT THE DEFAULTS, AND NO DEAD HALF. The first version drew −1…+1
+    // with lift 0, so every positive draw sat ON the ceiling (50% of slices
+    // unmoved) and the rest moved a median ~1 dB. Over 64 slices of a layer at
+    // 70 with the switch-on defaults: almost every slice must move, by a
+    // median a listener can hear.
+    {
+      E.getCfg().prog.mixmove = { amount: 70, glide: 55, depth: 60, bars: 2 }; E.getCfg();
+      const L0 = E.getCfg().layers[0], keep = L0.level; L0.level = 70;
+      const barSec = 240 / (E.getCfg().bpm || 120), dB = [];
+      for (let k = 0; k < 64; k++) {
+        const tgt = _ambMixMoveTarget(E, L0, E.getCfg(), (k + 0.5) * barSec * 2 / 8);
+        dB.push(20 * Math.log10(Math.max(1e-6, _ambLevelGain(tgt)) / _ambLevelGain(70)));
+      }
+      dB.sort((x, y) => x - y);
+      o.unmoved = dB.filter((d) => d > -0.05).length;
+      o.medianDb = dB[32];
+      E.getCfg().prog.mixmove = { amount: 70, glide: 55, depth: 0, bars: 2 }; E.getCfg();
+      o.depth0 = [...new Set(Array.from({ length: 16 }, (_, k) => Math.round(_ambMixMoveTarget(E, E.getCfg().layers[0], E.getCfg(), k * 1.7))))].join(',');
+      L0.level = keep; E.getCfg();
+      E.getCfg().prog.mixmove = { amount: 80, glide: 20, depth: 40, bars: 4 }; E.getCfg();
+    }
     // live: the gain really moves, and switching off puts every fader back
     try { await Tone.start(); } catch (e) {}
     _ambStartGenerator(E); await w(600);
@@ -86,6 +107,9 @@ const ok = (name, cond, detail) => {
   ok('…layers move independently of each other', eng.layersDiffer, eng.t[1]);
   ok('…the same take replays it exactly', eng.stable);
   ok('…and NOTHING ever gets louder than the balance you set', eng.neverAbove, eng.t.join('  '));
+  ok('…no dead half: nearly every slice moves', eng.unmoved <= 3, eng.unmoved + ' of 64 unmoved');
+  ok('…and the default move is audible (median ≤ −2 dB)', eng.medianDb <= -2, (eng.medianDb || 0).toFixed(1) + ' dB');
+  ok('…"down to" 0 means no move at all', eng.depth0 === '70', String(eng.depth0));
   ok('the live gain really moves while playing', eng.gainMoves, eng.gains.join('  '));
   ok('…and switching it off puts every fader back', eng.restored);
 
@@ -238,7 +262,7 @@ const ok = (name, cond, detail) => {
   console.log('\n  🌒 Arc card — ⇅ Mix');
   ok('the ⇅ Mix switch is reachable on the card', !ui.missing && ui.reachable, JSON.stringify(ui));
   ok('…its controls are hidden while it is off', !!ui.hiddenWhileOff);
-  ok('…switching it on seeds a musical middle', /"amount":45/.test(ui.onWrites || ''), ui.onWrites);
+  ok('…switching it on seeds a musical middle', /"amount":70/.test(ui.onWrites || ''), ui.onWrites);
   ok('…move and fade edit it', /"amount":65/.test(ui.edited || '') && /"glide":10/.test(ui.edited || ''), ui.edited);
   ok('…and switching it off stores nothing at all', !!ui.offClears);
 

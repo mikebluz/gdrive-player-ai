@@ -56,7 +56,9 @@
     mixed: 'chords', confug: 'chords', ground: 'chords', sustain: 'drone', anchor: 'drone', beat: 'beat', scatter: 'ambience' };
   function styleOf(L) {
     const p = (L && L.part) || {}, r = p.rhythm || {}, t = p.pitch || {};
-    if (p.kind !== 'live') return null;
+    // A FROZEN TAKE (⋯ Lock, a pencil edit) keeps its rules beside the notes —
+    // name the style it was made in; only notes written from scratch have none.
+    if (p.kind !== 'live' && !(p.kind === 'recorded' && p.made === 'take')) return null;
     const m = (typeof p.mat === 'string') ? p.mat.replace(/^v1:/, '') : '';
     if (MAT_STYLE[m]) return MAT_STYLE[m];
     if (L.voice === 'kit' || (L.instrument && L.instrument.voice === 'kit')) return 'beat';
@@ -359,7 +361,10 @@
         + '<span style="display:flex;gap:3px;height:14px;align-items:center">' + (dice ? '<span style="display:inline-flex;color:#5eead4">' + DIE + '</span>' : '')
         + (nCh ? '<span style="min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#a78bfa;color:#160f2e;font-size:11px;font-weight:800;line-height:16px;text-align:center">' + nCh + '</span>' : '') + '</span></button>';
     }).join('') + '</div>';
-    if (!live) {
+    if (!live && sty) {
+      h += '<div class="g2-hint">This part plays a frozen take of its ' + esc(sty.name) + ' rules, so the controls are put away. Go back to the live rules to change them — ↶ Undo or ✕ brings the frozen notes back.</div>'
+        + '<button type="button" class="g2-btn" data-a="release" style="align-self:flex-start;min-height:40px">⚡ Back to the live rules</button>';
+    } else if (!live) {
       h += '<div class="g2-hint">This part plays notes written by hand. Pick a style above to hand it to generated rules — ↶ Undo or ✕ brings the written notes back.</div>';
     } else {
       // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
@@ -496,6 +501,7 @@
     if (a === 'move') { const k = b.getAttribute('data-k'); G.moveOpen = false; edit((L) => applyMove(L, k), ''); return; }
     if (a === 'sub') { const k = b.getAttribute('data-k'), i = +b.getAttribute('data-i'); edit((L) => { applyMove(L, k); SUB[k].set(L, i); }, ''); return; }
     if (a === 'harm') { const k = b.getAttribute('data-k'); edit((L) => { if (k === 'fixed') delete L.harmony; else L.harmony = k; }, ''); return; }
+    if (a === 'release') { edit((L) => { V2.release(G.E, L); }, 'Back on the live rules — the frozen notes are gone (↶ Undo keeps them).'); return; }
     if (a === 'take') { edit((L) => { V2.newTake(L); }, 'A new take of the same rules.'); return; }
     if (a === 'fig') { const id = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {}); r.kind = 'fig'; r.fig = id; }, ''); return; }
     if (a === 'grid') {

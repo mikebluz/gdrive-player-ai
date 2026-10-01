@@ -1,3 +1,60 @@
+// ---- NON-BLOCKING DIALOGS (2026-10-01) ----------------------------------
+// `window.prompt/confirm/alert` FREEZE the page's main thread until dismissed.
+// On the phone every frame of the mix reaches the native speaker THROUGH that
+// thread (the tap worklet posts to it, and it calls the plugin), and the note
+// scheduler runs on it — so any native dialog starved the ring in ~0.85 s and
+// the music glitched and distorted for as long as you were typing ("playback
+// glitches and gets distorted when these popovers open"). These are in-page
+// dialogs in the add-part modal's own chrome, and they return PROMISES:
+//   uiPrompt(msg, def) → string | null      uiConfirm(msg) → boolean
+//   uiAlert(msg) → undefined (and window.alert is routed to it — nothing
+//   reads alert's return, so that one is safe to replace wholesale).
+(function () {
+  const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  function open(kind, msg, def) {
+    return new Promise((resolve) => {
+      let done = false;
+      const ov = document.createElement('div');
+      ov.className = 'sm-overlay ui-dialog-ov';
+      ov.style.setProperty('display', 'flex', 'important');
+      ov.style.zIndex = '20000';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ui-dialog" role="dialog" aria-modal="true" style="max-width:340px;width:calc(100% - 32px)">'
+        + '<div class="sm-title" style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(msg) + '</div>'
+        + (kind === 'prompt' ? '<input type="text" class="ambient-step-inp ui-dialog-inp" style="width:100%;box-sizing:border-box;margin-top:8px" value="' + esc(def) + '">' : '')
+        + '<div class="sm-footer" style="display:flex;gap:8px;justify-content:flex-end">'
+        + (kind === 'alert' ? '' : '<button type="button" class="sm-cancel ui-dialog-cancel">Cancel</button>')
+        + '<button type="button" class="sm-apply ui-dialog-ok">OK</button></div></div>';
+      const finish = (v) => {
+        if (done) return; done = true;
+        try { ov.remove(); } catch (e) {}
+        resolve(v);
+      };
+      const inp = ov.querySelector('.ui-dialog-inp');
+      const ok = () => finish(kind === 'prompt' ? (inp ? inp.value : '') : (kind === 'confirm' ? true : undefined));
+      const cancel = () => finish(kind === 'prompt' ? null : (kind === 'confirm' ? false : undefined));
+      ov.querySelector('.ui-dialog-ok').addEventListener('click', ok);
+      const cb = ov.querySelector('.ui-dialog-cancel'); if (cb) cb.addEventListener('click', cancel);
+      ov.addEventListener('click', (e) => { if (e.target === ov) cancel(); });
+      ov.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); ok(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      });
+      (document.body || document.documentElement).appendChild(ov);
+      setTimeout(() => {
+        try {
+          if (inp) { inp.focus(); inp.select(); }
+          else ov.querySelector('.ui-dialog-ok').focus();
+        } catch (e) {}
+      }, 0);
+    });
+  }
+  window.uiPrompt = (msg, def) => open('prompt', msg, def);
+  window.uiConfirm = (msg) => open('confirm', msg);
+  window.uiAlert = (msg) => open('alert', msg);
+  // NOTHING READS alert's return value — route it for every caller at once
+  try { window.alert = (msg) => { try { open('alert', msg); } catch (e) {} }; } catch (e) {}
+})();
+
     // ---- Wrap cycle ----
     // Toggled by clicking the "Wraps" bank label. When on, each grid
     // press uses the currently-armed bank wrap; once that press's sound

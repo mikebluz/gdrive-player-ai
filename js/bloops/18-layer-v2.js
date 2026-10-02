@@ -27036,6 +27036,12 @@
     if (R.tone) L.instrument.tone = R.tone;
     if (R.register) L.instrument.register = R.register;
     if (R.level) L.instrument.level = R.level;
+    // the sound's own envelope — the layer's ADSR always overrides it, and a new
+    // layer's are pad defaults (400 ms in / 1200 ms out), which pumped a Bass
+    try {
+      const up = (R.tone && typeof _resolveUserPatch === 'function') ? _resolveUserPatch(R.tone) : null;
+      if (up && up.params) ['attack', 'decay', 'sustain', 'release'].forEach((x) => { if (Number.isFinite(up.params[x])) L.instrument[x] = up.params[x]; });
+    } catch (e) {}
     try { R.make(E, L); } catch (e) {}
     try { E.getCfg(); } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}

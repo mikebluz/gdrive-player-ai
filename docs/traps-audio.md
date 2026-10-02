@@ -142,3 +142,8 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
   ADAA on classic/overdrive only — 2× oversampling was built, measured (+3.5 dB mean, one case WORSE,
   ~2.5× the CPU) and REJECTED. `dist_adaa_dirty` must be set by any new writer of a dist curve param.
   Do NOT add `+simd128` (measured regression).
+
+- **A v2 layer's ADSR always overrides its sound's envelope** (`_ambApplyAdsr` → caller-owned keys in
+  `_sdMergeUserPatch`), and a new layer starts on pad defaults (400 ms attack / 1200 ms release). Any
+  path that dresses a layer with a sound must copy the sound's attack/decay/sustain/release onto
+  `L.instrument`, or short notes never finish fading in while long tails pile up — the level pumps.

@@ -46,6 +46,19 @@
     if (d.tone) L.instrument.tone = d.tone;
     if (d.register) L.instrument.register = d.register;
     if (d.level) L.instrument.level = d.level;
+    // THE SOUND'S OWN ENVELOPE. A layer's Attack/Decay/Sustain/Release always
+    // override the sound's (they are caller-owned in `_sdMergeUserPatch`), and a
+    // new layer starts on pad defaults (400 ms in, 1200 ms out) — so a Bass of
+    // 350 ms notes never finished fading in while 1.2 s tails piled up: the
+    // level pumped (reported 2026-10-01, "weird volume changes with Bass").
+    adoptEnv(L, d.tone, s.k);
+  }
+  const STYLE_ENV = { pulse: { attack: 5, decay: 180, sustain: 60, release: 260 } };
+  function adoptEnv(L, tone, k) {
+    let env = null;
+    try { const up = (tone && typeof _resolveUserPatch === 'function') ? _resolveUserPatch(tone) : null; if (up && up.params) env = up.params; } catch (e) {}
+    env = env || STYLE_ENV[k]; if (!env) return;
+    ['attack', 'decay', 'sustain', 'release'].forEach((x) => { if (Number.isFinite(env[x])) L.instrument[x] = env[x]; });
   }
   // which style a layer IS, read back from its rules (best effort — a hand-tuned layer
   // may match none, and then no chip is lit)

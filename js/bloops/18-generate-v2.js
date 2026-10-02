@@ -535,6 +535,8 @@
   .g2-ends span:last-child{text-align:right}.g2-ends b{color:#ece8f8}
   .g2-what{font-size:14px;line-height:1.5}
   .g2-chs{display:flex;flex-wrap:wrap;gap:6px}
+  .g2-eucp{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-height:44px;padding:4px 10px}
+  .g2-eucp small{font-size:11px;color:#a9a6c7;font-variant-numeric:tabular-nums}.g2-eucp.on small{color:#e9e3ff}
   .g2-popft{display:flex;gap:8px}.g2-popft .g2-btn{flex:1}
   .g2-stack{display:flex;flex-direction:column;gap:12px}
   .g2-ctl{display:grid;grid-template-columns:52px minmax(0,1fr);align-items:center;gap:8px;min-width:0}
@@ -781,6 +783,56 @@
     });
     return h;
   }
+  // ── EUCLID PRESETS: the Generate Sequence dialog's own table (`_EUC_PRESETS`,
+  // 09-generators-recording.js — one list, so the two can never disagree).
+  // Its `rot` is calibrated to `euclideanPattern(k, n, rot)`; the engine adds a
+  // phase (`euclidPhase`: the first hit of the unrotated pattern), so the rule's
+  // rotate is FOUND by matching the actual hits, not by arithmetic on the numbers.
+  const EUC_GROUPS = [[undefined, 'World'], [2, 'Rock / R&B'], [3, 'African'], [4, 'Clave & bell (not Euclidean)'], [5, 'Vapor']];
+  const eucPresets = () => ((typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : []);
+  const patStr = (k, n, r) => { try { return euclideanPattern(k, n, r).map((x) => (x ? 'x' : '.')).join(''); } catch (e) { return ''; } };
+  function rotFor(k, n, rot) {
+    const want = patStr(k, n, rot), z = patStr(k, n, 0), ph = Math.max(0, z.indexOf('x'));
+    for (let r = 0; r < n; r++) if (patStr(k, n, r + ph) === want) return r;
+    return (((rot - ph) % n) + n) % n;
+  }
+  function presetNow(L) {
+    const r = (L.part || {}).rhythm || {};
+    if (r.kind === 'euclid' && !r.offset) return eucPresets().find((pz) => !pz.pat && pz.k === (r.pulses | 0) && pz.n === (r.steps | 0) && rotFor(pz.k, pz.n, pz.rot) === (r.rotate | 0)) || null;
+    if (r.kind === 'drawn') {
+      const nb = Math.max(1, Math.round(barsOf(L))), st = r.steps | 0, cells = (r.cells || []).slice(0, st).map((x) => (x ? 'x' : '.')).join('');
+      return eucPresets().find((pz) => pz.pat && st === pz.pat.length * nb && cells === pz.pat.repeat(nb)) || null;
+    }
+    return null;
+  }
+  function applyPreset(L, pz) {
+    const p = L.part, r0 = p.rhythm || {};
+    if (pz.pat) {   // a timeline, not a Euclid: written onto the Step grid, every bar, played straight
+      const nb = Math.max(1, Math.round(barsOf(L)));
+      if (!isMine(r0)) p.rhythmAlt = clone(r0);
+      p.rhythm = Object.assign({}, r0, { kind: 'drawn', steps: pz.pat.length * nb, cells: pz.pat.repeat(nb).split('').map((c) => (c === 'x' ? 1 : 0)), straight: true });
+      delete p.rhythm.fig; return;
+    }
+    const r = p.rhythm = Object.assign({}, isMine(r0) && p.rhythmAlt && !isMine(p.rhythmAlt) ? p.rhythmAlt : r0, { kind: 'euclid', pulses: pz.k, steps: pz.n, rotate: rotFor(pz.k, pz.n, pz.rot) });
+    delete r.offset; delete r.shift;
+    if (isMine(r0)) p.rhythmAlt = clone(r0);
+  }
+  function eucPopHTML(L) {
+    const cur = presetNow(L);
+    let h = '<div class="g2-scrim" data-a="dialx"><div class="g2-pop" role="dialog" aria-modal="true" aria-label="Rhythm presets">'
+      + '<div class="g2-pophd"><b>Rhythm presets</b><button type="button" class="g2-btn" data-a="dialx" aria-label="Close" style="margin-left:auto;width:40px;min-height:40px;padding:0">✕</button></div>'
+      + '<div class="g2-hint">Hits over steps, from the world’s rhythm traditions. A tap plays it straight away; the numbers are hits, steps.</div>';
+    EUC_GROUPS.forEach(([g, nm]) => {
+      const list = eucPresets().map((pz, i) => [pz, i]).filter(([pz]) => pz.grp === g); if (!list.length) return;
+      h += '<span class="g2-cap">' + esc(nm) + '</span><div class="g2-chs">' + list.map(([pz, i]) => {
+        const k = pz.pat ? (pz.pat.match(/x/g) || []).length : pz.k, n = pz.pat ? pz.pat.length : pz.n, on = cur === pz;
+        return '<button type="button" class="g2-pill g2-eucp' + (on ? ' on' : '') + '" data-a="eucp" data-i="' + i + '" aria-pressed="' + on + '" title="' + esc(pz.hint || '') + '"><span>' + esc(pz.name) + '</span><small>' + k + ',' + n + '</small></button>';
+      }).join('') + '</div>';
+    });
+    if (cur && cur.hint) h += '<div class="g2-hint" style="color:#ece8f8">' + esc(cur.name) + ': ' + esc(cur.hint) + (cur.pat ? ' — written onto the Step grid' : '') + '.</div>';
+    h += '<div class="g2-popft"><button type="button" class="g2-btn pri" data-a="dialx">Done</button></div></div></div>';
+    return h;
+  }
   function rhythmHTML(L) {
     let h = '';
     const p = L.part, r = p.rhythm || {}, mine = isMine(r), sn = styleName(L);
@@ -800,6 +852,10 @@
     if (!mine) {
       const chips = chipsHTML(L);
       h += row('Bent by', chips || '<span class="g2-hint">nothing — every hit is on its step</span>');
+      if (r.kind === 'euclid' && eucPresets().length) {
+        const pz = presetNow(L);
+        h += row('Preset', '<button type="button" class="g2-btn" data-a="dial" data-p="__euc" style="min-height:36px">' + esc(pz ? pz.name : 'Custom') + ' ▾</button>');
+      }
       if (r.kind === 'euclid' || r.kind === 'pulse') {
         const n = r.kind === 'euclid' ? (r.pulses | 0) : Math.round(V2.speedOf(L) || 0);
         h += row('Hits', '<b class="g2-num">' + n + '</b>' + sq('rule', 'less', '−', 'Fewer hits') + sq('rule', 'more', '+', 'More hits')
@@ -827,6 +883,7 @@
     } else {
       // ▦ STEP GRID — uniform: every hit on a step, every hit the same length
       const loose = !r.straight;
+      if (eucPresets().length) { const pz = presetNow(L); h += row('Preset', '<button type="button" class="g2-btn" data-a="dial" data-p="__euc" style="min-height:36px">' + esc(pz ? pz.name : 'Custom') + ' ▾</button>'); }
       h += row('Plays', '<span class="g2-seg" role="group" aria-label="How the step grid plays">'
         + '<button type="button" data-a="plays" data-k="straight" class="' + (!loose ? 'on' : '') + '" aria-pressed="' + !loose + '">Straight</button>'
         + '<button type="button" data-a="plays" data-k="loose" class="' + (loose ? 'on' : '') + '" aria-pressed="' + loose + '">Loose</button></span>');
@@ -986,6 +1043,7 @@
   }
   // the popover: one large dial (or, for a choice, its options), what it does, both ends
   function dialPopHTML(L) {
+    if (G.dial === '__euc') return eucPopHTML(L);
     const c = ctlOf(G.dial); if (!c) return '';
     const m = metaOf(c), why = (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
     let h = '<div class="g2-scrim" data-a="dialx"><div class="g2-pop" role="dialog" aria-modal="true" aria-label="' + esc(c.label) + '" data-stop="1">';
@@ -1099,6 +1157,7 @@
     if (a === 'dstep') { const c = ctlOf(G.dial), L = layer(); if (c && L) commitDial(G.dial, valOf(L, c) + (+b.getAttribute('data-d')) * dialStep(c)); return; }
     if (a === 'ddef') { const c = ctlOf(G.dial); if (c) edit((L) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o) delete o[last]; }, ''); return; }
     if (a === 'dchoose') { const k = b.getAttribute('data-k'), c = ctlOf(G.dial); if (c) edit((L) => choiceSet(L, c, k), ''); return; }
+    if (a === 'eucp') { const pz = eucPresets()[+b.getAttribute('data-i')]; if (pz) edit((L) => applyPreset(L, pz), pz.name + (pz.pat ? ' — written onto the Step grid (your rule is kept).' : '.')); return; }
     if (a === 'showall') { G.showAll = !G.showAll; paint(); return; }
     if (a === 'classic') {   // the classic panel, for the rows that have no tile yet — this sheet keeps what you did
       const L = layer(), E = G.E; close(false); try { if (L && V2.openGen) V2.openGen(E, L); } catch (e) {} return;

@@ -130,6 +130,7 @@
     ['bossa', 'Bossa', [0, 3, 6, 10, 13]], ['charleston', 'Charleston', [0, 6]],
     ['dotted', 'Dotted', [0, 3, 6, 9, 12, 15]], ['fourfloor', 'Four + pickup', [0, 4, 8, 12, 15]],
   ];
+  const KEYW = 34;   // the preview's key column — the Pattern rows indent by it so steps line up
   const GRIDS = [[4, 'Quarters'], [8, 'Eighths'], [12, 'Triplets'], [16, 'Sixteenths'], [32, '32nds']];
   const barsOf = (L) => Math.max(0.25, +((L.part || {}).bars) || 1);
   const bpmOf = (cfg) => ((cfg && cfg.bpm > 0) ? cfg.bpm : ((typeof _ambBpm === 'function') ? _ambBpm() : 120));
@@ -431,7 +432,7 @@
     while (hi - lo < 12) { lo--; if (hi - lo < 12) hi++; }
     const rows = hi - lo + 1;
     const rowH = clamp(Math.floor(240 / rows), 10, 14);   // ≥10px: a 9px name fits its own row
-    const KEYW = 34, TOP = 18, rollH = TOP + rows * rowH + 4;
+    const TOP = 18, rollH = TOP + rows * rowH + 4;
     const col = sty ? sty.col : '#a78bfa';
     const yOf = (m) => TOP + (hi - m) * rowH;
     // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
@@ -566,10 +567,14 @@
     let rows = '';
     for (let b = 0; b < nb; b++) {
       let c = 0;
-      rows += '<div style="display:flex;align-items:center;gap:6px;min-width:0"><span style="width:14px;flex:none;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span>'
-        + '<div style="flex:1;min-width:0;display:grid;grid-template-columns:repeat(' + spb + ',minmax(0,1fr));gap:' + (spb > 16 ? 1 : 3) + 'px">';
+      // SAME COLUMNS AS THE PREVIEW: the number sits in a column as wide as the
+      // preview's keys (+ its 1px border), and the steps share one even gap, so
+      // step i sits under step i of the picture; beats are shaded, never spaced
+      rows += '<div style="display:flex;align-items:center;min-width:0"><span style="width:' + (KEYW + 1) + 'px;flex:none;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span>'
+        + '<div style="flex:1;min-width:0;margin-right:1px;display:grid;grid-template-columns:repeat(' + spb + ',minmax(0,1fr));gap:' + (spb > 16 ? 1 : 2) + 'px">';
       for (let i = 0; i < spb; i++) {
-        const g = b * spb + i, on = lit.has(g), beatGap = (spb % 4 === 0 && i > 0 && i % (spb / 4) === 0) ? 'margin-left:' + (spb > 16 ? 3 : 5) + 'px;' : '';
+        const g = b * spb + i, on = lit.has(g), bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
+        const beatGap = (!on && Math.floor(i / bpb) % 2 === 1) ? 'background:#1c1c33;' : '';
         if (on) c++;
         rows += mine
           ? '<button type="button" class="g2-step' + (on ? ' on' : '') + '" data-a="step" data-i="' + g + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '" style="' + beatGap + '"></button>'
@@ -578,18 +583,41 @@
       rows += '</div></div>';
       perBar.push(c);
     }
+    // THE STRIP: every bar side by side in the PREVIEW'S OWN GEOMETRY (its key
+    // column, its width, its bars), so step k sits exactly under step k of the
+    // picture. Per-bar rows stretched one bar over the whole width and could never
+    // line up. It is the editor too while a step is wide enough to tap (≥ 11px);
+    // on a finer grid My pattern adds the per-bar rows below it for editing.
+    const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
+    const tapStrip = mine && rollPx / tot >= 11;
+    const bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
+    let strip = '<div style="margin:0 1px;padding-left:' + KEYW + 'px;display:grid;grid-template-columns:repeat(' + tot + ',minmax(0,1fr))" role="group" aria-label="Steps, lined up with the preview">';
+    for (let k = 0; k < tot; k++) {
+      const on = lit.has(k), i = k % spb, b = Math.floor(k / spb);
+      const st = 'height:24px;box-sizing:border-box;border:0;padding:0;border-radius:0;border-right:1px solid #12121f;'
+        + (i === 0 ? 'border-left:2px solid #4a4a6e;' : '')
+        + 'background:' + (on ? '#a78bfa' : (Math.floor(i / bpb) % 2 ? '#1c1c33' : '#26263f')) + ';';
+      strip += tapStrip
+        ? '<button type="button" data-a="step" data-i="' + k + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '" style="' + st + '"></button>'
+        : '<span style="display:block;' + st + (mine ? '' : 'opacity:.85') + '"></span>';
+    }
+    strip += '</div>';
     const lo = Math.min(...perBar), hi = Math.max(...perBar);
     const perTxt = (lo === hi ? lo : lo + '–' + hi) + ' hits a bar';
     if (!mine) {
-      // THE RULE, IN WORDS — what made the preview, and why the bars differ
+      // THE RULE, IN WORDS — what made the preview, and why the bars differ. The
+      // hits are named by the steps they land on (the rotation number is internal:
+      // "starting at step 6" read as wrong beside a first hit on step 1)
+      const first = []; for (let i = 0; i < spb; i++) if (lit.has(i)) first.push(i + 1);
+      const stepList = first.length === 1 ? 'step ' + first[0] : 'steps ' + first.slice(0, -1).join(', ') + ' and ' + first[first.length - 1];
       let why;
-      if (r.kind === 'euclid' && (perBarRule(L) || nb === 1)) why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over a bar of ' + spb + ' ' + esc(gname) + ', starting at step ' + ((r.rotate | 0) + 1) + (nb > 1 ? ', and every bar repeats it.' : '.');
-      else if (r.kind === 'euclid') why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over all ' + nb + ' bars (' + tot + ' ' + esc(gname) + '), starting at step ' + ((r.rotate | 0) + 1) + (lo === hi ? '.' : ' — so the bars fall differently.');
+      if (r.kind === 'euclid' && (perBarRule(L) || nb === 1)) why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over a bar of ' + spb + ' ' + esc(gname) + ' — on ' + stepList + (nb > 1 ? ' — and every bar repeats it.' : '.');
+      else if (r.kind === 'euclid') why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over all ' + nb + ' bars (' + tot + ' ' + esc(gname) + ')' + (lo === hi ? '.' : ' — so the bars fall differently.');
       else if (r.kind === 'pulse') why = sn + '’s rule plays <b>evenly spaced hits</b> — ' + perTxt + '.';
       else if (r.kind === 'chance') why = sn + '’s rule <b>picks hits by chance</b> on each step, so every take differs.';
       else why = sn + '’s rule makes this rhythm (' + esc(String(r.kind || 'its own')) + ').';
       h += '<div class="g2-hint">' + why + ' Tap ✎ My pattern to edit the steps — it starts as an exact copy, and this rule is kept.</div>';
-      h += rows;
+      h += strip;
       if (r.kind === 'euclid' || r.kind === 'pulse') {
         h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="g2-hint">' + (r.kind === 'euclid' ? 'Hits' : 'Hits a bar') + '</span>'
           + '<button type="button" class="g2-btn" data-a="rule" data-k="less" aria-label="Fewer hits" style="width:40px;min-height:36px;padding:0">−</button>'
@@ -605,7 +633,8 @@
         + '<span class="g2-hint" style="margin-left:auto;white-space:nowrap">' + perTxt + '</span>'
         + '<button type="button" class="g2-btn" data-a="hits" data-d="-1" aria-label="Fewer hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">−</button>'
         + '<button type="button" class="g2-btn" data-a="hits" data-d="1" aria-label="More hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">+</button></div>';
-      h += rows;
+      h += strip;
+      if (!tapStrip) h += '<div class="g2-hint">These steps are too small to tap — edit them a bar at a time:</div>' + rows;
       if (hasRule) h += '<button type="button" class="g2-btn" data-a="recopy" style="align-self:flex-start;min-height:36px;font-size:13px">↺ Copy ' + esc(sn) + '’s rule again</button>';
       // figure presets: START FROM one (fills every bar)
       h += '<div class="g2-hint">Start from</div><div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">' + FIGS.map(([id, nm, st]) => {

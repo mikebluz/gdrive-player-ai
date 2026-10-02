@@ -149,13 +149,60 @@
 
   // ── the 🎲 controls (a re-roll changes them) and the tab contents ─────────
   const S_ = (path, label, min, max, dice, unit) => ({ path, label, min, max, dice: !!dice, unit: unit || '' });
+  // ── THE DIALS (2026-10-01, user: "these seemingly endless lists of sliders are
+  // totally unwieldy and inscrutable"): each control is a TILE with a small gauge;
+  // a tap opens one large dial with what it does and what each end means. A
+  // control that does nothing for this rhythm/pitch is dimmed and says why —
+  // half the list was inert on a Line and looked exactly like the live half.
+  // `def` is what an ABSENT value means to the engine (Shape depth/weight are
+  // 100 when absent — the old sliders read absent as 0).
+  const getPath = (o, path) => path.split('.').reduce((a, k) => (a && a[k] != null ? a[k] : undefined), o);
+  const rk = (L) => ((L.part || {}).rhythm || {}).kind, pk = (L) => ((L.part || {}).pitch || {}).kind;
+  const straightOn = (L) => !!(((L.part || {}).rhythm || {}).straight);
+  const lenShapeOn = (L) => !!((L.part || {}).shape && L.part.shape.lenShape);
+  const only = (ok, why) => (L) => (ok(L) ? null : why);
+  const META = {
+    'part.rhythm.figSync': { what: 'How often a hit that falls on a beat is pushed off it, onto the off-beat.', lo: 'every hit where the figure puts it', hi: 'pushed off the beat whenever it can be', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
+    'part.rhythm.figGrp': { what: 'Moves the hits from evenly spaced toward clusters: this is where 3 + 3 + 2 and every gallop come from.', lo: 'evenly spaced', hi: 'tightly clustered', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
+    'part.rhythm.figVar': { what: 'How much the later bars differ from the first. Bar 1 always plays the figure as named.', lo: 'every bar the same', hi: 'every bar different', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
+    'part.rhythm.syncop': { what: 'Weights the off-beat steps, so a chance rhythm lands off the beat more often.', lo: 'every step equally likely', hi: 'strongly favours the off-beats', gate: only((L) => rk(L) === 'chance', 'chance rhythm only'), long: 'Only affects a chance rhythm.' },
+    restProb: { what: 'Drops some hits on each pass, so the line breathes.', lo: 'every hit plays', hi: 'every hit dropped' },
+    ghosts: { what: 'Adds quiet extra hits between the notes, like a drummer’s ghost notes.', lo: 'no extra hits', hi: 'extra quiet hits wherever they fit' },
+    'part.rhythm.rateVar': { what: 'Each hit lands a little early or late, differently on every pass.', lo: 'every hit on its step', hi: 'hits drift up to 40% of the gap', gate: only((L) => !straightOn(L), 'off: Straight'), long: 'The Step grid plays Straight, so this is switched off. Set it to Loose to use it.' },
+    startVary: { what: 'The chance that a whole pass starts late. The pattern slides as one block; the hits keep their spacing.', lo: 'every pass starts on the 1', hi: 'every pass starts somewhere else', gate: only((L) => !straightOn(L), 'off: Straight'), long: 'The Step grid plays Straight, so this is switched off. Set it to Loose to use it.' },
+    'part.shape.lenShape': { choice: true, what: 'A figure of length and accent, repeated every bar. It takes over Note length and Length wobble.' },
+    'part.shape.lenRatio': { def: 100, what: 'How long each note holds, as a share of the gap to the next hit.', lo: 'very short, staccato', hi: 'four times the gap, overlapping',
+      gate: (L) => (lenShapeOn(L) ? 'the length shape takes over' : (((L.part.shape || {}).holdSteps | 0) > 0 ? 'set by Length in the Step grid' : null)), long: 'Not used right now: a length shape, or the Step grid’s Length, decides how long the notes are.' },
+    lenVary: { what: 'Each note comes out a little longer or shorter, differently on every pass.', lo: 'every note its set length', hi: 'up to 60% longer or shorter',
+      gate: (L) => (lenShapeOn(L) ? 'the length shape takes over' : (straightOn(L) ? 'off: Straight' : null)), long: 'Not used right now: a length shape takes it over, or the Step grid plays Straight.' },
+    'part.shape.lenDepth': { def: 100, what: 'How strongly the length shape is applied. 100 is as written.', lo: 'no shape at all', hi: 'twice as exaggerated as written', gate: only(lenShapeOn, 'needs a length shape'), long: 'Pick a Length shape (the tile beside it) to use this.' },
+    'part.shape.lenWeight': { def: 100, what: 'How the length shape is split between loudness and length.', lo: 'shapes length only', hi: 'all of it goes into loudness', gate: only(lenShapeOn, 'needs a length shape'), long: 'Pick a Length shape (the tile beside it) to use this.' },
+    'instrument.register': { def: 4, what: 'The octave the notes sit in.', lo: 'the lowest octave', hi: 'the highest octave' },
+    'part.pitch.contour': { what: 'Tilts the line downward or upward over the part.', lo: 'falls', hi: 'rises', gate: only((L) => pk(L) === 'walk' || pk(L) === 'mixed', 'wandering lines only'), long: 'Only shapes a wandering line (Movement ▸ Wander).' },
+    proximity: { what: 'How close each note stays to the one before.', lo: 'free to leap', hi: 'small steps only', gate: only((L) => pk(L) === 'walk', 'wandering lines only'), long: 'Only shapes a wandering line (Movement ▸ Wander).' },
+    'part.pitch.roam': { what: 'How often a note is built on a neighbouring chord tone instead of the one set.', lo: 'always the set tone', hi: 'often a neighbour', gate: only((L) => ['fixed', 'stack', 'chord'].indexOf(pk(L)) >= 0, 'not for this movement'), long: 'Only for Follow the chords, stacks and chords.' },
+    'part.pitch.randomness': { what: 'Breaks the order of a run so it jumps about.', lo: 'in order', hi: 'jumps about', gate: only((L) => pk(L) === 'series', 'runs only'), long: 'Only for runs (Climb, Fall, Up & down).' },
+    'part.pitch.drift': { what: 'Sends some notes up or down an octave.', lo: 'every note in its octave', hi: 'octaves drift freely', gate: only((L) => ['fixed', 'series', 'walk', 'chance'].indexOf(pk(L)) >= 0, 'not for this movement'), long: 'Not for chords or a held note.' },
+    'part.pitch.variety': { what: 'Colours the chords with extra tones.', lo: 'plain', hi: 'colourful', gate: only((L) => pk(L) === 'chord', 'chords only'), long: 'Only colours chords.' },
+    'breath.amount': { what: 'How much of the time the layer holds back and rests: whole stretches, not single hits.', lo: 'never rests', hi: 'rests most of the time' },
+    'flourish.amount': { what: 'How much of the time the rate suddenly jumps: a quick run or doubled notes.', lo: 'never', hi: 'most of the time' },
+    'flourish.wild': { def: 50, what: 'How far a flourish jumps.', lo: 'doubles the rate', hi: 'long fast runs', gate: (L) => ((+getPath(L, 'flourish.amount') || 0) > 0 ? null : 'needs Flourish'), long: 'Turn Flourish up first.' },
+    'chg.ev': { what: 'How many passes play before the rules decide again.', lo: 'never: this take plays on', hi: 'a new take every 64 passes' },
+    'part.rhythm.vary': { what: 'Drops or adds hits off the pattern, differently on each pass.', lo: 'the pattern exactly', hi: 'hits dropped and added freely', gate: only((L) => rk(L) === 'euclid' || rk(L) === 'drawn', 'not for this rhythm'), long: 'Only for a style’s take or a Step grid.' },
+    phrasing: { what: 'From even notes to shaped figures.', lo: 'even', hi: 'shaped figures' },
+    twist: { what: 'From a steady flow to bursts.', lo: 'steady', hi: 'bursts' },
+  };
+  const metaOf = (c) => META[c.path] || {};
+  const defOf = (c) => (Number.isFinite(metaOf(c).def) ? metaOf(c).def : 0);
+  const valOf = (L, c) => { const v = getPath(L, c.path); return Number.isFinite(+v) && v !== undefined && v !== null && v !== '' ? +v : defOf(c); };
+
   const TABS = [
     { id: 'rhythm', label: 'Rhythm', secs: [
       ['Rhythm feel', [S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1),
         S_('part.rhythm.syncop', 'Syncopate', 0, 100), S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'),
         S_('part.rhythm.rateVar', 'Timing wobble', 0, 100, 1), S_('startVary', 'Start', 0, 100, 1)]],
-      ['Note lengths', [S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length wobble', 0, 100, 1),
-        S_('part.shape.lenDepth', 'Shape depth', 0, 100), S_('part.shape.lenWeight', 'Shape weight', 0, 100)]],
+      ['Note lengths', [{ path: 'part.shape.lenShape', label: 'Length shape', choice: true }, S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length wobble', 0, 100, 1),
+        S_('part.shape.lenDepth', 'Shape depth', 0, 200, 0, '%'), S_('part.shape.lenWeight', 'Shape weight', 0, 100, 0, '%')]],
     ] },
     { id: 'pitch', label: 'Pitch', secs: [
       ['Pitch', [S_('instrument.register', 'Register', 1, 8), S_('part.pitch.contour', 'Contour', -100, 100), S_('proximity', 'Proximity', 0, 100),
@@ -169,7 +216,6 @@
     ] },
     { id: 'more', label: 'More', secs: [] },
   ];
-  const getPath = (o, path) => path.split('.').reduce((a, k) => (a && a[k] != null ? a[k] : undefined), o);
   function setPath(o, path, v) {
     const ks = path.split('.'); let a = o;
     for (let i = 0; i < ks.length - 1; i++) { if (!a[ks[i]] || typeof a[ks[i]] !== 'object') a[ks[i]] = {}; a = a[ks[i]]; }
@@ -378,6 +424,37 @@
   .g2-hint{font-size:13px;line-height:1.4;color:#a9a6c7}
   .g2-btn{min-height:44px;padding:0 14px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;font-weight:600}
   .g2-btn.pri{flex-grow:1;border:0;background:#8b5cf6;color:#fff;font-weight:700}
+  .g2{position:relative}
+  .g2-sec{display:flex;flex-direction:column;gap:8px}
+  .g2-sechead{display:flex;align-items:baseline;gap:8px}
+  .g2-setn{font-size:12px;color:#a78bfa}
+  .g2-rsall{margin-left:auto;font-size:12px;color:#a9a6c7;background:none;border:0;padding:4px 0}
+  .g2-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .g2-tile{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px 8px;border-radius:14px;border:1px solid #262640;background:#181830;min-width:0;color:#ece8f8}
+  .g2-tile.set{border-color:#a78bfa;background:#1d1838}
+  .g2-tile.na{opacity:.45}
+  .g2-tnm{font-size:12.5px;font-weight:700;line-height:1.2;text-align:center;min-height:2.4em;display:flex;align-items:center;overflow-wrap:anywhere}
+  .g2-tch{font-size:13px;font-weight:700;color:#c4b5fd;min-height:44px;display:flex;align-items:center;text-align:center}
+  .g2-tdie{position:absolute;top:5px;right:5px;width:15px;height:15px;color:#5eead4;display:flex}
+  .g2-tdie svg{width:15px;height:15px}
+  .g2-ttag{font-size:10.5px;color:#8d8ab0;line-height:1.2;text-align:center}
+  .g2-gauge{width:52px;height:44px}
+  .g2-gauge text{font-size:15px;fill:#ece8f8;font-variant-numeric:tabular-nums}
+  .g2-scrim{position:absolute;inset:0;z-index:20;background:rgba(5,5,12,.62);display:flex;align-items:flex-end}
+  .g2-pop{width:100%;max-height:92%;overflow-y:auto;box-sizing:border-box;background:#17172b;border-top:1px solid #3a3a5c;border-radius:20px 20px 0 0;padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 -10px 30px rgba(0,0,0,.45)}
+  .g2-pophd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .g2-pophd b{font-size:18px}
+  .g2-bdg{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:700}
+  .g2-bdg svg{width:13px;height:13px}
+  .g2-bdg.d{background:#0f3a36;color:#5eead4}.g2-bdg.na{background:#2a2112;color:#f5b04a}
+  .g2-dialrow{display:flex;align-items:center;justify-content:center;gap:12px}
+  .g2-pm{width:48px;height:48px;border-radius:24px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;font-size:22px;font-weight:700;flex:none}
+  .g2-dial{width:200px;height:181px;touch-action:none;cursor:grab;flex:none}
+  .g2-ends{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;color:#a9a6c7;line-height:1.35}
+  .g2-ends span:last-child{text-align:right}.g2-ends b{color:#ece8f8}
+  .g2-what{font-size:14px;line-height:1.5}
+  .g2-chs{display:flex;flex-wrap:wrap;gap:6px}
+  .g2-popft{display:flex;gap:8px}.g2-popft .g2-btn{flex:1}
   .g2-stack{display:flex;flex-direction:column;gap:12px}
   .g2-ctl{display:grid;grid-template-columns:52px minmax(0,1fr);align-items:center;gap:8px;min-width:0}
   .g2-lab{font-size:13px;color:#a9a6c7}
@@ -543,7 +620,7 @@
     h += '<div class="g2-tabs" role="tablist">' + TABS.map((t) => {
       const ctls = (t.secs || []).reduce((a, s) => a.concat(s[1]), []);
       const dice = ctls.some((c) => c.dice);
-      const nCh = ctls.filter((c) => (+getPath(L, c.path) || 0) !== 0 && c.path !== 'instrument.register' && c.path !== 'part.shape.lenRatio').length;
+      const nCh = ctls.filter((c) => (c.choice ? !!getPath(L, c.path) : valOf(L, c) !== defOf(c)) && c.path !== 'instrument.register').length;
       return '<button type="button" role="tab" class="g2-tab' + (G.tab === t.id ? ' on' : '') + '" data-a="tab" data-t="' + t.id + '" aria-selected="' + (G.tab === t.id) + '">' + esc(t.label)
         + '<span style="display:flex;gap:3px;height:14px;align-items:center">' + (dice ? '<span style="display:inline-flex;color:#5eead4">' + DIE + '</span>' : '')
         + (nCh ? '<span style="min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#a78bfa;color:#160f2e;font-size:11px;font-weight:800;line-height:16px;text-align:center">' + nCh + '</span>' : '') + '</span></button>';
@@ -565,6 +642,7 @@
     h += '<div class="g2-foot"><button type="button" class="g2-btn" data-a="take"' + (live ? '' : ' disabled') + '>🎲 New take</button>'
       + '<button type="button" class="g2-btn" data-a="preview" aria-label="Preview" style="width:48px;padding:0">▶</button>'
       + '<button type="button" class="g2-btn pri" data-a="done">Done</button></div>';
+    if (G.dial) h += dialPopHTML(L);
     const sc = G.root.querySelector('.g2-body'), top = sc ? sc.scrollTop : 0;
     G.box.innerHTML = h;
     const sc2 = G.root.querySelector('.g2-body'); if (sc2) sc2.scrollTop = top;
@@ -728,21 +806,88 @@
         + '<div class="g2-hint">Answer another layer, Key & notes and the full Recipe are still in the classic Generate for now.</div></div>';
       return h;
     }
-    if ((t.secs || []).some((s) => s[1].some((c) => c.dice))) {
-      h += '<div style="display:flex;align-items:center;gap:8px" class="g2-hint"><span style="display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px 0 6px;border-radius:11px;background:#0f3a36;color:#5eead4;font-size:12px;font-weight:700">' + DIE + 're-rolls</span>these change every time you re-roll</div>';
-    }
-    t.secs.forEach(([nm, ctls]) => {
-      h += '<div style="display:flex;flex-direction:column;gap:12px"><span class="g2-cap">' + esc(nm) + '</span>';
-      ctls.forEach((c) => {
-        const v = +getPath(L, c.path) || (c.path === 'instrument.register' ? 4 : 0);
-        h += '<div class="g2-row' + (c.dice ? ' dice' : '') + '" style="display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center;gap:6px;font-size:14px"><b>' + esc(c.label) + '</b>'
-          + (c.dice ? '<span class="g2-die" title="Changes when you re-roll">' + DIE + '</span>' : '')
-          + '<span class="g2-hint g2-val" style="margin-left:auto">' + v + esc(c.unit) + '</span></div>'
-          + '<input type="range" min="' + c.min + '" max="' + c.max + '" value="' + v + '" data-a="ctl" data-p="' + esc(c.path) + '" data-u="' + esc(c.unit) + '" aria-label="' + esc(c.label) + '"></div>';
-      });
-      h += '</div>';
+    t.secs.forEach(([nm, ctls], si) => {
+      const n = ctls.filter((c) => (c.choice ? !!getPath(L, c.path) : valOf(L, c) !== defOf(c))).length;
+      h += '<div class="g2-sec"><div class="g2-sechead"><span class="g2-cap">' + esc(nm) + '</span>'
+        + (n ? '<span class="g2-setn">' + n + ' set</span><button type="button" class="g2-rsall" data-a="dreset" data-t="' + t.id + '" data-s="' + si + '">Reset all</button>' : '') + '</div><div class="g2-tiles">';
+      ctls.forEach((c) => { h += tileHTML(L, c); });
+      h += '</div></div>';
     });
     return h;
+  }
+  // a tile: name, a small gauge (or the chosen option), 🎲 if a re-roll changes it
+  function tileHTML(L, c) {
+    const m = metaOf(c), why = m.gate ? m.gate(L) : null;
+    if (c.choice) {
+      const k = getPath(L, c.path) || '', lab = k ? ((V2.LEN_SHAPES || {})[k] || {}).lab || k : 'Off';
+      return '<button type="button" class="g2-tile' + (k ? ' set' : '') + '" data-a="dial" data-p="' + c.path + '" aria-label="' + esc(c.label + ', ' + lab) + '">'
+        + '<span class="g2-tnm">' + esc(c.label) + '</span><span class="g2-tch">' + esc(lab) + '</span></button>';
+    }
+    const v = valOf(L, c), set = v !== defOf(c);
+    return '<button type="button" class="g2-tile' + (set ? ' set' : '') + (why ? ' na' : '') + '" data-a="dial" data-p="' + c.path + '" aria-label="' + esc(c.label + ', ' + v + (c.unit || '') + (why ? ', ' + why : '')) + '">'
+      + (c.dice ? '<span class="g2-tdie" title="Changes with every re-roll">' + DIE + '</span>' : '')
+      + '<span class="g2-tnm">' + esc(c.label) + '</span>' + gaugeSVG(c, v, set)
+      + (why ? '<span class="g2-ttag">' + esc(why) + '</span>' : '') + '</button>';
+  }
+  // ARCS: −135° … +135° (a 270° sweep, 0 at the top); the fill runs from ZERO
+  // (or the bottom of the range) to the value, so Contour fills both ways
+  const ptA = (cx, cy, r, deg) => { const a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+  function arcD(cx, cy, r, d0, d1) {
+    if (d1 < d0) { const t0 = d0; d0 = d1; d1 = t0; }
+    if (d1 - d0 < 0.5) return '';
+    const [x0, y0] = ptA(cx, cy, r, d0), [x1, y1] = ptA(cx, cy, r, d1);
+    return 'M' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A' + r + ' ' + r + ' 0 ' + (d1 - d0 > 180 ? 1 : 0) + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2);
+  }
+  const degAt = (c, v) => -135 + 270 * (v - c.min) / Math.max(1, c.max - c.min);
+  const zeroAt = (c) => degAt(c, clamp(0, c.min, c.max));
+  function gaugeSVG(c, v, set) {
+    const col = set ? '#a78bfa' : '#4a4a6e', fill = arcD(26, 26, 19, zeroAt(c), degAt(c, v));
+    return '<svg class="g2-gauge" viewBox="0 0 52 44" aria-hidden="true"><path d="' + arcD(26, 26, 19, -135, 135) + '" stroke="#2c2c48" stroke-width="5" fill="none" stroke-linecap="round"/>'
+      + (fill ? '<path d="' + fill + '" stroke="' + col + '" stroke-width="5" fill="none" stroke-linecap="round"/>' : '')
+      + '<text x="26" y="31" text-anchor="middle">' + v + '</text></svg>';
+  }
+  const ctlOf = (path) => { for (const t of TABS) for (const s0 of (t.secs || [])) for (const c of s0[1]) if (c.path === path) return c; return null; };
+  function dialSVG(c, v) {
+    const cx = 105, cy = 100, r = 78, d = degAt(c, v), [kx, ky] = ptA(cx, cy, r, d);
+    let ticks = '';
+    for (let i = 0; i <= 10; i++) { const dd = -135 + 27 * i, [a1, b1] = ptA(cx, cy, r + 12, dd), [a2, b2] = ptA(cx, cy, r + (i % 5 ? 16 : 20), dd); ticks += '<line x1="' + a1.toFixed(1) + '" y1="' + b1.toFixed(1) + '" x2="' + a2.toFixed(1) + '" y2="' + b2.toFixed(1) + '" stroke="#4a4a6e" stroke-width="' + (i % 5 ? 1.5 : 2.5) + '"/>'; }
+    const df = defOf(c), [dx, dy] = ptA(cx, cy, r, degAt(c, df)), fill = arcD(cx, cy, r, zeroAt(c), d);
+    return ticks + '<path d="' + arcD(cx, cy, r, -135, 135) + '" stroke="#2a2a46" stroke-width="16" fill="none" stroke-linecap="round"/>'
+      + (fill ? '<path d="' + fill + '" stroke="#a78bfa" stroke-width="16" fill="none" stroke-linecap="round"/>' : '')
+      + (df !== clamp(0, c.min, c.max) ? '<circle cx="' + dx.toFixed(1) + '" cy="' + dy.toFixed(1) + '" r="3" fill="#ece8f8" opacity=".6"><title>default</title></circle>' : '')
+      + '<circle cx="' + kx.toFixed(1) + '" cy="' + ky.toFixed(1) + '" r="13" fill="#fff" stroke="#8b5cf6" stroke-width="4"/>'
+      + '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" style="font-size:38px;fill:#ece8f8;font-variant-numeric:tabular-nums">' + v + '</text>'
+      + '<text x="' + cx + '" y="' + (cy + 34) + '" text-anchor="middle" style="font-size:13px;fill:#a9a6c7">' + (c.unit === '%' ? 'percent' : (c.min < 0 ? c.min + ' to ' + c.max : 'of ' + c.max)) + '</text>';
+  }
+  // the popover: one large dial (or, for a choice, its options), what it does, both ends
+  function dialPopHTML(L) {
+    const c = ctlOf(G.dial); if (!c) return '';
+    const m = metaOf(c), why = m.gate ? m.gate(L) : null;
+    let h = '<div class="g2-scrim" data-a="dialx"><div class="g2-pop" role="dialog" aria-modal="true" aria-label="' + esc(c.label) + '" data-stop="1">';
+    h += '<div class="g2-pophd"><b>' + esc(c.label) + '</b>' + (c.dice ? '<span class="g2-bdg d">' + DIE + 're-rolls</span>' : '') + (why ? '<span class="g2-bdg na">' + esc(why) + '</span>' : '')
+      + '<button type="button" class="g2-btn" data-a="dialx" aria-label="Close" style="margin-left:auto;width:40px;min-height:40px;padding:0">✕</button></div>';
+    if (c.choice) {
+      const k = getPath(L, c.path) || '', LS = V2.LEN_SHAPES || {};
+      h += '<div class="g2-hint" style="color:#ece8f8;font-size:14px">' + esc(m.what) + '</div><div class="g2-chs">'
+        + [['', 'Off']].concat(Object.keys(LS).map((x) => [x, LS[x].lab])).map(([x, nm]) => '<button type="button" class="g2-pill' + (k === x ? ' on' : '') + '" data-a="dchoose" data-k="' + x + '" aria-pressed="' + (k === x) + '">' + esc(nm) + '</button>').join('') + '</div>'
+        + (k && LS[k] ? '<div class="g2-hint">' + esc(LS[k].tip) + '</div>' : '<div class="g2-hint">Off: Note length and Length wobble decide the lengths.</div>');
+    } else {
+      const v = Number.isFinite(G.dialV) ? G.dialV : valOf(L, c);
+      h += '<div class="g2-dialrow"><button type="button" class="g2-pm" data-a="dstep" data-d="-1" aria-label="Less">−</button>'
+        + '<svg class="g2-dial" viewBox="0 0 210 190" role="slider" tabindex="0" aria-label="' + esc(c.label) + '" aria-valuemin="' + c.min + '" aria-valuemax="' + c.max + '" aria-valuenow="' + v + '">' + dialSVG(c, v) + '</svg>'
+        + '<button type="button" class="g2-pm" data-a="dstep" data-d="1" aria-label="More">+</button></div>'
+        + '<div class="g2-ends"><span><b>' + c.min + (c.unit || '') + '</b> · ' + esc(m.lo || '') + '</span><span><b>' + c.max + (c.unit || '') + '</b> · ' + esc(m.hi || '') + '</span></div>'
+        + '<div class="g2-what">' + esc(m.what || '') + '</div>'
+        + '<div class="g2-hint">' + (why ? esc(m.long || '') + ' ' : '') + (c.dice ? 'A 🎲 re-roll picks a new value for this.' : '') + (defOf(c) !== clamp(0, c.min, c.max) ? ' Default is ' + defOf(c) + (c.unit || '') + ' (the faint dot).' : '') + '</div>';
+    }
+    h += '<div class="g2-popft">' + (c.choice ? '' : '<button type="button" class="g2-btn" data-a="ddef">Reset</button>') + '<button type="button" class="g2-btn pri" data-a="dialx">Done</button></div></div></div>';
+    return h;
+  }
+  const dialStep = (c) => ((c.max - c.min) > 150 ? 5 : 1);
+  function commitDial(path, v) {
+    const c = ctlOf(path); if (!c) return;
+    const val = clamp(Math.round(v), c.min, c.max);
+    edit((L) => { if (val === defOf(c) && getPath(L, path) === undefined) return; setPath(L, path, val); }, '');
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
@@ -818,12 +963,14 @@
     if (a === 'sunit') { G.sunit = +b.getAttribute('data-u'); paint(); return; }
     if (a === 'plays') { const k = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm); if (k === 'straight') r.straight = true; else delete r.straight; }, ''); return; }
     if (a === 'hold') { const n = +b.getAttribute('data-n'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape); if (n > 0) L.part.shape.holdSteps = n; else delete L.part.shape.holdSteps; }, ''); return; }
-    if (a === 'jump') {   // a Bent-by chip → its slider, further down this tab
-      const path = b.getAttribute('data-p');
-      const go = () => { const inp = G.box.querySelector('input[data-p="' + path + '"]'), rw = inp && inp.closest('.g2-row'); if (!rw) return;
-        rw.scrollIntoView({ behavior: 'smooth', block: 'center' }); rw.classList.remove('g2-flash'); void rw.offsetWidth; rw.classList.add('g2-flash'); };
-      if (G.tab !== 'rhythm') { G.tab = 'rhythm'; paint(); }
-      go(); return;
+    if (a === 'jump' || a === 'dial') { G.dial = b.getAttribute('data-p'); G.dialV = NaN; paint(); const d = G.box.querySelector('.g2-dial, .g2-chs button'); if (d) try { d.focus({ preventScroll: true }); } catch (e) {} return; }
+    if (a === 'dialx') { if (b.classList.contains('g2-scrim') && ev.target !== b) return; G.dial = null; G.dialV = NaN; paint(); return; }
+    if (a === 'dstep') { const c = ctlOf(G.dial), L = layer(); if (c && L) commitDial(G.dial, valOf(L, c) + (+b.getAttribute('data-d')) * dialStep(c)); return; }
+    if (a === 'ddef') { const c = ctlOf(G.dial); if (c) edit((L) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o) delete o[last]; }, ''); return; }
+    if (a === 'dchoose') { const k = b.getAttribute('data-k'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape); if (k) L.part.shape.lenShape = k; else delete L.part.shape.lenShape; }, ''); return; }
+    if (a === 'dreset') {
+      const t = TABS.find((x) => x.id === b.getAttribute('data-t')), sec = t && t.secs[+b.getAttribute('data-s')]; if (!sec) return;
+      edit((L) => sec[1].forEach((c) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o && c.path !== 'instrument.register') delete o[last]; }), sec[0] + ' back to defaults.'); return;
     }
     if (a === 'rsrc') {
       const k = b.getAttribute('data-k');
@@ -947,6 +1094,33 @@
     document.body.appendChild(root);
     G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
+    // THE DIAL: drag round it (the angle from its centre is the value). It repaints
+    // only itself while you drag and commits once on release — one undo step.
+    const dialAt = (ev, svg) => {
+      const c = ctlOf(G && G.dial); if (!c) return NaN;
+      const r = svg.getBoundingClientRect(), x = ev.clientX - (r.left + r.width * 105 / 210), y = ev.clientY - (r.top + r.height * 100 / 190);
+      const deg = clamp(Math.atan2(x, -y) * 180 / Math.PI, -135, 135);
+      return clamp(Math.round(c.min + (deg + 135) / 270 * (c.max - c.min)), c.min, c.max);
+    };
+    let dragSvg = null;
+    root.addEventListener('pointerdown', (ev) => {
+      const svg = ev.target.closest && ev.target.closest('.g2-dial'); if (!svg || !G) return;
+      dragSvg = svg; try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+      ev.preventDefault(); G.dialV = dialAt(ev, svg); svg.innerHTML = dialSVG(ctlOf(G.dial), G.dialV); svg.setAttribute('aria-valuenow', G.dialV);
+    });
+    root.addEventListener('pointermove', (ev) => {
+      if (!dragSvg || !G) return; const v = dialAt(ev, dragSvg); if (!Number.isFinite(v) || v === G.dialV) return;
+      G.dialV = v; dragSvg.innerHTML = dialSVG(ctlOf(G.dial), v); dragSvg.setAttribute('aria-valuenow', v);
+    });
+    const endDrag = () => { if (!dragSvg || !G) return; dragSvg = null; const v = G.dialV; G.dialV = NaN; if (Number.isFinite(v)) commitDial(G.dial, v); };
+    root.addEventListener('pointerup', endDrag); root.addEventListener('pointercancel', endDrag);
+    root.addEventListener('keydown', (ev) => {
+      const svg = ev.target.closest && ev.target.closest('.g2-dial'); if (!svg || !G) return;
+      const c = ctlOf(G.dial), L = layer(); if (!c || !L) return;
+      const d = (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') ? 1 : ((ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') ? -1 : 0);
+      if (d) { ev.preventDefault(); commitDial(G.dial, valOf(L, c) + d * dialStep(c)); const s2 = G.box.querySelector('.g2-dial'); if (s2) s2.focus({ preventScroll: true }); }
+      if (ev.key === 'Escape') { G.dial = null; paint(); }
+    });
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
     paint();

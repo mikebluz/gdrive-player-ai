@@ -2143,7 +2143,9 @@
     function _transportTick() {
       try {
         if (typeof Tone === 'undefined' || !Tone.now) return _cursorTick;
-        const dt = Tone.now() - _playBaseTime;
+        // where the EAR is, not the render clock: the shell's ring lag (0 on the web)
+        let lag = 0; try { if (typeof window._bloopsMseOutLag === 'function') lag = +window._bloopsMseOutLag() || 0; } catch (e) {}
+        const dt = Tone.now() - lag - _playBaseTime;
         if (!(dt >= 0)) return _cursorTick;
         const bpm = parseInt((document.getElementById('tempo-input') || {}).value, 10) || 120;
         return Math.round(dt * (bpm / 240) * TPW); // 1 whole note = 240/bpm sec

@@ -54,6 +54,15 @@
     // tens-of-ms tick stalls the debug log was showing. Set gives
     // O(1) add/delete.
     const _visualTimers = new Set();
+    // THE SHELL'S RENDER→SPEAKER LAG: in the native app every sound rides the
+    // splice ring (~0.85 s, up to 2 s after a lock) before the speaker. The bar
+    // play head already subtracts it (_barPlayheadFrame); the step flashes did
+    // not, so they lit up to a ring ahead of the sound — "the playhead is not
+    // syncing with playback". 0 on the web (the function is undefined).
+    function _shellOutLagSec() {
+      try { if (typeof window._bloopsMseOutLag === 'function') { const v = +window._bloopsMseOutLag(); return Number.isFinite(v) && v > 0 ? v : 0; } } catch (e) {}
+      return 0;
+    }
     function visualLookAheadMs() {
       if (typeof Tone === 'undefined' || !Tone.context) return 0;
       const ctx = Tone.context;
@@ -68,7 +77,7 @@
       const lookAhead     = Number.isFinite(ctx.lookAhead)      ? ctx.lookAhead      : 0;
       const baseLatency   = Number.isFinite(raw.baseLatency)    ? raw.baseLatency    : 0;
       const outputLatency = Number.isFinite(raw.outputLatency)  ? raw.outputLatency  : 0;
-      return Math.max(0, (lookAhead + baseLatency + outputLatency) * 1000);
+      return Math.max(0, (lookAhead + baseLatency + outputLatency + _shellOutLagSec()) * 1000);
     }
     // Optional `audioTime` anchors the visual to a specific audio-context
     // time (used by the absolute-time sequencer below). Without it, falls
@@ -85,7 +94,7 @@
         const currentAudio  = Number.isFinite(raw.currentTime)  ? raw.currentTime  : 0;
         const baseLatency   = Number.isFinite(raw.baseLatency)  ? raw.baseLatency  : 0;
         const outputLatency = Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0;
-        ms = Math.max(0, (audioTime - currentAudio + baseLatency + outputLatency) * 1000);
+        ms = Math.max(0, (audioTime - currentAudio + baseLatency + outputLatency + _shellOutLagSec()) * 1000);
       } else {
         ms = visualLookAheadMs();
       }

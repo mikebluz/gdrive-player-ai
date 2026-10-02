@@ -147,3 +147,9 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
   `_sdMergeUserPatch`), and a new layer starts on pad defaults (400 ms attack / 1200 ms release). Any
   path that dresses a layer with a sound must copy the sound's attack/decay/sustain/release onto
   `L.instrument`, or short notes never finish fading in while long tails pile up — the level pumps.
+
+- **Every display clock must subtract the shell's ring lag (`window._bloopsMseOutLag()`, 0 on the
+  web).** The native app's sound reaches the speaker ~0.85 s (up to 2 s after a lock) after render.
+  Seed's bar play head subtracted it but `scheduleVisual` (the step flashes) and `_transportTick`
+  did not, so the steps lit a ring ahead of the sound. A new visual clock: add the lag, or it leads.
+

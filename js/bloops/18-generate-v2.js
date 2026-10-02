@@ -152,8 +152,9 @@
   const TABS = [
     { id: 'rhythm', label: 'Rhythm', secs: [
       ['Rhythm feel', [S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1),
-        S_('part.rhythm.syncop', 'Syncopate', 0, 100), S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'), S_('startVary', 'Start', 0, 100, 1)]],
-      ['Note lengths', [S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length vary', 0, 100, 1),
+        S_('part.rhythm.syncop', 'Syncopate', 0, 100), S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'),
+        S_('part.rhythm.rateVar', 'Timing wobble', 0, 100, 1), S_('startVary', 'Start', 0, 100, 1)]],
+      ['Note lengths', [S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length wobble', 0, 100, 1),
         S_('part.shape.lenDepth', 'Shape depth', 0, 100), S_('part.shape.lenWeight', 'Shape weight', 0, 100)]],
     ] },
     { id: 'pitch', label: 'Pitch', secs: [
@@ -163,7 +164,7 @@
     ] },
     { id: 'vary', label: 'Variation', secs: [
       ['Space & flourishes', [S_('breath.amount', '⏸ Breath', 0, 100, 1), S_('flourish.amount', '✦ Flourish', 0, 100, 1), S_('flourish.wild', 'Flourish size', 0, 100)]],
-      ['Change over time', [S_('chg.ev', 'Evolve (passes)', 0, 64), S_('part.rhythm.vary', 'Vary', 0, 100, 1), S_('part.rhythm.rateVar', 'Rate var', 0, 100, 1),
+      ['Change over time', [S_('chg.ev', 'Evolve (passes)', 0, 64), S_('part.rhythm.vary', 'Vary', 0, 100, 1),
         S_('phrasing', 'Phrasing', 0, 100, 1), S_('twist', 'Twist', 0, 100, 1)]],
     ] },
     { id: 'more', label: 'More', secs: [] },
@@ -230,8 +231,13 @@
   const clone = (o) => JSON.parse(JSON.stringify(o));
   // the steps the rhythm sounds over the WHOLE part, read off the notes with the
   // extras off (rests, breath, flourish, ghosts, stutter doubles) — the bare rule
+  // THE THREE WOBBLES (what bends a take off its steps): Timing wobble = per-hit
+  // onset jitter (`rhythm.rateVar`), Length wobble = per-note length scatter
+  // (`lenVary`), Start = the whole pass starting late (`startVary`).
+  const WOB = [['part.rhythm.rateVar', 'Timing', '#f5b04a'], ['lenVary', 'Length', '#f9a8d4'], ['startVary', 'Start', '#f5b04a']];
+  function unwobbled(L) { const t = clone(L); if (t.part && t.part.rhythm) delete t.part.rhythm.rateVar; delete t.lenVary; delete t.startVary; return t; }
   function partHits(L) {
-    const bare = clone(L); delete bare.restProb; delete bare.breath; delete bare.flourish; delete bare.ghosts;
+    const bare = unwobbled(L); delete bare.restProb; delete bare.breath; delete bare.flourish; delete bare.ghosts;
     if (bare.part && bare.part.pitch) bare.part.pitch.stutter = 0;
     const { ns, cyc } = notesNow(bare), spb = spbOf(L), nb = Math.max(1, Math.round(barsOf(L))), tot = spb * nb, lit = new Set();
     const span = cyc * nb / barsOf(L);
@@ -249,7 +255,7 @@
     const p = L.part; if (isMine(p.rhythm)) return;
     const alt = p.rhythmAlt, rule = clone(p.rhythm);
     if (isMine(alt)) { p.rhythm = clone(alt); }
-    else { const h = partHits(L); writePart(L, h.spb, h.nb, h.lit); }
+    else { const h = partHits(L); writePart(L, h.spb, h.nb, h.lit); L.part.rhythm.straight = true; }
     p.rhythmAlt = rule;
   }
   function toRule(L) {
@@ -342,18 +348,21 @@
 
   // WHAT A PICKED NOTE IS AND WHERE IT LANDS on the Grid: bar · beat · step, and
   // how far off the grid it sits when it does not land on a line (swing, nudge).
-  function noteInfoHTML(L, n, cyc, spb, bpb, nameOf) {
-    const barSec = cyc / barsOf(L), m = Math.round(midiOf(n.freq));
-    const bar = Math.floor(n.at / barSec + 1e-6), inBarSteps = (n.at - bar * barSec) / barSec * spb;
-    const st = Math.round(inBarSteps), off = inBarSteps - st;
+  // measured from where the note was WRITTEN (`home`: the take with the wobbles
+  // off), so a deliberate part-step Shift reads as shifted, not as off the grid
+  function noteInfoHTML(L, n, cyc, spb, bpb, nameOf, home) {
+    const barSec = cyc / barsOf(L), m = Math.round(midiOf(n.freq)), h0 = Number.isFinite(home) ? home : n.at;
+    const bar = Math.floor(h0 / barSec + 1e-6), inBarSteps = (h0 - bar * barSec) / barSec * spb;
+    const st = Math.floor(inBarSteps + 0.05), sfr = inBarSteps - st;
+    const off = (n.at - h0) / barSec * spb;
     const gname = (GRIDS.find((g) => g[0] === spb) || [0, spb + ' steps a bar'])[1].toLowerCase();
     const where = 'bar ' + (bar + 1) + (bpb < spb ? ' · beat ' + (Math.floor(st / bpb) + 1) : '')
-      + ' · step ' + (st + 1) + ' of ' + spb;
-    const offTxt = Math.abs(off) < 0.05 ? 'on the grid' : (Math.round(Math.abs(off) * 100) + '% of a step ' + (off > 0 ? 'late' : 'early'));
+      + ' · step ' + (st + 1) + ' of ' + spb + ' (' + gname + ')' + (sfr > 0.05 ? ' · shifted ' + Math.round(sfr * 100) + '% of a step later' : '');
+    const offTxt = Math.abs(off) < 0.05 ? (sfr > 0.05 ? 'no wobble' : 'on the grid') : '<span style="color:#f5b04a">' + Math.round(Math.abs(off) * 100) + '% of a step ' + (off > 0 ? 'late' : 'early') + '</span>';
     const lenSteps = (n.durMs / 1000) / barSec * spb;
     const lenTxt = Math.round(lenSteps * 10) / 10;
     return '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#1b1b30;border:1px solid #3a3a5c;color:#ece8f8">'
-      + '<b style="font-size:16px">' + nameOf(m) + '</b> · ' + esc(where) + ' (' + esc(gname) + ') · ' + offTxt + ' · lasts ' + lenTxt + ' step' + (lenTxt === 1 ? '' : 's') + '</div>';
+      + '<b style="font-size:16px">' + nameOf(m) + '</b> · ' + esc(where) + ' · ' + offTxt + ' · lasts ' + lenTxt + ' step' + (lenTxt === 1 ? '' : 's') + '</div>';
   }
 
   const css = `
@@ -369,6 +378,30 @@
   .g2-hint{font-size:13px;line-height:1.4;color:#a9a6c7}
   .g2-btn{min-height:44px;padding:0 14px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;font-weight:600}
   .g2-btn.pri{flex-grow:1;border:0;background:#8b5cf6;color:#fff;font-weight:700}
+  .g2-stack{display:flex;flex-direction:column;gap:12px}
+  .g2-ctl{display:grid;grid-template-columns:52px minmax(0,1fr);align-items:center;gap:8px;min-width:0}
+  .g2-lab{font-size:13px;color:#a9a6c7}
+  .g2-r{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+  .g2-sq{width:36px;min-height:36px;padding:0}
+  .g2-num{min-width:1.3em;text-align:center;font-variant-numeric:tabular-nums}
+  .g2-seg-s button{padding:0 7px;font-size:12px}
+  .g2-chip2{height:26px;padding:0 9px;border-radius:13px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);font-size:12px;font-weight:700}
+  .g2-gw{position:relative;margin:7px 0}
+  .g2-gut{position:absolute;left:0;top:0;width:${34}px;height:28px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#8d8ab0}
+  .g2-strip{display:grid;margin:0 1px;padding-left:${34}px}
+  .g2-sc{height:28px;box-sizing:border-box;border:0;padding:0;border-radius:0;border-right:1px solid #12121f;background:#26263f}
+  .g2-sc.odd{background:#1c1c33}.g2-sc.bar{border-left:2px solid #4a4a6e}.g2-sc.on{background:#a78bfa}
+  .g2-gov{position:absolute;top:0;bottom:0;left:${35}px;right:1px;pointer-events:none}
+  .g2-gov span{position:absolute}
+  .g2-tail{top:9px;height:10px;background:#a78bfa99;border-radius:0 3px 3px 0}
+  .g2-haze{bottom:-7px;height:5px;border-radius:3px;background:#f5b04a;opacity:.75}
+  .g2-fade{top:-7px;height:5px;border-radius:0 3px 3px 0;background:linear-gradient(90deg,#f9a8d4,#f9a8d400)}
+  .g2-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#a9a6c7;padding-left:${35}px}
+  .g2-legend i{display:inline-block;width:18px;height:5px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  .g2-flash{animation:g2fl 1.1s ease}
+  @keyframes g2fl{0%{background:#3a2a10}100%{background:transparent}}
+  .g2-mk{position:absolute;width:0;border-left:2px dotted #f5b04a;pointer-events:none;z-index:2}
+  .g2-mg{position:absolute;height:2px;background:#f5b04a;border-radius:1px;pointer-events:none;z-index:2}
   .g2-pill{min-height:38px;padding:0 10px;border-radius:10px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:600;min-width:0}
   .g2-pill.on{border:2px solid #a78bfa;background:#2a2150;color:#fff}
   .g2-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
@@ -468,9 +501,27 @@
     }
     // the notes — in Info mode each is a button (with a padded hit area: a note
     // can be 3px wide); the picked one is outlined and read out under the roll
+    // WHERE EACH NOTE WAS WRITTEN: the same take with the three wobbles off. A
+    // note the wobbles moved gets an amber mark at that spot and a gap bar.
+    const wob = WOB.some(([pp]) => +getPath(L, pp) > 0) && !(L.part.rhythm && L.part.rhythm.straight);
+    const stepSec = cyc / (barsOf(L) * spbOf(L));
+    const homes = ns.map((n) => n.at);
+    if (wob && ns.length) {
+      const bare = notesNow(unwobbled(L)).ns.map((x) => x.at);
+      ns.forEach((n, i) => { let best = n.at, d = Infinity; bare.forEach((t) => { const dd = Math.abs(t - n.at); if (dd < d) { d = dd; best = t; } }); homes[i] = best; });
+    }
+    G.homes = homes; G.stepSec = stepSec;
+    let offN = 0;
     ns.forEach((n, i) => {
       const m = Math.round(midiOf(n.freq));
       const x = n.at / cyc, w = Math.max(0.006, (n.durMs / 1000) / cyc);
+      const offS = (n.at - homes[i]) / stepSec;
+      if (Math.abs(offS) > 0.06) {
+        offN++;
+        const hx = homes[i] / cyc, gx = Math.min(homes[i], n.at) / cyc, gw = Math.abs(n.at - homes[i]) / cyc;
+        h += '<span class="g2-mk" style="left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + hx.toFixed(4) + ');top:' + (yOf(m) - 2) + 'px;height:' + (rowH + 3) + 'px"></span>'
+          + '<span class="g2-mg" style="left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + gx.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + gw.toFixed(4) + ');top:' + (yOf(m) + rowH - 1) + 'px"></span>';
+      }
       const pos = 'left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + col
         + (G.pick === i ? ';outline:2px solid #fff;outline-offset:1px;z-index:4' : '');
       h += info
@@ -484,9 +535,9 @@
       + (live ? '<span class="g2-seg" role="group" aria-label="Tapping the picture">'
         + '<button type="button" data-a="rollmode" data-k="reroll" class="' + (!info ? 'on' : '') + '" aria-pressed="' + !info + '" title="Tap a bar to re-roll it">🎲 Re-roll</button>'
         + '<button type="button" data-a="rollmode" data-k="info" class="' + (info ? 'on' : '') + '" aria-pressed="' + info + '" title="Tap a note to see what it is">ⓘ Info</button></span>' : '')
-      + '<span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + '</span>'
+      + '<span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (offN ? ' · <span style="color:#f5b04a">' + offN + ' off the grid</span>' : '') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';
-    if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf);
+    if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf, homes[G.pick]);
     if (G.rollNote) h += '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6">' + esc(G.rollNote) + '</div>';
     // 3. TABS
     h += '<div class="g2-tabs" role="tablist">' + TABS.map((t) => {
@@ -551,101 +602,118 @@
     }
     return h;
   }
+  // note-value names for a fraction of a bar (4/4): 1/8 → '8th'
+  const NOTE = { 1: 'Bar', 2: 'Half', 4: 'Quarter', 8: '8th', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
+  // SHIFT = rotate (whole steps; +1 moves the hits EARLIER) + offset (a part step,
+  // later). One number in steps, wrapped to ± half the pattern.
+  function shiftOf(r) { const st = Math.max(1, r.steps | 0); let s0 = ((-(r.rotate | 0)) % st + st) % st + (Number.isFinite(r.offset) ? r.offset : 0); if (s0 > st / 2) s0 -= st; return s0; }
+  function setShift(r, s0) {
+    const st = Math.max(1, r.steps | 0), q = Math.round(s0 * 4) / 4, w = Math.floor(q), fr = q - w;
+    r.rotate = ((-w) % st + st) % st; if (fr > 1e-6) r.offset = fr; else delete r.offset;
+  }
+  function chipsHTML(L) {
+    let h = '';
+    WOB.forEach(([path, nm, col]) => {
+      const v = +getPath(L, path) || 0; if (!v) return;
+      h += '<button type="button" class="g2-chip2" data-a="jump" data-p="' + path + '" style="--c:' + col + '">' + nm + ' ' + v + ' ↓</button>';
+    });
+    return h;
+  }
   function rhythmHTML(L) {
     let h = '';
     const p = L.part, r = p.rhythm || {}, mine = isMine(r), sn = styleName(L);
-    const hasRule = !mine || (p.rhythmAlt && !isMine(p.rhythmAlt)) || !!styleOf(L);
     const { spb, nb, tot, lit } = partHits(L);
-    const gname = (GRIDS.find((g) => g[0] === spb) || [0, spb + '-a-bar'])[1].toLowerCase();
-    h += '<div style="display:flex;flex-direction:column;gap:10px">';
-    // WHERE THE RHYTHM COMES FROM — said first, and switchable both ways
-    h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>Rhythm from</b><span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
-      + '<button type="button" data-a="rsrc" data-k="rule" class="' + (!mine ? 'on' : '') + '" aria-pressed="' + !mine + '"' + (hasRule ? '' : ' disabled style="opacity:.45"') + '>🎲 ' + esc(sn) + '’s rule</button>'
-      + '<button type="button" data-a="rsrc" data-k="mine" class="' + (mine ? 'on' : '') + '" aria-pressed="' + mine + '">✎ My pattern</button></span></div>';
-    // the steps of EVERY bar, as they play (the preview's columns, one row a bar)
-    const perBar = [];
-    let rows = '';
-    for (let b = 0; b < nb; b++) {
-      let c = 0;
-      // SAME COLUMNS AS THE PREVIEW: the number sits in a column as wide as the
-      // preview's keys (+ its 1px border), and the steps share one even gap, so
-      // step i sits under step i of the picture; beats are shaded, never spaced
-      rows += '<div style="display:flex;align-items:center;min-width:0"><span style="width:' + (KEYW + 1) + 'px;flex:none;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span>'
-        + '<div style="flex:1;min-width:0;margin-right:1px;display:grid;grid-template-columns:repeat(' + spb + ',minmax(0,1fr));gap:' + (spb > 16 ? 1 : 2) + 'px">';
-      for (let i = 0; i < spb; i++) {
-        const g = b * spb + i, on = lit.has(g), bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
-        const beatGap = (!on && Math.floor(i / bpb) % 2 === 1) ? 'background:#1c1c33;' : '';
-        if (on) c++;
-        rows += mine
-          ? '<button type="button" class="g2-step' + (on ? ' on' : '') + '" data-a="step" data-i="' + g + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '" style="' + beatGap + '"></button>'
-          : '<span class="g2-step' + (on ? ' on' : '') + '" style="' + beatGap + 'display:block;opacity:.8"></span>';
-      }
-      rows += '</div></div>';
-      perBar.push(c);
-    }
-    // THE STRIP: every bar side by side in the PREVIEW'S OWN GEOMETRY (its key
-    // column, its width, its bars), so step k sits exactly under step k of the
-    // picture. Per-bar rows stretched one bar over the whole width and could never
-    // line up. It is the editor too while a step is wide enough to tap (≥ 11px);
-    // on a finer grid My pattern adds the per-bar rows below it for editing.
-    const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
-    const tapStrip = mine && rollPx / tot >= 11;
     const bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
-    let strip = '<div style="margin:0 1px;padding-left:' + KEYW + 'px;display:grid;grid-template-columns:repeat(' + tot + ',minmax(0,1fr))" role="group" aria-label="Steps, lined up with the preview">';
-    for (let k = 0; k < tot; k++) {
-      const on = lit.has(k), i = k % spb, b = Math.floor(k / spb);
-      const st = 'height:24px;box-sizing:border-box;border:0;padding:0;border-radius:0;border-right:1px solid #12121f;'
-        + (i === 0 ? 'border-left:2px solid #4a4a6e;' : '')
-        + 'background:' + (on ? '#a78bfa' : (Math.floor(i / bpb) % 2 ? '#1c1c33' : '#26263f')) + ';';
-      strip += tapStrip
-        ? '<button type="button" data-a="step" data-i="' + k + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '" style="' + st + '"></button>'
-        : '<span style="display:block;' + st + (mine ? '' : 'opacity:.85') + '"></span>';
-    }
-    strip += '</div>';
-    const lo = Math.min(...perBar), hi = Math.max(...perBar);
-    const perTxt = (lo === hi ? lo : lo + '–' + hi) + ' hits a bar';
+    h += '<div class="g2-stack">';
+    // WHERE THE RHYTHM COMES FROM: the style's take (generated, bent by the
+    // wobbles) or the Step grid (uniform, written by you); the other is kept
+    h += '<div class="g2-ctl"><b style="grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Rhythm from<span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
+      + '<button type="button" data-a="rsrc" data-k="rule" class="' + (!mine ? 'on' : '') + '" aria-pressed="' + !mine + '">🎲 ' + esc(sn) + '’s take</button>'
+      + '<button type="button" data-a="rsrc" data-k="mine" class="' + (mine ? 'on' : '') + '" aria-pressed="' + mine + '">▦ Step grid</button></span></b></div>';
+    const row = (lab, inner, id) => '<div class="g2-ctl"' + (id ? ' id="' + id + '"' : '') + '><span class="g2-lab">' + lab + '</span><span class="g2-r">' + inner + '</span></div>';
+    const sq = (a, k, lab, aria) => '<button type="button" class="g2-btn g2-sq" data-a="' + a + '" data-k="' + k + '" aria-label="' + aria + '">' + lab + '</button>';
+    const GSHORT = { 4: 'Quarter', 8: '8th', 12: 'Triplet', 16: '16th', 32: '32nd' };
+    const gridRow = row('Grid', '<span class="g2-seg g2-seg-s" role="group" aria-label="Grid">' + GRIDS.map(([n, nm]) => '<button type="button" data-a="grid" data-n="' + n + '" aria-label="' + esc(nm) + '" class="' + (spb === n ? 'on' : '') + '" aria-pressed="' + (spb === n) + '">' + GSHORT[n] + '</button>').join('') + '</span>')
+      + (mine ? row('', '<label class="g2-hint" style="display:flex;align-items:center;gap:6px">or <input type="number" inputmode="numeric" min="1" max="64" value="' + spb + '" data-a="gridn" aria-label="Steps a bar" style="width:52px;height:32px;border-radius:9px;border:1px solid #3a3a5c;background:#1b1b30;color:#fff;text-align:center;font:inherit"> steps a bar</label>') : '');
     if (!mine) {
-      // THE RULE, IN WORDS — what made the preview, and why the bars differ. The
-      // hits are named by the steps they land on (the rotation number is internal:
-      // "starting at step 6" read as wrong beside a first hit on step 1)
-      const first = []; for (let i = 0; i < spb; i++) if (lit.has(i)) first.push(i + 1);
-      const stepList = first.length === 1 ? 'step ' + first[0] : 'steps ' + first.slice(0, -1).join(', ') + ' and ' + first[first.length - 1];
-      let why;
-      if (r.kind === 'euclid' && (perBarRule(L) || nb === 1)) why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over a bar of ' + spb + ' ' + esc(gname) + ' — on ' + stepList + (nb > 1 ? ' — and every bar repeats it.' : '.');
-      else if (r.kind === 'euclid') why = sn + '’s rule spreads <b>' + (r.pulses | 0) + ' hits</b> as evenly as possible over all ' + nb + ' bars (' + tot + ' ' + esc(gname) + ')' + (lo === hi ? '.' : ' — so the bars fall differently.');
-      else if (r.kind === 'pulse') why = sn + '’s rule plays <b>evenly spaced hits</b> — ' + perTxt + '.';
-      else if (r.kind === 'chance') why = sn + '’s rule <b>picks hits by chance</b> on each step, so every take differs.';
-      else why = sn + '’s rule makes this rhythm (' + esc(String(r.kind || 'its own')) + ').';
-      h += '<div class="g2-hint">' + why + ' Tap ✎ My pattern to edit the steps — it starts as an exact copy, and this rule is kept.</div>';
-      h += strip;
+      const chips = chipsHTML(L);
+      h += row('Bent by', chips || '<span class="g2-hint">nothing — every hit is on its step</span>');
       if (r.kind === 'euclid' || r.kind === 'pulse') {
-        h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="g2-hint">' + (r.kind === 'euclid' ? 'Hits' : 'Hits a bar') + '</span>'
-          + '<button type="button" class="g2-btn" data-a="rule" data-k="less" aria-label="Fewer hits" style="width:40px;min-height:36px;padding:0">−</button>'
-          + '<button type="button" class="g2-btn" data-a="rule" data-k="more" aria-label="More hits" style="width:40px;min-height:36px;padding:0">+</button>'
-          + (r.kind === 'euclid' ? '<span class="g2-hint" style="margin-left:6px">Shift</span>'
-            + '<button type="button" class="g2-btn" data-a="rule" data-k="left" aria-label="Shift earlier" style="width:40px;min-height:36px;padding:0">◀</button>'
-            + '<button type="button" class="g2-btn" data-a="rule" data-k="right" aria-label="Shift later" style="width:40px;min-height:36px;padding:0">▶</button>'
-            + '<button type="button" class="g2-btn" data-a="rule" data-k="dice" style="min-height:36px;margin-left:auto">🎲 New rhythm</button>' : '')
-          + '</div>';
+        const n = r.kind === 'euclid' ? (r.pulses | 0) : Math.round(V2.speedOf(L) || 0);
+        h += row('Hits', '<b class="g2-num">' + n + '</b>' + sq('rule', 'less', '−', 'Fewer hits') + sq('rule', 'more', '+', 'More hits')
+          + '<button type="button" class="g2-btn" data-a="take" style="margin-left:auto;min-height:36px">🎲 New take</button>');
       }
+      if (r.kind === 'euclid') {
+        // SHIFT IN A UNIT YOU PICK: finer than a step (a part-step offset), a step, a beat
+        const units = [[0.25, NOTE[spb * 4] || '¼ step'], [0.5, NOTE[spb * 2] || '½ step'], [1, NOTE[spb] || '1 step']];
+        if (bpb > 1 && bpb < spb) units.push([bpb, 'Beat']);
+        const u = units.some((x) => x[0] === G.sunit) ? G.sunit : 1;
+        h += row('Shift', sq('shift', '-1', '◀', 'Shift earlier') + sq('shift', '1', '▶', 'Shift later')
+          + '<span class="g2-seg g2-seg-s" role="group" aria-label="Shift by">' + units.map(([v, nm]) => '<button type="button" data-a="sunit" data-u="' + v + '" class="' + (v === u ? 'on' : '') + '" aria-pressed="' + (v === u) + '">' + esc(nm) + '</button>').join('') + '</span>');
+        // YOUR shift only (`r.shift`) — the style's own starting rotation is not a shift
+        const sh = Number.isFinite(r.shift) ? r.shift : 0, a = Math.abs(sh), w = Math.floor(a + 1e-9), fr = Math.round((a - w) * 4) / 4;
+        const nv = (d) => (NOTE[d] || '').toLowerCase(), an = (x) => (/^[8]/.test(x) ? 'an ' : 'a ') + x;
+        const qN = nv(spb * 4) || 'quarter step', hN = nv(spb * 2) || 'half step', stepN = nv(spb) || 'step';
+        const frN = { 0.25: an(qN), 0.5: an(hN), 0.75: '3 ' + qN + 's' }[fr] || '';
+        const wN = w === 1 ? an(stepN) : (w ? w + ' ' + stepN + 's' : '');
+        h += row('', !sh ? '<span class="g2-hint">Not shifted.</span>'
+          : '<span class="g2-hint">Shifted <b>' + wN + (w && fr ? ' and ' : '') + frN + ' ' + (sh > 0 ? 'later' : 'earlier') + '</b>' + (fr ? ' — every hit sits between steps, together.' : '.') + '</span>'
+            + '<button type="button" class="g2-btn" data-a="unshift" style="min-height:30px;font-size:12px">Reset</button>');
+        h += gridRow;
+      }
+      if (r.kind !== 'euclid' && r.kind !== 'pulse') h += '<div class="g2-hint">' + esc(sn) + '’s rhythm has no settings here. Switch to ▦ Step grid to write one.</div>';
     } else {
-      h += '<div style="display:flex;align-items:center;gap:8px"><span class="g2-hint">Tap a step to add or remove a hit.' + (hasRule ? ' ' + esc(sn) + '’s rule is kept.' : '') + '</span>'
-        + '<span class="g2-hint" style="margin-left:auto;white-space:nowrap">' + perTxt + '</span>'
-        + '<button type="button" class="g2-btn" data-a="hits" data-d="-1" aria-label="Fewer hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">−</button>'
-        + '<button type="button" class="g2-btn" data-a="hits" data-d="1" aria-label="More hits in every bar" style="width:40px;min-height:36px;padding:0;flex:none">+</button></div>';
+      // ▦ STEP GRID — uniform: every hit on a step, every hit the same length
+      const loose = !r.straight;
+      h += row('Plays', '<span class="g2-seg" role="group" aria-label="How the step grid plays">'
+        + '<button type="button" data-a="plays" data-k="straight" class="' + (!loose ? 'on' : '') + '" aria-pressed="' + !loose + '">Straight</button>'
+        + '<button type="button" data-a="plays" data-k="loose" class="' + (loose ? 'on' : '') + '" aria-pressed="' + loose + '">Loose</button></span>');
+      if (loose) h += row('Bent by', chipsHTML(L) || '<span class="g2-hint">nothing — the wobbles are 0</span>');
+      // the strip in the PREVIEW'S GEOMETRY (its key column → a "Steps" gutter)
+      const rollPx = Math.max(200, ((G.box && G.box.clientWidth) || 390) - 28 - KEYW);
+      const tapStrip = rollPx / tot >= 11;
+      const pc = (x) => (x / tot * 100).toFixed(4) + '%';
+      let strip = '<div class="g2-gw"><span class="g2-gut">Steps</span><div class="g2-strip" style="grid-template-columns:repeat(' + tot + ',minmax(0,1fr))" role="group" aria-label="Step grid">';
+      for (let k = 0; k < tot; k++) {
+        const on = lit.has(k), i = k % spb, b = Math.floor(k / spb);
+        const cls = 'g2-sc' + (on ? ' on' : '') + (Math.floor(i / bpb) % 2 ? ' odd' : '') + (i === 0 ? ' bar' : '');
+        strip += tapStrip ? '<button type="button" class="' + cls + '" data-a="step" data-i="' + k + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '"></button>'
+          : '<span class="' + cls + '"></span>';
+      }
+      strip += '</div><div class="g2-gov" aria-hidden="true">';
+      // held length (a tail), and — Loose — how far a pass may move a hit (amber,
+      // under) or stretch it (pink, over)
+      const hold = (p.shape && (p.shape.holdSteps | 0)) || 0, hits = [...lit].sort((x, y) => x - y);
+      const tv = loose ? (+getPath(L, 'part.rhythm.rateVar') || 0) : 0, lv = loose ? (+L.lenVary || 0) : 0;
+      const jit = tv / 100 * 0.4 * (tot / Math.max(1, hits.length));
+      hits.forEach((k, j) => {
+        const len = hold > 0 ? hold : ((j + 1 < hits.length ? hits[j + 1] : tot) - k) * ((p.shape && p.shape.lenRatio) || 100) / 100;
+        if (len > 1.05) strip += '<span class="g2-tail" style="left:' + pc(k + 1) + ';width:' + pc(Math.min(len, tot - k) - 1) + '"></span>';
+        if (jit > 0.02) strip += '<span class="g2-haze" style="left:' + pc(Math.max(0, k - jit)) + ';width:' + pc(jit * 2 + 0.05) + '"></span>';
+        if (lv > 0) strip += '<span class="g2-fade" style="left:' + pc(k + len * (1 - 0.6 * lv / 100)) + ';width:' + pc(len * 1.2 * lv / 100) + '"></span>';
+      });
+      strip += '</div></div>';
       h += strip;
-      if (!tapStrip) h += '<div class="g2-hint">These steps are too small to tap — edit them a bar at a time:</div>' + rows;
-      if (hasRule) h += '<button type="button" class="g2-btn" data-a="recopy" style="align-self:flex-start;min-height:36px;font-size:13px">↺ Copy ' + esc(sn) + '’s rule again</button>';
-      // figure presets: START FROM one (fills every bar)
-      h += '<div class="g2-hint">Start from</div><div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">' + FIGS.map(([id, nm, st]) => {
-        const on = r.kind === 'fig' && r.fig === id;
-        const dots = Array.from({ length: 16 }, (_, i) => '<span style="width:4px;height:8px;border-radius:2px;background:' + (st.indexOf(i) >= 0 ? (on ? '#fff' : '#a78bfa') : '#33334f') + '"></span>').join('');
-        return '<button type="button" class="g2-pill' + (on ? ' on' : '') + '" data-a="fig" data-k="' + id + '" style="flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 8px;min-height:52px"><span>' + esc(nm) + '</span><span style="display:flex;gap:1px">' + dots + '</span></button>';
-      }).join('') + '</div>';
+      if (jit > 0.02 || lv > 0) h += '<div class="g2-legend">' + (jit > 0.02 ? '<span><i style="background:#f5b04a"></i>where a pass may start it</span>' : '') + (lv > 0 ? '<span><i style="background:linear-gradient(90deg,#f9a8d4,#f9a8d400)"></i>where it may end</span>' : '') + '</div>';
+      if (!tapStrip) {
+        // too fine to tap: one row a bar for editing
+        let rows = '';
+        for (let b = 0; b < nb; b++) {
+          rows += '<div style="display:flex;align-items:center;min-width:0"><span style="width:' + (KEYW + 1) + 'px;flex:none;font-size:11px;color:#8d8ab0">' + (b + 1) + '</span><div style="flex:1;min-width:0;margin-right:1px;display:grid;grid-template-columns:repeat(' + spb + ',minmax(0,1fr));gap:1px">';
+          for (let i = 0; i < spb; i++) { const g = b * spb + i, on = lit.has(g); rows += '<button type="button" class="g2-step' + (on ? ' on' : '') + '" data-a="step" data-i="' + g + '" aria-label="Bar ' + (b + 1) + ' step ' + (i + 1) + (on ? ', on' : ', off') + '"></button>'; }
+          rows += '</div></div>';
+        }
+        h += '<div class="g2-hint">These steps are too small to tap — edit them a bar at a time:</div>' + rows;
+      }
+      const L4 = [[1, '1 step'], [2, '2 steps'], [4, '4 steps'], [0, 'To next']];
+      h += row('Length', '<span class="g2-seg" role="group" aria-label="Length of every hit">' + L4.map(([v, nm]) => '<button type="button" data-a="hold" data-n="' + v + '" class="' + (hold === v ? 'on' : '') + '" aria-pressed="' + (hold === v) + '">' + nm + '</button>').join('') + '</span>');
+      h += gridRow;
+      h += row('', '<button type="button" class="g2-btn" data-a="recopy" style="min-height:34px;font-size:13px">↺ Copy ' + esc(sn) + '’s take</button>');
+      h += row('Start from', '<span style="display:flex;gap:6px;overflow-x:auto;min-width:0;padding-bottom:2px">' + FIGS.map(([id, nm, st]) => {
+        const dots = Array.from({ length: 16 }, (_, i) => '<span style="width:3px;height:7px;border-radius:2px;background:' + (st.indexOf(i) >= 0 ? '#a78bfa' : '#33334f') + '"></span>').join('');
+        return '<button type="button" class="g2-pill" data-a="fig" data-k="' + id + '" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:5px 7px;min-height:44px"><span>' + esc(nm) + '</span><span style="display:flex;gap:1px">' + dots + '</span></button>';
+      }).join('') + '</span>');
     }
-    if (mine || r.kind === 'euclid') h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><span class="g2-hint">Grid</span>' + GRIDS.map(([n, nm]) =>
-      '<button type="button" class="g2-pill' + (spb === n && r.kind !== 'fig' ? ' on' : '') + '" data-a="grid" data-n="' + n + '">' + esc(nm) + '</button>').join('')
-      + (mine ? '<label class="g2-hint" style="display:flex;align-items:center;gap:6px">Steps <input type="number" inputmode="numeric" min="1" max="64" value="' + spb + '" data-a="gridn" style="width:58px;height:36px;border-radius:9px;border:1px solid #3a3a5c;background:#1b1b30;color:#fff;text-align:center;font:inherit"></label>' : '') + '</div>';
     h += '</div>';
     return h;
   }
@@ -707,7 +775,12 @@
     if (a === 'note') { const i = +b.getAttribute('data-i'); G.pick = (G.pick === i) ? -1 : i; paint(); return; }
     if (a === 'release') { edit((L) => { V2.release(G.E, L); }, 'Back on the live rules — the frozen notes are gone (↶ Undo keeps them).'); return; }
     if (a === 'take') { edit((L) => { V2.newTake(L); }, 'A new take of the same rules.'); return; }
-    if (a === 'fig') { const id = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm || {}); r.kind = 'fig'; r.fig = id; }, ''); return; }
+    if (a === 'fig') {   // START FROM a figure: written onto the Step grid, every bar (stays uniform)
+      const f = FIGS.find((x) => x[0] === b.getAttribute('data-k')); if (!f) return;
+      edit((L) => { toMine(L); const cur = partHits(L), lit = new Set();
+        for (let bb = 0; bb < cur.nb; bb++) f[2].forEach((i16) => lit.add(bb * cur.spb + clamp(Math.round(i16 * cur.spb / 16), 0, cur.spb - 1)));
+        writePart(L, cur.spb, cur.nb, lit); }, 'Started from ' + f[1] + '.'); return;
+    }
     if (a === 'grid' && !isMine((layer().part || {}).rhythm)) {
       const n = +b.getAttribute('data-n');
       edit((L) => {
@@ -734,11 +807,29 @@
         writePart(L, cur.spb, cur.nb, lit);
       }, ''); return;
     }
+    if (a === 'shift' || a === 'unshift') {
+      const d = a === 'unshift' ? 0 : (+b.getAttribute('data-k')) * (G.sunit || 1);
+      edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm); if (r.kind !== 'euclid') return; const st = Math.max(1, r.steps | 0);
+        const mine0 = Number.isFinite(r.shift) ? r.shift : 0, dd = a === 'unshift' ? -mine0 : d;
+        let s0 = shiftOf(r) + dd; while (s0 > st / 2) s0 -= st; while (s0 <= -st / 2) s0 += st; setShift(r, s0);
+        let u = mine0 + dd; while (u > st / 2) u -= st; while (u <= -st / 2) u += st;
+        if (Math.abs(u) > 1e-6) r.shift = Math.round(u * 4) / 4; else delete r.shift; }, ''); return;
+    }
+    if (a === 'sunit') { G.sunit = +b.getAttribute('data-u'); paint(); return; }
+    if (a === 'plays') { const k = b.getAttribute('data-k'); edit((L) => { const r = L.part.rhythm = Object.assign({}, L.part.rhythm); if (k === 'straight') r.straight = true; else delete r.straight; }, ''); return; }
+    if (a === 'hold') { const n = +b.getAttribute('data-n'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape); if (n > 0) L.part.shape.holdSteps = n; else delete L.part.shape.holdSteps; }, ''); return; }
+    if (a === 'jump') {   // a Bent-by chip → its slider, further down this tab
+      const path = b.getAttribute('data-p');
+      const go = () => { const inp = G.box.querySelector('input[data-p="' + path + '"]'), rw = inp && inp.closest('.g2-row'); if (!rw) return;
+        rw.scrollIntoView({ behavior: 'smooth', block: 'center' }); rw.classList.remove('g2-flash'); void rw.offsetWidth; rw.classList.add('g2-flash'); };
+      if (G.tab !== 'rhythm') { G.tab = 'rhythm'; paint(); }
+      go(); return;
+    }
     if (a === 'rsrc') {
       const k = b.getAttribute('data-k');
       edit((L) => { if (k === 'mine') toMine(L); else toRule(L); },
-        k === 'mine' ? 'Your pattern — a copy of what ' + styleName(layer()) + '’s rule played. The rule is kept: switch back any time.'
-          : styleName(layer()) + '’s rule again. Your pattern is kept under ✎ My pattern.');
+        k === 'mine' ? 'Step grid — ' + styleName(layer()) + '’s take snapped onto the steps. The take is kept: switch back any time.'
+          : styleName(layer()) + '’s take again. Your step grid is kept.');
       return;
     }
     if (a === 'recopy') {
@@ -854,7 +945,7 @@
     root.style.setProperty('display', 'flex', 'important');
     root.innerHTML = '<div class="g2" role="dialog" aria-modal="true" aria-label="Generate V2"></div>';
     document.body.appendChild(root);
-    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'rhythm', note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
+    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);

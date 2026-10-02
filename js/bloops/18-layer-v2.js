@@ -1587,6 +1587,15 @@
         ? Math.max(r.steps, gcells) : r.steps;
       r.pulses = clamp((r.pulses | 0) || 3, 1, r.steps);
       r.rotate = clamp((r.rotate | 0) || 0, 0, 63);
+      // ⇥ A PART-STEP SHIFT (Generate V2's Shift by a 32nd/16th): every euclid
+      // hit lands `offset` of a step later. Absent = on the steps, byte for byte.
+      if (Number.isFinite(r.offset) && r.offset > 1e-6 && r.offset < 1 - 1e-6) r.offset = Math.round(r.offset * 1e4) / 1e4; else delete r.offset;
+      // ▦ STRAIGHT: a drawn Step grid that plays exactly as written — no Rate
+      // var, Length vary or Start on it. Absent = loose, as every drawn part was.
+      if (r.straight === true && r.kind === 'drawn') { /* keep */ } else delete r.straight;
+      // ⇥ how far YOU shifted it (steps, UI bookkeeping for the readout and Reset —
+      // rotate/offset already carry the effect). Absent = not shifted.
+      if (Number.isFinite(r.shift) && Math.abs(r.shift) > 1e-6) r.shift = Math.round(r.shift * 4) / 4; else delete r.shift;
       // Absent or 0 = the pattern exactly as drawn, and no RNG draw at all.
       if (Number.isFinite(r.vary) && r.vary > 0) r.vary = clamp(r.vary, 0, 100); else delete r.vary;
       if (Number.isFinite(r.syncop) && r.syncop > 0) r.syncop = clamp(r.syncop, 0, 100); else delete r.syncop;
@@ -2920,6 +2929,7 @@
       const pat = euclidCells(r.pulses, r.steps, r.rotate);
       if (pat) {
         const st = Math.max(1, r.steps | 0);
+        const off = Number.isFinite(r.offset) ? r.offset : 0;   // ⇥ part-step shift, 0 when absent
         if (fill) {
           for (let b = 0; b < fbars - 1e-9; b++) {
             for (let i = 0; i < st; i++) {
@@ -2927,14 +2937,14 @@
               // untiled branch does — it spends a draw either way, and skipping
               // the misses would shift the stream and give a different take.
               const on = perturb(!!pat[i]);
-              const atBar = b + i / st;
+              const atBar = b + (i + off) / st;
               if (atBar >= fbars - 1e-9) break;
               if (on) out.push(atBar / fbars);
             }
           }
           return out;
         }
-        for (let i = 0; i < st; i++) if (perturb(!!pat[i])) out.push(i / st);
+        for (let i = 0; i < st; i++) if (perturb(!!pat[i])) out.push((i + off) / st);
         return out;
       }
     }
@@ -5094,8 +5104,11 @@
       // density macro on top of the layer's value — reading `L.restProb`
       // directly is why the groove panel's Density did nothing to a v2 layer.
       const rest = (typeof _ambEffRest === 'function') ? (_ambEffRest(L) | 0) : (L.restProb | 0);
-      const ghost = L.ghosts | 0, lvar = L.lenVary | 0;
-      const rateV = clamp((p.rhythm && p.rhythm.rateVar) | 0, 0, 100);
+      // ▦ STRAIGHT (a drawn Step grid set to play as written): no length scatter,
+      // no onset jitter — and no whole-pass Start shift, below
+      const straight = !!(p.rhythm && p.rhythm.kind === 'drawn' && p.rhythm.straight);
+      const ghost = L.ghosts | 0, lvar = straight ? 0 : (L.lenVary | 0);
+      const rateV = straight ? 0 : clamp((p.rhythm && p.rhythm.rateVar) | 0, 0, 100);
       // ⏱ Odds, resolved once for the loop — absent is the common case and
       // costs one property read rather than a lookup per onset.
       const tmOdds = (p.timing && p.timing.odds && typeof p.timing.odds === 'object') ? p.timing.odds : null;
@@ -5124,7 +5137,7 @@
     try {
       const sv = (typeof _ambEffStart === 'function')
         ? _ambEffStart(Number.isFinite(L.startVary) ? L.startVary : undefined, ctx.cfg) : 0;
-      if (sv > 0 && vRnd(seedBase ^ 0x5bf03635, 127) * 100 < sv) {
+      if (!(p.rhythm && p.rhythm.kind === 'drawn' && p.rhythm.straight) && sv > 0 && vRnd(seedBase ^ 0x5bf03635, 127) * 100 < sv) {
         const spanSec = cyc / Math.max(1, (p.rhythm && p.rhythm.steps) || 1);
         const slack = Math.max(0, Math.max(0.05, cyc) - Math.max(0, spanSec) - 0.02);
         if (slack > 0.02) startOff = vRnd(seedBase ^ 0x27d4eb2f, 131) * slack;

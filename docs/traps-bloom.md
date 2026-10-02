@@ -838,6 +838,10 @@
   is a COPY, not a move (⚙ Deep's Note length already does it) — "one field with two controls and two
   different gates is how the two come to disagree about whether the knob applies at all".
 
+- **`startVary` ("Start") is NOT per-hit timing** — it shifts the WHOLE pass by a random amount
+  (with probability = its value). Per-hit onset jitter is `rhythm.rateVar`; per-note length scatter
+  is `lenVary`. Generate V2 labels them Start / Timing wobble / Length wobble.
+
 - **Under `barsMode: 'fill'` (bars > 1) a euclid/pulse rule's `steps`/`n` are PER BAR** — the onset
   solver tiles one bar. `drawn` cells still span the CYCLE. Sizing a rule as `perBar × bars` made a
   3-bar Line a 24-a-bar grid and a 3-bar Arp 24 notes a bar (rollRunFn, makeArpFn, speedOf/setSpeed).

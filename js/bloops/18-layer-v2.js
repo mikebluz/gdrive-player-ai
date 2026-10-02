@@ -24424,8 +24424,13 @@
           // EVERY PART, recorded included (2026-09-21). Excluding a recorded one
           // left ⌫ Clear with no way back to the material picker, because Clear
           // is what makes a part recorded.
+          // ✦ GENERATE IS GENERATE V2 (2026-10-01, user: "replace Generate with
+          // Generate V2 (keep Generate around in the code)"). The classic panel
+          // stays — `genPanelOpen`/`V2.openGen`, and V2's More tab opens it for
+          // the rows that have no tile yet.
           if (want === 'Generate') {
             secClose(ctx.card);
+            if (typeof window._genV2Open === 'function') { try { window._genV2Open(E, ctx.L); return; } catch (e) {} }
             if (genPanelOpen(E, ctx)) return;
           }
           if (want !== (secStOf(ctx.card) || {}).grp) secOpen(ctx.card, ctx.L, want, null);
@@ -24449,7 +24454,7 @@
           // by a route the card does not offer (the rule the section hop above
           // already follows).
           const wantGen = fh.getAttribute('data-fgen') === '1';
-          if (wantGen) { try { genPanelOpen(E, ctx); } catch (e) {} }
+          if (wantGen) { try { if (typeof window._genV2Open === 'function') window._genV2Open(E, ctx.L); else genPanelOpen(E, ctx); } catch (e) {} }
           // MARK WHAT YOU CAME FOR. Landing on the right tab still leaves you
           // scanning it — a tab can hold ten rows — so the row flashes.
           setTimeout(() => {
@@ -26795,9 +26800,6 @@
                 }, 0) },
               // ✦ GENERATE V2 (beta) — the redesigned sheet, beside the classic one
               // (js/bloops/18-generate-v2.js); edits this layer live, ✕ restores it.
-              { label: '\u2726 Generate V2 (beta)', fn: () => setTimeout(() => {
-                  try { if (typeof window._genV2Open === 'function') window._genV2Open(E, ctx.L); } catch (e) {}
-                }, 0) },
               { label: '\u270e Rename\u2026', fn: () => setTimeout(() => {
                   // NON-BLOCKING (window.uiPrompt): the native prompt froze the
                   // main thread and the phone's audio glitched while you typed.

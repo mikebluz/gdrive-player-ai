@@ -148,7 +148,11 @@
   }
 
   // ── the 🎲 controls (a re-roll changes them) and the tab contents ─────────
-  const S_ = (path, label, min, max, dice, unit) => ({ path, label, min, max, dice: !!dice, unit: unit || '' });
+  const S_ = (path, label, min, max, dice, unit, w) => ({ path, label, min, max, dice: !!dice, unit: unit || '', w: w || '' });
+  // a CHOICE tile: a menu shown as a tile; the popover lists the options.
+  // `opts` is [[key, label, tip?], …] (or a function of the layer); keys are
+  // strings, `num` stores them as numbers, '' clears the field.
+  const C_ = (path, label, opts, w, x) => Object.assign({ path, label, choice: true, opts, w: w || '' }, x || {});
   // ── THE DIALS (2026-10-01, user: "these seemingly endless lists of sliders are
   // totally unwieldy and inscrutable"): each control is a TILE with a small gauge;
   // a tap opens one large dial with what it does and what each end means. A
@@ -162,10 +166,10 @@
   const lenShapeOn = (L) => !!((L.part || {}).shape && L.part.shape.lenShape);
   const only = (ok, why) => (L) => (ok(L) ? null : why);
   const META = {
-    'part.rhythm.figSync': { what: 'How often a hit that falls on a beat is pushed off it, onto the off-beat.', lo: 'every hit where the figure puts it', hi: 'pushed off the beat whenever it can be', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
-    'part.rhythm.figGrp': { what: 'Moves the hits from evenly spaced toward clusters: this is where 3 + 3 + 2 and every gallop come from.', lo: 'evenly spaced', hi: 'tightly clustered', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
-    'part.rhythm.figVar': { what: 'How much the later bars differ from the first. Bar 1 always plays the figure as named.', lo: 'every bar the same', hi: 'every bar different', gate: only((L) => rk(L) === 'fig', 'figures only'), long: 'Only shapes a figure rhythm.' },
-    'part.rhythm.syncop': { what: 'Weights the off-beat steps, so a chance rhythm lands off the beat more often.', lo: 'every step equally likely', hi: 'strongly favours the off-beats', gate: only((L) => rk(L) === 'chance', 'chance rhythm only'), long: 'Only affects a chance rhythm.' },
+    'part.rhythm.figSync': { what: 'How often a hit that falls on a beat is pushed off it, onto the off-beat.', lo: 'every hit where the figure puts it', hi: 'pushed off the beat whenever it can be' },
+    'part.rhythm.figGrp': { what: 'Moves the hits from evenly spaced toward clusters: this is where 3 + 3 + 2 and every gallop come from.', lo: 'evenly spaced', hi: 'tightly clustered' },
+    'part.rhythm.figVar': { what: 'How much the later bars differ from the first. Bar 1 always plays the figure as named.', lo: 'every bar the same', hi: 'every bar different' },
+    'part.rhythm.syncop': { what: 'Weights the off-beat steps, so a chance rhythm lands off the beat more often.', lo: 'every step equally likely', hi: 'strongly favours the off-beats' },
     restProb: { what: 'Drops some hits on each pass, so the line breathes.', lo: 'every hit plays', hi: 'every hit dropped' },
     ghosts: { what: 'Adds quiet extra hits between the notes, like a drummer’s ghost notes.', lo: 'no extra hits', hi: 'extra quiet hits wherever they fit' },
     'part.rhythm.rateVar': { what: 'Each hit lands a little early or late, differently on every pass.', lo: 'every hit on its step', hi: 'hits drift up to 40% of the gap', gate: only((L) => !straightOn(L), 'off: Straight'), long: 'The Step grid plays Straight, so this is switched off. Set it to Loose to use it.' },
@@ -178,17 +182,36 @@
     'part.shape.lenDepth': { def: 100, what: 'How strongly the length shape is applied. 100 is as written.', lo: 'no shape at all', hi: 'twice as exaggerated as written', gate: only(lenShapeOn, 'needs a length shape'), long: 'Pick a Length shape (the tile beside it) to use this.' },
     'part.shape.lenWeight': { def: 100, what: 'How the length shape is split between loudness and length.', lo: 'shapes length only', hi: 'all of it goes into loudness', gate: only(lenShapeOn, 'needs a length shape'), long: 'Pick a Length shape (the tile beside it) to use this.' },
     'instrument.register': { def: 4, what: 'The octave the notes sit in.', lo: 'the lowest octave', hi: 'the highest octave' },
-    'part.pitch.contour': { what: 'Tilts the line downward or upward over the part.', lo: 'falls', hi: 'rises', gate: only((L) => pk(L) === 'walk' || pk(L) === 'mixed', 'wandering lines only'), long: 'Only shapes a wandering line (Movement ▸ Wander).' },
-    proximity: { what: 'How close each note stays to the one before.', lo: 'free to leap', hi: 'small steps only', gate: only((L) => pk(L) === 'walk', 'wandering lines only'), long: 'Only shapes a wandering line (Movement ▸ Wander).' },
-    'part.pitch.roam': { what: 'How often a note is built on a neighbouring chord tone instead of the one set.', lo: 'always the set tone', hi: 'often a neighbour', gate: only((L) => ['fixed', 'stack', 'chord'].indexOf(pk(L)) >= 0, 'not for this movement'), long: 'Only for Follow the chords, stacks and chords.' },
-    'part.pitch.randomness': { what: 'Breaks the order of a run so it jumps about.', lo: 'in order', hi: 'jumps about', gate: only((L) => pk(L) === 'series', 'runs only'), long: 'Only for runs (Climb, Fall, Up & down).' },
-    'part.pitch.drift': { what: 'Sends some notes up or down an octave.', lo: 'every note in its octave', hi: 'octaves drift freely', gate: only((L) => ['fixed', 'series', 'walk', 'chance'].indexOf(pk(L)) >= 0, 'not for this movement'), long: 'Not for chords or a held note.' },
-    'part.pitch.variety': { what: 'Colours the chords with extra tones.', lo: 'plain', hi: 'colourful', gate: only((L) => pk(L) === 'chord', 'chords only'), long: 'Only colours chords.' },
+    'part.pitch.contour': { what: 'Tilts the line downward or upward over the part.', lo: 'falls', hi: 'rises' },
+    proximity: { what: 'How close each note stays to the one before.', lo: 'free to leap', hi: 'small steps only' },
+    'part.pitch.roam': { what: 'How often a note is built on a neighbouring chord tone instead of the one set.', lo: 'always the set tone', hi: 'often a neighbour' },
+    'part.pitch.randomness': { what: 'Breaks the order of a run so it jumps about.', lo: 'in order', hi: 'jumps about' },
+    'part.pitch.drift': { what: 'Sends some notes up or down an octave.', lo: 'every note in its octave', hi: 'octaves drift freely' },
+    'part.pitch.variety': { what: 'Colours the chords with extra tones.', lo: 'plain', hi: 'colourful' },
     'breath.amount': { what: 'How much of the time the layer holds back and rests: whole stretches, not single hits.', lo: 'never rests', hi: 'rests most of the time' },
     'flourish.amount': { what: 'How much of the time the rate suddenly jumps: a quick run or doubled notes.', lo: 'never', hi: 'most of the time' },
     'flourish.wild': { def: 50, what: 'How far a flourish jumps.', lo: 'doubles the rate', hi: 'long fast runs', gate: (L) => ((+getPath(L, 'flourish.amount') || 0) > 0 ? null : 'needs Flourish'), long: 'Turn Flourish up first.' },
     'chg.ev': { what: 'How many passes play before the rules decide again.', lo: 'never: this take plays on', hi: 'a new take every 64 passes' },
-    'part.rhythm.vary': { what: 'Drops or adds hits off the pattern, differently on each pass.', lo: 'the pattern exactly', hi: 'hits dropped and added freely', gate: only((L) => rk(L) === 'euclid' || rk(L) === 'drawn', 'not for this rhythm'), long: 'Only for a style’s take or a Step grid.' },
+    'part.rhythm.vary': { what: 'Drops or adds hits off the pattern, differently on each pass.', lo: 'the pattern exactly', hi: 'hits dropped and added freely' },
+    'part.rhythm.chance': { def: 50, what: 'How often each step sounds.', lo: 'never', hi: 'every step' },
+    'part.rhythm.voices': { def: 1, what: 'Interlocking rows of the same rhythm, each on its own note.', lo: 'one row', hi: 'eight rows' },
+    'part.shape.lenTurn': { what: 'Starts the length shape later in the bar, by this many hits.', lo: 'from the first hit', hi: '15 hits later', gate: only(lenShapeOn, 'needs a length shape'), long: 'Pick a Length shape to use this.' },
+    'part.rhythm.beat.vary': { what: 'How much the drum pattern re-decides on each take.', lo: 'the same bar every time', hi: 'a new bar every take' },
+    pitchVary: { what: 'Each drum hit wanders up or down in pitch, by up to this many semitones.', lo: 'in tune', hi: '±12 semitones' },
+    'part.pitch.voices': { def: 3, what: 'How many notes sound together.', lo: 'one note', hi: 'nine notes' },
+    'part.pitch.inv': { what: 'Turns the chord over: which of its tones is at the bottom. 0 is root position.', lo: 'turned down', hi: 'turned up' },
+    'part.pitch.spread': { what: 'Spreads the chord’s notes across up to this many octaves either way.', lo: 'close together', hi: '±3 octaves' },
+    'part.pitch.voiceCap': { what: 'The most notes a chord may use. 0 means no limit.', lo: 'no limit', hi: 'twelve notes' },
+    'part.pitch.subdiv': { def: 1, what: 'Plays each chord as this many hits.', lo: 'once', hi: '16 hits' },
+    'part.pitch.phraseLen': { def: 4, what: 'How many chords make one phrase.', lo: 'one chord', hi: '16 chords' },
+    'part.pitch.repeats': { def: 4, what: 'How many cycles a voicing holds before a fresh one.', lo: 'a new voicing every cycle', hi: '16 cycles' },
+    'part.pitch.mix': { def: 50, what: 'The balance between chords and single notes.', lo: 'all single notes', hi: 'all chords' },
+    'part.pitch.lines': { def: 1, what: 'How many melodies play at once.', lo: 'one line', hi: 'six lines' },
+    'part.pitch.stutter': { what: 'How often a note is played again straight away.', lo: 'never', hi: 'very often' },
+    'part.pitch.span': { def: 5, what: 'How far the line may wander, in scale steps.', lo: 'one step', hi: '12 steps' },
+    'part.pitch.octaves': { def: 1, what: 'How many octaves a run covers.', lo: 'one octave', hi: 'four octaves' },
+    'chg.am': { def: 100, what: 'How much of the material each change touches. The rest is kept.', lo: 'nothing changes', hi: 'all of it changes', gate: (L) => (((L.chg || {}).ev | 0) > 0 ? null : 'needs Evolve'), long: 'Turn Evolve up first.' },
+    'part.transpose': { what: 'Moves every written note up or down.', lo: 'two octaves down', hi: 'two octaves up' },
     phrasing: { what: 'From even notes to shaped figures.', lo: 'even', hi: 'shaped figures' },
     twist: { what: 'From a steady flow to bursts.', lo: 'steady', hi: 'bursts' },
   };
@@ -196,26 +219,74 @@
   const defOf = (c) => (Number.isFinite(metaOf(c).def) ? metaOf(c).def : 0);
   const valOf = (L, c) => { const v = getPath(L, c.path); return Number.isFinite(+v) && v !== undefined && v !== null && v !== '' ? +v : defOf(c); };
 
+  const isMine = (r) => !!r && (r.kind === 'drawn' || r.kind === 'fig');
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  let G = null;   // { E, id, snap, hist, styleOpen, bar, tab, note }
+  const RHYTHM_K = [['pulse', 'Pulse', 'Evenly spaced hits.'], ['euclid', 'Euclid', 'Hits spread as evenly as possible over a step count.'], ['fig', 'Figure', 'A named rhythm, like a gallop or a tresillo.'], ['chance', 'Chance', 'Each step sounds by chance.'], ['ground', 'Groundwork', 'Hits on every chord change.']];
+  const PITCH_K = [['chord', 'Chord', 'The harmony itself.'], ['stack', 'Stack', 'Notes stacked up from one note.'], ['fixed', 'One note', 'The same degree of each chord, every time.'], ['series', 'Series', 'Sweeps through the chord.'], ['anchor', 'Anchor', 'A pedal point that holds.'], ['walk', 'Walk', 'A line that wanders.'], ['chance', 'Chance', 'Any tone of the chord.'], ['mixed', 'Mixed', 'Chords and single notes together.'], ['confug', 'ConFugued', 'N notes at stated intervals.'], ['drawn', 'Drawn', 'A note written for each step.']];
   const TABS = [
     { id: 'rhythm', label: 'Rhythm', secs: [
-      ['Rhythm feel', [S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1),
-        S_('part.rhythm.syncop', 'Syncopate', 0, 100), S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'),
+      ['Rhythm feel', [C_('part.rhythm.kind', 'Rhythm type', RHYTHM_K, 'kind:live;voice:synth', { what: 'How the hits are placed.', get: (L) => rk(L) || '', set: (L, k) => { const r0 = L.part.rhythm || {}; if (isMine(r0) && k !== r0.kind) L.part.rhythmAlt = clone(r0); L.part.rhythm = Object.assign({}, r0, { kind: k }); }, show: (L) => (rk(L) === 'drawn' ? 'Step grid' : null) }),
+        S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1, '', 'rhythm:fig'), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1, '', 'rhythm:fig'), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1, '', 'rhythm:fig'),
+        S_('part.rhythm.chance', 'Chance', 0, 100, 0, '%', 'rhythm:chance'), S_('part.rhythm.syncop', 'Syncopate', 0, 100, 0, '', 'rhythm:chance'),
+        S_('part.rhythm.voices', 'Rows', 1, 8, 0, '', 'voice:synth;rhythm:euclid'),
+        S_('restProb', 'Rests', 0, 100, 1, '%'), S_('ghosts', 'Ghosts', 0, 100, 1, '%'),
         S_('part.rhythm.rateVar', 'Timing wobble', 0, 100, 1), S_('startVary', 'Start', 0, 100, 1)]],
-      ['Note lengths', [{ path: 'part.shape.lenShape', label: 'Length shape', choice: true }, S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length wobble', 0, 100, 1),
-        S_('part.shape.lenDepth', 'Shape depth', 0, 200, 0, '%'), S_('part.shape.lenWeight', 'Shape weight', 0, 100, 0, '%')]],
+      ['On the changes', [C_('part.rhythm.strike', 'Strike', [['', 'Once per change'], ['half', 'Every half bar'], ['bar', 'Every bar'], ['comp', 'Comp: the 1 and the & of 2']], 'rhythm:ground', { what: 'How often each chord is struck.' }),
+        C_('part.rhythm.antic', 'Arrive', [['0', 'On the change'], ['1', 'An 8th early']], 'rhythm:ground', { num: true, what: 'Each change can land an 8th before its bar line and ring through it.', get: (L) => (((L.part.rhythm || {}).antic) ? '1' : '0') })]],
+      ['Note lengths', [C_('part.shape.lenShape', 'Length shape', () => [['', 'Off', 'Note length and Length wobble decide the lengths.']].concat(Object.keys(V2.LEN_SHAPES || {}).map((k) => [k, V2.LEN_SHAPES[k].lab, V2.LEN_SHAPES[k].tip])), 'rhythm:pulse,euclid,drawn,chance', { what: 'A figure of length and accent, repeated every bar. It takes over Note length and Length wobble.' }),
+        S_('part.shape.lenRatio', 'Note length', 1, 400, 0, '%'), S_('lenVary', 'Length wobble', 0, 100, 1),
+        S_('part.shape.lenDepth', 'Shape depth', 0, 200, 0, '%', 'rhythm:pulse,euclid,drawn,chance'), S_('part.shape.lenWeight', 'Shape weight', 0, 100, 0, '%', 'rhythm:pulse,euclid,drawn,chance'),
+        S_('part.shape.lenTurn', 'Shape turn', 0, 15, 0, '', 'rhythm:pulse,euclid,drawn,chance')]],
+      ['Drums', [C_('part.rhythm.beat.per', 'Resolution', () => (V2.BEAT_PERS || [4, 8, 12, 16, 24, 32, 48, 64]).map((n) => [String(n), n + ' a bar']), 'voice:kit', { num: true, def: '16', what: 'How finely a bar is cut. The pattern scales with it, so twice the grid is twice the speed.' }),
+        S_('part.rhythm.beat.vary', 'Beat vary', 0, 100, 0, '', 'voice:kit'), S_('pitchVary', 'Pitch vary', 0, 12, 0, '', 'voice:kit')]],
     ] },
     { id: 'pitch', label: 'Pitch', secs: [
-      ['Pitch', [S_('instrument.register', 'Register', 1, 8), S_('part.pitch.contour', 'Contour', -100, 100), S_('proximity', 'Proximity', 0, 100),
-        S_('part.pitch.roam', 'Roam', 0, 100, 1), S_('part.pitch.randomness', 'Scatter', 0, 100, 1), S_('part.pitch.drift', 'Pitch vary', 0, 100, 1),
-        S_('part.pitch.variety', 'Variety', 0, 100, 1)]],
+      ['Pitch', [C_('part.pitch.kind', 'Pitch type', PITCH_K, 'kind:live;voice:synth', { what: 'How each hit’s note is chosen. Movement above sets the common ones.', show: (L) => (pk(L) === 'grid' ? 'Piano grid' : null) }),
+        S_('instrument.register', 'Register', 1, 8, 0, '', 'voice:synth'), S_('part.pitch.contour', 'Contour', -100, 100, 0, '', 'voice:synth;pitch:walk,mixed'), S_('proximity', 'Proximity', 0, 100, 0, '', 'voice:synth;pitch:walk'),
+        S_('part.pitch.roam', 'Roam', 0, 100, 1, '', 'voice:synth;pitch:fixed,stack,chord'), S_('part.pitch.randomness', 'Scatter', 0, 100, 1, '', 'voice:synth;pitch:series'),
+        S_('part.pitch.drift', 'Pitch vary', 0, 100, 1, '', 'voice:synth;pitch:fixed,series,walk,chance')]],
+      ['Chords', [S_('part.pitch.voices', 'Notes at once', 1, 9, 0, '', 'voice:synth;pitch:chord,stack,mixed'), S_('part.pitch.inv', 'Inversion', -12, 12, 0, '', 'voice:synth;pitch:chord,stack'),
+        S_('part.pitch.spread', 'Spread', 0, 3, 0, '', 'voice:synth;pitch:chord'), S_('part.pitch.variety', 'Variety', 0, 100, 1, '', 'voice:synth;pitch:chord'),
+        C_('part.pitch.chordMode', 'Voicing', [['', 'Simple', 'Stack the tones.'], ['chaos', 'Chaos'], ['chords', 'Chords'], ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'voice:synth;pitch:chord', { what: 'How the chord’s notes are arranged.' }),
+        C_('part.pitch.feel', 'Voicing feel', [['', 'In order', 'The same voicing each pass.'], ['stochastic', 'Stochastic', 'A new voicing each pass.']], 'voice:synth;pitch:chord', { what: 'Whether the voicing stays the same or changes each pass.' }),
+        S_('part.pitch.voiceCap', 'Voice cap', 0, 12, 0, '', 'voice:synth;pitch:chord'), S_('part.pitch.subdiv', 'Subdivide', 1, 16, 0, '', 'voice:synth;pitch:chord'),
+        S_('part.pitch.phraseLen', 'Phrase', 1, 16, 0, '', 'voice:synth;pitch:chord'), S_('part.pitch.repeats', 'Hold for', 1, 16, 0, '', 'voice:synth;pitch:chord'),
+        S_('part.pitch.mix', 'Chords vs notes', 0, 100, 0, '', 'voice:synth;pitch:mixed'),
+        C_('part.pitch.mixAt', 'Chords land', [['arch', 'Changes + strong beats'], ['change', 'On each change'], ['strong', 'On beats 1 and 3'], ['any', 'Anywhere', 'A coin flip.']], 'voice:synth;pitch:mixed', { def: 'arch', what: 'Where the chords fall among the single notes.' }),
+        C_('part.pitch.lineUp', 'Line sits', [['1', 'An octave above the chords'], ['0', 'In the same register']], 'voice:synth;pitch:mixed', { num: true, def: '1', what: 'Where the single-note line sits against the chords.', get: (L) => (((L.part.pitch || {}).lineUp === 0) ? '0' : '1') })]],
+      ['Line', [C_('part.pitch.home', 'Home', [['floor', 'Floor', 'Walks up from Register.'], ['center', 'Centre', 'Register is in the middle.'], ['ceiling', 'Ceiling', 'Walks down from Register.']], 'voice:synth;pitch:walk', { def: 'floor', what: 'Where the line lives relative to Register.' }),
+        C_('part.pitch.walkMode', 'Line moves', [['step', 'Steps from the last note'], ['scatter', 'Scatters in Range']], 'voice:synth;pitch:walk,mixed', { what: 'Whether each note steps from the last or lands anywhere in the range.', get: (L) => (L.part.pitch || {}).walkMode || (pk(L) === 'mixed' ? 'step' : 'scatter') }),
+        S_('part.pitch.span', 'Range', 1, 12, 0, '', 'voice:synth;pitch:walk,mixed'), S_('part.pitch.lines', 'Lines', 1, 6, 0, '', 'voice:synth;pitch:walk,chance,mixed'),
+        C_('part.pitch.motif', 'Motif', [['', 'Off'], ['bar', 'Repeat bar 1', 'A A B A.'], ['notes', 'Repeat its notes', 'A A B A.']], 'voice:synth;pitch:walk,chance,mixed', { what: 'Repeats an idea so the line has a shape you can follow.' }),
+        S_('part.pitch.stutter', 'Repeat', 0, 100, 0, '', 'voice:synth;pitch:walk,mixed'),
+        C_('part.pitch.dir', 'Direction', [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'voice:synth;pitch:series', { def: 'up', what: 'Which way a run sweeps through the chord.' }),
+        S_('part.pitch.octaves', 'Octaves', 1, 4, 0, '', 'voice:synth;pitch:series'),
+        C_('part.pitch.tones', 'Tones', [['', 'Every chord tone'], ['triad', 'Triad only']], 'voice:synth;pitch:series', { what: 'Which chord tones a run uses.' }),
+        C_('part.pitch.restart', 'On a change', [['', 'Keep going'], ['1', 'Start again']], 'voice:synth;pitch:series', { what: 'Whether a run restarts on each chord change.', get: (L) => (((L.part.pitch || {}).restart) ? '1' : ''), set: (L, k) => { L.part.pitch = Object.assign({}, L.part.pitch); if (k) L.part.pitch.restart = true; else delete L.part.pitch.restart; } })]],
     ] },
     { id: 'vary', label: 'Variation', secs: [
-      ['Space & flourishes', [S_('breath.amount', '⏸ Breath', 0, 100, 1), S_('flourish.amount', '✦ Flourish', 0, 100, 1), S_('flourish.wild', 'Flourish size', 0, 100)]],
-      ['Change over time', [S_('chg.ev', 'Evolve (passes)', 0, 64), S_('part.rhythm.vary', 'Vary', 0, 100, 1),
+      ['Space & flourishes', [S_('breath.amount', '⏸ Breath', 0, 100, 1),
+        C_('breath.len', 'Breath length', [['beat', 'A beat'], ['bar', 'A bar'], ['chg', 'A change'], ['pass', 'A whole pass']], '', { def: 'bar', what: 'How long one held-back stretch is.' }),
+        C_('breath.where', 'Breath where', [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']], '', { what: 'Where it is most likely to rest.' }),
+        S_('flourish.amount', '✦ Flourish', 0, 100, 1), S_('flourish.wild', 'Flourish size', 0, 100),
+        C_('flourish.where', 'Flourish where', [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']], '', { what: 'Where a flourish is most likely.' }),
+        C_('breath.pair', 'Pair them', [['', 'Independent'], ['fill', 'Flourish, then rest'], ['enter', 'Rest, then a flourish']], '', { what: 'A fill and the silence after it can be one gesture.' })]],
+      ['Change over time', [S_('chg.ev', 'Evolve (passes)', 0, 64), S_('chg.am', 'How much', 0, 100, 0, '%'),
+        C_('chg.clock', 'Against', [['', 'Passes of this part'], ['round', 'Rounds of the arrangement']], '', { what: 'What a pass counts. With no progression, the layer’s own cycle is the pass.' }),
+        S_('part.rhythm.vary', 'Vary', 0, 100, 1, '', 'rhythm:euclid,drawn'),
         S_('phrasing', 'Phrasing', 0, 100, 1), S_('twist', 'Twist', 0, 100, 1)]],
     ] },
-    { id: 'more', label: 'More', secs: [] },
+    { id: 'more', label: 'More', secs: [
+      ['Answer another layer', [C_('part.answer.src', 'Answer', (L) => [['', 'Off', 'Plays on its own.']].concat(((G && G.E && G.E.getCfg().layers) || []).filter((x) => x && x.id !== L.id).map((x) => [String(x.id | 0), x.name || ('Layer ' + (x.id | 0))])), '', {
+          what: 'Plays off another layer: this one is filtered against what that one plays.', get: (L) => String(((L.part.answer || {}).src | 0) || ''),
+          set: (L, k) => { if (!k) delete L.part.answer; else L.part.answer = Object.assign({ mode: 'gaps' }, L.part.answer || {}, { src: +k }); } }),
+        C_('part.answer.mode', 'Answer mode', () => Object.keys(V2.ANSWER_MODES || {}).map((k) => [k, V2.ANSWER_MODES[k]]), '', { what: 'Where this layer may sound, measured against the other one.', get: (L) => (((L.part.answer || {}).mode === 'hits') ? 'hits' : 'gaps'),
+          set: (L, k) => { if (L.part.answer) L.part.answer = Object.assign({}, L.part.answer, { mode: k }); }, gate: (L) => ((((L.part.answer || {}).src) | 0) ? null : 'needs Answer') })]],
+    ] },
   ];
+  // WRITTEN NOTES (a recorded part) get their own two
+  const WRITTEN = [['Written notes', [S_('part.transpose', 'Transpose', -24, 24)]]];
   function setPath(o, path, v) {
     const ks = path.split('.'); let a = o;
     for (let i = 0; i < ks.length - 1; i++) { if (!a[ks[i]] || typeof a[ks[i]] !== 'object') a[ks[i]] = {}; a = a[ks[i]]; }
@@ -223,7 +294,6 @@
   }
 
   // ── the sheet ──────────────────────────────────────────────────────────────
-  let G = null;   // { E, id, snap, hist, styleOpen, bar, tab, note }
   const layer = () => (G && G.E && (G.E.getCfg().layers || []).find((x) => x && x.id === G.id)) || null;
   function persist() {
     const E = G.E;
@@ -273,8 +343,6 @@
   // (a drawn or figure rhythm). One plays in `part.rhythm`; the other waits in
   // `part.rhythmAlt` (additive, absent until you switch — the engine never reads
   // it), so neither switching, a Style pick nor a bar re-roll throws one away.
-  const isMine = (r) => !!r && (r.kind === 'drawn' || r.kind === 'fig');
-  const clone = (o) => JSON.parse(JSON.stringify(o));
   // the steps the rhythm sounds over the WHOLE part, read off the notes with the
   // extras off (rests, breath, flourish, ghosts, stutter doubles) — the bare rule
   // THE THREE WOBBLES (what bends a take off its steps): Timing wobble = per-hit
@@ -513,7 +581,7 @@
     const bars = barsOf(L), nb = Math.max(1, Math.ceil(bars));
     let h = '';
     // header
-    h += '<div class="g2-head"><div style="flex-grow:1;min-width:0"><div style="font-size:20px;font-weight:700">' + (G.fresh ? 'New layer' : 'Generate') + ' <span style="font-size:12px;font-weight:700;color:#5eead4;vertical-align:middle">V2 beta</span></div>'
+    h += '<div class="g2-head"><div style="flex-grow:1;min-width:0"><div style="font-size:20px;font-weight:700">' + (G.fresh ? 'New layer' : 'Generate') + '</div>'
       + '<div class="g2-hint">for <b style="color:#ece8f8">' + esc(L.name || ('Layer ' + L.id)) + '</b></div></div>'
       + '<button type="button" class="g2-btn" data-a="cancel" aria-label="' + (G.fresh ? 'Remove this new layer and close' : 'Cancel and close') + '" style="width:44px;padding:0">✕</button></div>';
     h += '<div class="g2-body">';
@@ -630,6 +698,9 @@
         + '<button type="button" class="g2-btn" data-a="release" style="align-self:flex-start;min-height:40px">⚡ Back to the live rules</button>';
     } else if (!live) {
       h += '<div class="g2-hint">This part plays notes written by hand. Pick a style above to hand it to generated rules — ↶ Undo or ✕ brings the written notes back.</div>';
+    }
+    if (!live) {   // WRITTEN NOTES keep the two controls the classic panel gave them
+      h += tabHTML(L, { id: 'written', secs: WRITTEN }) + harmHTML(L);
     } else {
       // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
       // Movement), with the finer controls for the same topic beneath it
@@ -799,6 +870,9 @@
   function tabHTML(L, t) {
     let h = '';
     if (t.id === 'more') {
+      h += harmHTML(L);
+    }
+    if (false) {
       const hm = L.harmony || 'fixed';
       h += '<div style="display:flex;flex-direction:column;gap:8px"><span class="g2-cap">Chords moving under written notes</span><div style="display:flex;gap:6px;flex-wrap:wrap">'
         + [['fixed', 'Play as written'], ['diatonic', 'Stay in key'], ['chordlock', 'Lock to chord']].map(([k, nm]) =>
@@ -806,22 +880,60 @@
         + '<div class="g2-hint">Answer another layer, Key & notes and the full Recipe are still in the classic Generate for now.</div></div>';
       return h;
     }
-    t.secs.forEach(([nm, ctls], si) => {
-      const n = ctls.filter((c) => (c.choice ? !!getPath(L, c.path) : valOf(L, c) !== defOf(c))).length;
+    let hidden = 0;
+    t.secs.forEach(([nm, ctls0], si) => {
+      const ctls = ctls0.filter((c) => { const ok = whenOK(L, c.w); if (!ok) hidden++; return ok || G.showAll; });
+      if (!ctls.length) return;
+      const n = ctls.filter((c) => (c.choice ? false : valOf(L, c) !== defOf(c))).length;
       h += '<div class="g2-sec"><div class="g2-sechead"><span class="g2-cap">' + esc(nm) + '</span>'
         + (n ? '<span class="g2-setn">' + n + ' set</span><button type="button" class="g2-rsall" data-a="dreset" data-t="' + t.id + '" data-s="' + si + '">Reset all</button>' : '') + '</div><div class="g2-tiles">';
       ctls.forEach((c) => { h += tileHTML(L, c); });
       h += '</div></div>';
     });
+    if (hidden) h += '<button type="button" class="g2-rsall" data-a="showall" style="align-self:flex-start;margin:0">' + (G.showAll ? 'Hide the ' + hidden + ' settings that don’t apply' : 'Show all settings (' + hidden + ' more don’t apply to this layer)') + '</button>';
+    if (t.id === 'more') h += classicHTML(L);
     return h;
+  }
+  // WHAT IS STILL ONLY IN THE CLASSIC PANEL: custom rows with no tile yet. Named,
+  // and one tap away — never silently gone.
+  function classicHTML() {
+    return '<div class="g2-sec"><span class="g2-cap">Still in the classic Generate</span>'
+      + '<div class="g2-hint">Per-die controls and the dice taste, Recipe, Key & notes for a part, chance per step, ConFugued intervals, and the drum lane editor.</div>'
+      + '<button type="button" class="g2-btn" data-a="classic" style="align-self:flex-start;min-height:38px">Open the classic Generate</button></div>';
+  }
+  // DOES THIS CONTROL APPLY TO THIS LAYER — the classic panel's `data-v2when`
+  // grammar ('kind:live;voice:synth;pitch:chord,stack'), read off the layer.
+  // A miss on a STRUCTURAL key (what kind of rhythm/pitch/voice) HIDES the tile;
+  // a setting another tile can switch on DIMS it instead (META gates).
+  function whenOK(L, w) {
+    if (!w) return true;
+    const p = L.part || {}, now = {
+      kind: (p.kind === 'recorded' && p.made === 'take') ? ['live', 'recorded'] : p.kind,
+      voice: (L.instrument && L.instrument.voice) || 'synth', rhythm: rk(L) || '', pitch: pk(L) || '',
+      shape: lenShapeOn(L) ? 'on' : 'off', evo: (((L.chg || {}).ev | 0) > 0) ? 'on' : 'off',
+    };
+    return w.split(';').every((cl) => {
+      const [k, vs] = cl.split(':'); if (!(k in now)) return true;
+      const want = String(vs || '').split(','), have = now[k];
+      return Array.isArray(have) ? have.some((v) => want.indexOf(v) >= 0) : want.indexOf(have) >= 0;
+    });
+  }
+  const optsOf = (L, c) => (typeof c.opts === 'function' ? c.opts(L) : c.opts) || [];
+  const choiceGet = (L, c) => (c.get ? c.get(L) : String(getPath(L, c.path) ?? (c.def ?? '')));
+  function choiceSet(L, c, k) {
+    if (c.set) { c.set(L, k); return; }
+    const ks = c.path.split('.'), last = ks.pop();
+    let o = L; ks.forEach((x) => { o[x] = Object.assign({}, o[x] || {}); o = o[x]; });
+    if (k === '' || k === undefined) delete o[last]; else o[last] = c.num ? +k : k;
   }
   // a tile: name, a small gauge (or the chosen option), 🎲 if a re-roll changes it
   function tileHTML(L, c) {
-    const m = metaOf(c), why = m.gate ? m.gate(L) : null;
+    const m = metaOf(c), why = (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
     if (c.choice) {
-      const k = getPath(L, c.path) || '', lab = k ? ((V2.LEN_SHAPES || {})[k] || {}).lab || k : 'Off';
-      return '<button type="button" class="g2-tile' + (k ? ' set' : '') + '" data-a="dial" data-p="' + c.path + '" aria-label="' + esc(c.label + ', ' + lab) + '">'
-        + '<span class="g2-tnm">' + esc(c.label) + '</span><span class="g2-tch">' + esc(lab) + '</span></button>';
+      const k = choiceGet(L, c), o = optsOf(L, c).find((x) => x[0] === k), lab = (c.show && c.show(L)) || (o ? o[1] : (k || 'Off'));
+      const set = k !== String(c.def ?? '') && k !== '' && !(c.path === 'part.rhythm.kind' || c.path === 'part.pitch.kind');
+      return '<button type="button" class="g2-tile' + (set ? ' set' : '') + (why ? ' na' : '') + '" data-a="dial" data-p="' + c.path + '" aria-label="' + esc(c.label + ', ' + lab + (why ? ', ' + why : '')) + '">'
+        + '<span class="g2-tnm">' + esc(c.label) + '</span><span class="g2-tch">' + esc(lab) + '</span>' + (why ? '<span class="g2-ttag">' + esc(why) + '</span>' : '') + '</button>';
     }
     const v = valOf(L, c), set = v !== defOf(c);
     return '<button type="button" class="g2-tile' + (set ? ' set' : '') + (why ? ' na' : '') + '" data-a="dial" data-p="' + c.path + '" aria-label="' + esc(c.label + ', ' + v + (c.unit || '') + (why ? ', ' + why : '')) + '">'
@@ -846,7 +958,7 @@
       + (fill ? '<path d="' + fill + '" stroke="' + col + '" stroke-width="5" fill="none" stroke-linecap="round"/>' : '')
       + '<text x="26" y="31" text-anchor="middle">' + v + '</text></svg>';
   }
-  const ctlOf = (path) => { for (const t of TABS) for (const s0 of (t.secs || [])) for (const c of s0[1]) if (c.path === path) return c; return null; };
+  const ctlOf = (path) => { for (const t of TABS.concat([{ secs: WRITTEN }])) for (const s0 of (t.secs || [])) for (const c of s0[1]) if (c.path === path) return c; return null; };
   function dialSVG(c, v) {
     const cx = 105, cy = 100, r = 78, d = degAt(c, v), [kx, ky] = ptA(cx, cy, r, d);
     let ticks = '';
@@ -862,15 +974,15 @@
   // the popover: one large dial (or, for a choice, its options), what it does, both ends
   function dialPopHTML(L) {
     const c = ctlOf(G.dial); if (!c) return '';
-    const m = metaOf(c), why = m.gate ? m.gate(L) : null;
+    const m = metaOf(c), why = (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
     let h = '<div class="g2-scrim" data-a="dialx"><div class="g2-pop" role="dialog" aria-modal="true" aria-label="' + esc(c.label) + '" data-stop="1">';
     h += '<div class="g2-pophd"><b>' + esc(c.label) + '</b>' + (c.dice ? '<span class="g2-bdg d">' + DIE + 're-rolls</span>' : '') + (why ? '<span class="g2-bdg na">' + esc(why) + '</span>' : '')
       + '<button type="button" class="g2-btn" data-a="dialx" aria-label="Close" style="margin-left:auto;width:40px;min-height:40px;padding:0">✕</button></div>';
     if (c.choice) {
-      const k = getPath(L, c.path) || '', LS = V2.LEN_SHAPES || {};
-      h += '<div class="g2-hint" style="color:#ece8f8;font-size:14px">' + esc(m.what) + '</div><div class="g2-chs">'
-        + [['', 'Off']].concat(Object.keys(LS).map((x) => [x, LS[x].lab])).map(([x, nm]) => '<button type="button" class="g2-pill' + (k === x ? ' on' : '') + '" data-a="dchoose" data-k="' + x + '" aria-pressed="' + (k === x) + '">' + esc(nm) + '</button>').join('') + '</div>'
-        + (k && LS[k] ? '<div class="g2-hint">' + esc(LS[k].tip) + '</div>' : '<div class="g2-hint">Off: Note length and Length wobble decide the lengths.</div>');
+      const k = choiceGet(L, c), os = optsOf(L, c), cur = os.find((x) => x[0] === k);
+      h += '<div class="g2-hint" style="color:#ece8f8;font-size:14px">' + esc(c.what || m.what || '') + '</div><div class="g2-chs">'
+        + os.map(([x, nm]) => '<button type="button" class="g2-pill' + (k === x ? ' on' : '') + '" data-a="dchoose" data-k="' + esc(x) + '" aria-pressed="' + (k === x) + '">' + esc(nm) + '</button>').join('') + '</div>'
+        + (cur && cur[2] ? '<div class="g2-hint">' + esc(cur[2]) + '</div>' : '') + (why ? '<div class="g2-hint">' + esc(m.long || why) + '</div>' : '');
     } else {
       const v = Number.isFinite(G.dialV) ? G.dialV : valOf(L, c);
       h += '<div class="g2-dialrow"><button type="button" class="g2-pm" data-a="dstep" data-d="-1" aria-label="Less">−</button>'
@@ -890,6 +1002,12 @@
     edit((L) => { if (val === defOf(c) && getPath(L, path) === undefined) return; setPath(L, path, val); }, '');
   }
 
+  function harmHTML(L) {
+    const hm = L.harmony || 'fixed';
+    return '<div style="display:flex;flex-direction:column;gap:8px"><span class="g2-cap">Chords moving under written notes</span><div style="display:flex;gap:6px;flex-wrap:wrap">'
+      + [['fixed', 'Play as written'], ['diatonic', 'Stay in key'], ['chordlock', 'Lock to chord']].map(([k, nm]) =>
+        '<button type="button" class="g2-pill' + (hm === k ? ' on' : '') + '" data-a="harm" data-k="' + k + '">' + esc(nm) + '</button>').join('') + '</div></div>';
+  }
   // ── actions ───────────────────────────────────────────────────────────────
   function onClick(ev) {
     const b = ev.target.closest && ev.target.closest('[data-a]'); if (!b || !G) return;
@@ -967,7 +1085,11 @@
     if (a === 'dialx') { if (b.classList.contains('g2-scrim') && ev.target !== b) return; G.dial = null; G.dialV = NaN; paint(); return; }
     if (a === 'dstep') { const c = ctlOf(G.dial), L = layer(); if (c && L) commitDial(G.dial, valOf(L, c) + (+b.getAttribute('data-d')) * dialStep(c)); return; }
     if (a === 'ddef') { const c = ctlOf(G.dial); if (c) edit((L) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o) delete o[last]; }, ''); return; }
-    if (a === 'dchoose') { const k = b.getAttribute('data-k'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape); if (k) L.part.shape.lenShape = k; else delete L.part.shape.lenShape; }, ''); return; }
+    if (a === 'dchoose') { const k = b.getAttribute('data-k'), c = ctlOf(G.dial); if (c) edit((L) => choiceSet(L, c, k), ''); return; }
+    if (a === 'showall') { G.showAll = !G.showAll; paint(); return; }
+    if (a === 'classic') {   // the classic panel, for the rows that have no tile yet — this sheet keeps what you did
+      const L = layer(), E = G.E; close(false); try { if (L && V2.openGen) V2.openGen(E, L); } catch (e) {} return;
+    }
     if (a === 'dreset') {
       const t = TABS.find((x) => x.id === b.getAttribute('data-t')), sec = t && t.secs[+b.getAttribute('data-s')]; if (!sec) return;
       edit((L) => sec[1].forEach((c) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o && c.path !== 'instrument.register') delete o[last]; }), sec[0] + ' back to defaults.'); return;
@@ -1038,7 +1160,10 @@
   // finds the grid by its Bank button and puts one full-width button under it, styled
   // as the Generate button it sits beneath. Re-placed after every rebuild (observer,
   // coalesced to one pass a frame). The ⋯ menu item stays as the second way in.
+  // ✦ RETIRED (2026-10-01): the card's own Generate button opens this sheet now,
+  // so the extra door under the grid is gone; the function stays a no-op.
   function placeDoors() {
+    if (true) return;
     document.querySelectorAll('.v2-layer[data-v2id]').forEach((card) => {
       const btns = Array.from(card.querySelectorAll('button'));
       const bank = btns.find((x) => x.textContent.trim() === 'Bank');

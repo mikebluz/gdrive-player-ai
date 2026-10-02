@@ -1805,7 +1805,7 @@
       //             'change' the first onset of each change, 'arch' both
       //             (absent: a coin flip — the old default, kept for saves)
       if (t.restart) t.restart = 1; else delete t.restart;
-      if (t.tones !== 'triad') delete t.tones;
+      if (t.tones !== 'triad' && t.tones !== 'scale') delete t.tones;
       // ABSENT IS THE MUSICAL ANSWER (2026-09-17, user: "this isn't making any
       // sense at all from a user perspective"). These three shipped as
       // opt-in — so the architectural placement, the stepping line and the
@@ -3554,8 +3554,28 @@
       // picked by interval rather than position (a recoloured set is not
       // sorted as a stack); a SCALE takes its 1st, 3rd and 5th degrees. Fewer
       // than three found falls back to the whole set.
-      let ivsS = set.ivs;
-      if (t.tones === 'triad' && set.ivs.length > 3) {
+      // ♪ THE SCALE (2026-10-01, user: "it needs to play different notes within a
+      // scale, not just the same note in ascending octaves"). Over chords the set
+      // IS the chord, so a series could only sweep chord tones; `tones: 'scale'`
+      // steps through the KEY's scale instead, from the scale degree at (or just
+      // below) the sounding chord's root. Absent/other values: unchanged.
+      let ivsS = set.ivs, baseS = base;
+      if (t.tones === 'scale') {
+        let kr = 0, ksc = [0, 2, 4, 5, 7, 9, 11];
+        try { kr = ((_ambKeyRootPc(cfg) % 12) + 12) % 12; } catch (e) {}
+        try { const sc = (typeof SCALES !== 'undefined') ? SCALES[_ambKeyScaleName(cfg)] : null; if (Array.isArray(sc) && sc.length) ksc = sc.slice(); } catch (e) {}
+        // NO REAL KEY (chromatic, or nothing set): a run through all 12 notes is as
+        // useless as an octave climb — use the CHORD's own scale (minor third →
+        // natural minor, else major), rooted on the chord
+        if (ksc.length >= 12) {
+          const cr = ((set.root % 12) + 12) % 12, minor = set.ivs.indexOf(3) >= 0 && set.ivs.indexOf(4) < 0;
+          kr = cr; ksc = minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+        }
+        const rel = ((((set.root + (set.ivs[0] || 0)) - kr) % 12) + 12) % 12;
+        let d0 = 0; ksc.forEach((iv, j) => { if (iv <= rel) d0 = j; });
+        ivsS = ksc.slice(d0).map((x) => x - ksc[d0]).concat(ksc.slice(0, d0).map((x) => x + 12 - ksc[d0]));
+        baseS = 12 * (reg + 1) + ((kr + ksc[d0]) % 12);
+      } else if (t.tones === 'triad' && set.ivs.length > 3) {
         const tri = !set.pool ? set.ivs.filter((iv, j) => j % 2 === 0).slice(0, 3)
           : set.ivs.filter((iv) => iv === 0 || iv === 3 || iv === 4 || iv === 6 || iv === 7 || iv === 8);
         if (tri.length >= 3) ivsS = tri.slice(0, 3);
@@ -3599,7 +3619,7 @@
       }
       const oct = Math.floor(k / NS), i2 = ((k % NS) + NS) % NS;
       part._deg = k; part._oct = oct;
-      out.push(base + ivsS[i2] + 12 * oct);
+      out.push(baseS + ivsS[i2] + 12 * oct);
       return out;
     }
     if (t.kind === 'drawn') {
@@ -18016,7 +18036,7 @@
               gsl(L, 'proximity', 'Proximity', num(L.proximity, 0), 0, 100,
                   'how close notes stay', 'kind:live;voice:synth;pitch:mixed,chance', '-mx') +
               gsel(L, 'part.pitch.tones', 'Tones', (L.part.pitch || {}).tones || '',
-                   [['', 'Every chord tone'], ['triad', 'Triad only']], '', 'kind:live;voice:synth;pitch:series') +
+                   [['', 'Every chord tone'], ['triad', 'Triad only'], ['scale', 'The scale \u2014 a run from each chord root']], '', 'kind:live;voice:synth;pitch:series') +
               // ROAM reaches CHORDS now (2026-09-17): now and then the chord is
               // built on a neighbouring tone — the same per-take draw Fixed and
               // Stack always had.

@@ -255,7 +255,10 @@
         S_('part.rhythm.beat.vary', 'Beat vary', 0, 100, 0, '', 'voice:kit'), S_('pitchVary', 'Pitch vary', 0, 12, 0, '', 'voice:kit')]],
     ] },
     { id: 'pitch', label: 'Pitch', secs: [
-      ['Pitch', [C_('part.pitch.kind', 'Pitch type', PITCH_K, 'kind:live;voice:synth', { what: 'How each hit’s note is chosen. Movement above sets the common ones.', show: (L) => (pk(L) === 'grid' ? 'Piano grid' : null) }),
+      ['Pitch', [C_('part.pitch.kind', 'Pitch type', PITCH_K, 'kind:live;voice:synth', { what: 'How each hit’s note is chosen. Movement above sets the common ones.', show: (L) => (pk(L) === 'grid' ? 'Piano grid' : null),
+          // a SERIES with no Octaves climbs for ever (the engine keeps that for its gate):
+          // reached from here it gets a bounded range, as ⟳ Arpeggiate gives it
+          set: (L, k) => { L.part.pitch = Object.assign({}, L.part.pitch, { kind: k }); if (k === 'series' && !Number.isFinite(L.part.pitch.octaves)) L.part.pitch.octaves = 2; } }),
         S_('instrument.register', 'Register', 1, 8, 0, '', 'voice:synth'), S_('part.pitch.contour', 'Contour', -100, 100, 0, '', 'voice:synth;pitch:walk,mixed'), S_('proximity', 'Proximity', 0, 100, 0, '', 'voice:synth;pitch:walk'),
         S_('part.pitch.roam', 'Roam', 0, 100, 1, '', 'voice:synth;pitch:fixed,stack,chord'), S_('part.pitch.randomness', 'Scatter', 0, 100, 1, '', 'voice:synth;pitch:series'),
         S_('part.pitch.drift', 'Pitch vary', 0, 100, 1, '', 'voice:synth;pitch:fixed,series,walk,chance')]],
@@ -275,7 +278,7 @@
         S_('part.pitch.stutter', 'Repeat', 0, 100, 0, '', 'voice:synth;pitch:walk,mixed'),
         C_('part.pitch.dir', 'Direction', [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'voice:synth;pitch:series', { def: 'up', what: 'Which way a run sweeps through the chord.' }),
         S_('part.pitch.octaves', 'Octaves', 1, 4, 0, '', 'voice:synth;pitch:series'),
-        C_('part.pitch.tones', 'Tones', [['', 'Every chord tone'], ['triad', 'Triad only']], 'voice:synth;pitch:series', { what: 'Which chord tones a run uses.' }),
+        C_('part.pitch.tones', 'Notes from', [['', 'Chord tones', 'Sweeps the notes of each chord.'], ['triad', 'Triad only', 'Root, third and fifth of each chord.'], ['scale', 'The scale', 'A run through the key’s scale, starting from each chord’s root.']], 'voice:synth;pitch:series', { what: 'Which notes a run steps through.' }),
         C_('part.pitch.restart', 'On a change', [['', 'Keep going'], ['1', 'Start again']], 'voice:synth;pitch:series', { what: 'Whether a run restarts on each chord change.', get: (L) => (((L.part.pitch || {}).restart) ? '1' : ''), set: (L, k) => { L.part.pitch = Object.assign({}, L.part.pitch); if (k) L.part.pitch.restart = true; else delete L.part.pitch.restart; } })]],
     ] },
     { id: 'vary', label: 'Variation', secs: [

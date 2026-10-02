@@ -1000,6 +1000,7 @@
             if (stream.subStack.length === 0) {
               const myIdx = stream.idx;
               const chipAudioTime = _playBaseTime + stream.offsetSec;
+              _phAnchorPush(stream, myIdx, chipAudioTime);
               // Step's musical length in ms — drives the smooth real-time
               // scroll sweep. (240/bpm)·factor == (60/bpm)·sub·dur for any
               // step (incl. subsequences, whose factor sums their children).
@@ -1157,6 +1158,36 @@
       const lane = (typeof lanes !== 'undefined' && lanes[laneIdx]) ? lanes[laneIdx] : null;
       return lane ? _intrinsicLoopSec(lane.steps || []) : 0;
     }
+    // ── THE BAR PLAY HEAD FOLLOWS THE STEPS THAT ACTUALLY PLAY (2026-10-01,
+    // user: "the playhead is not syncing with playback anymore"). It used to be
+    // (now − start) mod loop at the CURRENT tempo, so a tempo change re-measured
+    // everything already played at the new tempo: measured, 120 → 90 BPM left
+    // it ~1/5 of a step AHEAD of every note for good. Each top-level step now
+    // drops an anchor as it is scheduled — "step i starts at audio time T, which
+    // is P seconds into the loop at the tempo it was scheduled with" — and the
+    // head runs on from the latest anchor already heard. Keyed per lane (Poly)
+    // or 'm' (one lane); reset on play.
+    const _phAnchors = {};
+    function _phAnchorPush(stream, idx, audioTime) {
+      try {
+        const key = (polyMode && stream.laneIdx != null) ? stream.laneIdx : 'm';
+        const bpm = parseInt(tempoInput.value, 10) || 120;
+        let pre = 0;
+        for (let k = 0; k < idx && k < stream.source.length; k++) pre += stepLengthFactor(stream.source[k]);
+        const list = _phAnchors[key] || (_phAnchors[key] = []);
+        list.push({ audio: audioTime, pos: pre * 240 / bpm });
+        if (list.length > 6) list.shift();
+      } catch (e) {}
+    }
+    function _phAnchorsReset() { Object.keys(_phAnchors).forEach((k) => { delete _phAnchors[k]; }); }
+    function _phPosFor(laneIdx, heardNow) {
+      const list = _phAnchors[polyMode && Number.isFinite(laneIdx) ? laneIdx : 'm'] || _phAnchors.m;
+      if (!list || !list.length) return null;
+      let a = null;
+      for (let i = list.length - 1; i >= 0; i--) { if (list[i].audio <= heardNow) { a = list[i]; break; } }
+      if (!a) return null;
+      return a.pos + (heardNow - a.audio);
+    }
     function _barPlayheadFrame() {
       if (sequenceTimer === null) { _stopBarPlayhead(); return; }
       const strips = document.querySelectorAll('.lane-chips[data-lane-idx]');
@@ -1187,7 +1218,8 @@
         }
         const bpm = parseInt(tempoInput?.value, 10) || 120;
         const barSec = (60 / bpm) * 4;
-        const posInLoop = elapsed % loopSec;         // seconds into the current loop
+        const anc = _phPosFor(Number.isFinite(laneIdx) ? laneIdx : undefined, elapsed + _playBaseTime);
+        const posInLoop = (((anc != null ? anc : elapsed) % loopSec) + loopSec) % loopSec;   // seconds into the current loop
         const barPos = posInLoop / barSec;           // fractional bar index
         const row = Math.floor(barPos);
         const frac = barPos - row;
@@ -1209,6 +1241,7 @@
       _barPlayheadRaf = requestAnimationFrame(_barPlayheadFrame);
     }
     function _startBarPlayhead() {
+      _phAnchorsReset();
       if (_barPlayheadRaf) return;
       _barPlayheadRaf = requestAnimationFrame(_barPlayheadFrame);
     }

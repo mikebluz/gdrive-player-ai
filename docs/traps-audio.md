@@ -153,3 +153,8 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
   Seed's bar play head subtracted it but `scheduleVisual` (the step flashes) and `_transportTick`
   did not, so the steps lit a ring ahead of the sound. A new visual clock: add the lag, or it leads.
 
+- **A play head must be anchored to the steps that actually play, never `(now − start) mod loop` at
+  the current tempo** — a tempo change re-measures the past at the new tempo and the head stays off
+  for good (Seed, 120 → 90 BPM: ~1/5 step ahead). Seed's bar head runs from per-step anchors pushed
+  by the scheduler (`_phAnchorPush` in 07-playback-scheduler.js).
+

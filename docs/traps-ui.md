@@ -88,6 +88,9 @@
   (`.amb-ramptgt-ov`, 10320) rather than raising every modal in the app. Same family as `#sd-overlay`
   and ✎ Written's menu, and the same diagnostic: when a press seems dead, ask whether the DOM GREW
   first — a built-but-covered panel and a handler that never ran are opposite bugs that look alike.
+  **Hit second by the bus editor (`.amb-bus-ov`, 10310) on 2026-10-02** — a probe that read the modal's
+  TEXT passed; only `elementFromPoint` on a control inside it proves the modal is on top. Any NEW door
+  placed inside a sheet: check what modal it opens.
   **A BOX ON THE BUTTON PROVES NOTHING ABOUT THE SURFACE BEHIND IT** — `probe-v2ramps` measured that
   button's rect happily for six days. Hit-test the MENU's first item, not the opener.
 
@@ -547,3 +550,14 @@
   Before shortening, list every surface that states each fact: the cut is usually deciding which ONE
   surface owns it, not compression. Read the WHOLE open view — the head, the line and the drawing have
   repeatedly said the same number three times.
+- **A chip sized by `flex-grow` (basis 0) takes its width from the DATA, not its label** — so the
+  72px "never resizes" floor on `.ambient-pov-chord` (measured for SHRINK-WRAPPED chips) does not
+  apply to ▤ Parts V2's proportional chord chips; there it made four chips fill a phone row and every
+  cadence drew even. Floor = 44px touch minimum, label wraps inside the chip.
+- **A helper deleted from a renderer can still be CALLED from a rare branch** — `_povMoveHtml` (removed
+  2026-08-23) was still called by the revisit card, so any arrangement playing a part twice threw
+  inside `_ambRenderProgOverview` and the strip went blank. After deleting a helper, grep for callers.
+- **In a height-capped flex column EVERY child shrinks** — growing the ＋ Add part list (`flex: 1`)
+  squashed the Kind switch to a 4px bar. Give the column's children `flex-shrink: 0` and let only the
+  scroller shrink (`min-height: 0` on its ancestors).
+

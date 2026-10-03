@@ -314,7 +314,7 @@
   function persist() {
     const E = G.E;
     try { E.getCfg(); } catch (e) {}
-    try { if (E._v2Phase) delete E._v2Phase['v2:' + G.id]; } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + G.id]; } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     try { V2.render(E); } catch (e) {}
   }
@@ -1221,7 +1221,7 @@
       // the card's ✕ Remove layer does (by id — the captured object may be an orphan)
       const E = G.E, id = G.id;
       try { const c2 = E.getCfg(); c2.layers = (c2.layers || []).filter((x) => !(x && x.id === id)); } catch (e) {}
-      try { if (E._v2Phase) delete E._v2Phase['v2:' + id]; } catch (e) {}
+      try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + id]; } catch (e) {}
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       try { V2.render(E); } catch (e) {}
     } else if (cancel && G.snap) { restore(G.snap); }

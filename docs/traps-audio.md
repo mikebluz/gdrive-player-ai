@@ -46,6 +46,10 @@
 - **Bus = where a layer ENTERS the master chain** (`full`/`postwarmth`/`postvinyl`/`direct`), plus its
   own FX sends into the shared returns. The chain is serial and shared, so per-effect switches are not
   physically possible. `routeBloomBus` disconnects, so it must RE-ATTACH the sends.
+  **Main (bus a) is NOT a bus node on the layer side** — its layers go to `_bloomMasterGain`; Main's
+  bus gain is spliced in AFTER it (`_ambBloomMainResplice`) only while Main has a setting. Until
+  2026-10-02 nothing spliced it, so every Main send/entry was stored and silent. B–D skip the Bloom
+  master trim and Width. Bus sends/level RAMP (`rampTo`) — a bus ramp writes them ~40×/s.
 - **FX ON THE DELAY'S REPEATS IS A LOOP INSERT, NOT A CHAIN POSITION.** `strip_dlyfx` processes the
   signal written INTO the delay line, so the dry note is untouched and every pass applies it again
   (the tail dissolves). Chain order cannot express that — a stage AFTER the delay damps every repeat

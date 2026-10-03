@@ -6095,7 +6095,7 @@
       L.part.notes = fresh.sort((a, b) => a.t - b.t);
       L.part.transpose = L.part.transpose | 0;
       try { E.getCfg(); } catch (e) {}
-      try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+      try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
       return true;
     }
     L.part.notes = fresh.sort((a, b) => a.t - b.t);
@@ -6107,7 +6107,7 @@
     stampPartKey(L, (function () { try { return E.getCfg(); } catch (e) { return null; } })());
     stampFollowsChanges(L, (function () { try { return E.getCfg(); } catch (e) { return null; } })());
     try { E.getCfg(); } catch (e) {}
-    try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}   // re-anchor cleanly
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + L.id]; } catch (e) {}   // re-anchor cleanly
     return true;
   }
 
@@ -6194,7 +6194,7 @@
     L.part.made = 'phrase';                      // a phrase you chose — never replaced silently
     L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
     try { E.getCfg(); } catch (e) {}
-    try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
     return true;
   }
 
@@ -6308,7 +6308,7 @@
     L.part.made = 'compose';                             // drawn by hand — never replaced silently
     L.part.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
     delete L.part.from;                                  // composed here, not adopted
-    try { if (ge.E && ge.E._v2Phase) delete ge.E._v2Phase['v2:' + L.id]; } catch (e) {}
+    try { if (ge.E && ge.E._v2Phase && _ambLiveApplyOK(ge.E)) delete ge.E._v2Phase['v2:' + L.id]; } catch (e) {}
     return true;
   }
 
@@ -6520,7 +6520,7 @@
     // key, then take the fresh one's.
     Object.keys(L).forEach((k) => { delete L[k]; });
     Object.assign(L, fresh);
-    try { if (E._v2Phase) delete E._v2Phase['v2:' + keep.id]; } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + keep.id]; } catch (e) {}
     try { E.getCfg(); } catch (e) {}
     return true;
   }
@@ -6667,7 +6667,7 @@
     if (!L || L.part.kind !== 'recorded') return false;
     L.part.kind = 'live';                                // the live spec was never discarded
     try { E.getCfg(); } catch (e) {}
-    try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
     return true;
   }
 
@@ -11787,7 +11787,7 @@
     // same cycle by construction.
     let playing = false, wpi = -1;   // …and WHICH PART that sounding window is
     try {
-      const stp = E.timer && E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
+      const stp = E.timer && viewSounds(E) && heardPhase(E, 'v2:' + (L.id | 0));
       // THE CYCLE BEING HEARD, not the one being scheduled — on the shell's
       // broadcast those are most of a second apart, so the roll would flip to
       // the next cycle well before you heard it. Asked of the TICK'S OWN grid
@@ -14504,7 +14504,7 @@
     // `startAt mod cycle`, an arbitrary offset: reported 2026-09-22 as "the
     // playhead starts on step 4 or so" (measured at 3.36s into a 4s cycle,
     // step 26 of 32, on a layer that had simply been alive for a while).
-    const ps = E._v2Phase && E._v2Phase['v2:' + (L.id | 0)];
+    const ps = heardPhase(E, 'v2:' + (L.id | 0));
     try { w = V2.cycleWindowAt(L, E, cfg, now, ps || null); } catch (e) {}
     const cs = w && Number.isFinite(w.cs) ? w.cs : null;
     const cyc = w && w.cyc > 0 ? w.cyc : null;
@@ -14689,14 +14689,37 @@
     if (onScreen) { g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke(); }
     return true;
   }
+  // AREAS. Layer ids are PER-AREA, so `_v2Phase['v2:<id>']` belongs to whichever area
+  // the ENGINE is on, not to the card on screen. Two answers, the same two v1's
+  // euclid grids give: (1) a card in an area that is not the one SOUNDING has no
+  // position (`_ambViewIsPlaying`) — it used to sweep on the playing area's layer
+  // of the same id; (2) between an area advance and its boundary (~0.6 s) the
+  // engine has already re-anchored on the INCOMING area, so the outgoing layers
+  // still sounding read the phase snapshot `_ambOrchAdvance` keeps — without it
+  // every v2 playhead went dark that half-second early.
+  function viewSounds(E) {
+    try { return typeof _ambViewIsPlaying !== 'function' || _ambViewIsPlaying(E); } catch (e) { return true; }
+  }
+  function heardPhase(E, key) {
+    try {
+      const p = E._orchPrevPhase;
+      if (p && p.v2Phase && typeof _ambAudibleOrch === 'function' && _ambAudibleOrch(E).pending) return p.v2Phase[key] || null;
+    } catch (e) {}
+    return (E._v2Phase && E._v2Phase[key]) || null;
+  }
+  // …and the progression clock with it (per-part layers resolve their pass from it).
   function vizFrame(E) {
     if (!E) return;
+    if (typeof _ambAsAudibleArea === 'function') return _ambAsAudibleArea(E, () => vizFrame0(E));
+    return vizFrame0(E);
+  }
+  function vizFrame0(E) {
     const host = document.getElementById('bloom-v2-layers'); if (!host) return;
     // STOPPED CLEARS. The rAF runs ONE more frame after the transport stops
     // (the frame was already requested) and then does not re-arm — so this is
     // where the sweep is wiped; without it the last frame sits there claiming
     // a note is sounding.
-    if (!E.timer) {
+    if (!E.timer || !viewSounds(E)) {
       host.querySelectorAll('.v2-vizph').forEach((ph0) => {
         if (!ph0._on || !ph0.getContext) return;
         const c0 = ph0.getContext('2d');
@@ -14737,7 +14760,7 @@
       const ph = card.querySelector('.v2-vizph');
       if (!cv || !ph || !ph.getContext) return;
       const geo = cv._plotGeo;
-      const st = E._v2Phase && E._v2Phase['v2:' + id];
+      const st = heardPhase(E, 'v2:' + id);
       const cyc = (geo && geo.cyc) || 0;
       const clear = () => {
         if (ph._on) {
@@ -19166,6 +19189,13 @@
             sl(L, 'revSend', 'Reverb', num(L.revSend, 0), 0, 100, 'send to the shared reverb') +
           sel(L, 'bus', 'Bus', L.bus || 'a',
               [['a', 'A — the main path'], ['b', 'B'], ['c', 'C'], ['d', 'D']]) +
+          // THE DOOR TO THE BUS EDITOR (2026-10-02). v1's bus row always had ✎;
+          // v2's had only the picker, so a bus's level, sends and ramps could not
+          // be reached from a v2 layer at all. Reads the layer's CURRENT bus at
+          // press time, so a just-changed picker opens the right one.
+          '<div class="ambient-ctrl"><label>Bus mix</label>' +
+            '<button type="button" class="ambient-seg v2-busedit" title="This bus’s level, its sends into the shared FX, and their ramps — every layer on the bus at once">✎ Edit bus</button>' +
+            '<span class="ambient-hint">level · sends · ramps</span></div>' +
           sl(L, 'space', 'Width', num(L.space, 0), -100, 100, 'spread, or position in Pan mode') +
           sel(L, 'panMode', 'Stereo', L.panMode || 'spread',
               [['spread', 'Spread — widen'], ['pan', 'Pan — place it']]) +
@@ -20347,11 +20377,11 @@
       return;
     }
     try {
-      if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+      if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
         cancelBloomFutureVoices(k2, Tone.now());
       }
     } catch (e) {}
-    try { if (E._v2Phase) delete E._v2Phase[k2]; } catch (e) {}   // re-anchor next tick
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase[k2]; } catch (e) {}   // re-anchor next tick
     // A RUNNING PREVIEW is the take you are listening to, so it follows the
     // press. This does not START audio (the documented rule) — it replaces
     // audio the press just superseded.
@@ -20883,7 +20913,7 @@
           if (st.notes === 'keep' && isFollow) delete L.harmony;
         }
         try { E.getCfg(); } catch (e) {}
-        try { if (E._v2Phase) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
+        try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + L.id]; } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
         close();
         try { if (onApply) onApply(); } catch (e) {}
@@ -20952,10 +20982,10 @@
       // APPLY NOW, not when the schedule runs dry — the same cancel + drop-phase
       // pair every other live edit here does.
       try {
-        if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
+        if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
           cancelBloomFutureVoices('v2:' + (L.id | 0), Tone.now());
       } catch (e) {}
-      try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+      try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
     });
     try { E.getCfg(); } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -21611,10 +21641,10 @@
         if (!made) return;
         try { E.getCfg(); } catch (e) {}
         try {
-          if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
+          if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined')
             cancelBloomFutureVoices('v2:' + (L.id | 0), Tone.now());
         } catch (e) {}
-        try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+        try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
         try { drawPartViz(card, L, E); } catch (e) {}
         try {
@@ -22895,7 +22925,7 @@
       const reanchorLive = (id) => {
         const key = 'v2:' + (id | 0);
         try {
-          if (!E.timer || typeof Tone === 'undefined' || !Tone.now) return;
+          if (!E.timer || !_ambLiveApplyOK(E) || typeof Tone === 'undefined' || !Tone.now) return;
           const at = Tone.now() + V2_EDIT_LEAD;
           // Sounding notes ring out; only the un-started future is retracted.
           if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, at);
@@ -23519,13 +23549,16 @@
         // A BUS CHANGE IS A REBUILD, not a push: the chain resolves its output
         // through `_E.busNode(L)` at BUILD time, so the layer has to be torn
         // down and rebuilt to actually move (the documented v1 rule).
-        if (path === 'bus') {
+        if (path === 'bus' && _ambLiveApplyOK(E)) {
           const k3 = 'v2:' + ctx.L.id;
           try { _ambTeardownMod(k3); } catch (e) {}
           try { _ambSyncMods(E); } catch (e) {}
         }
-        if (/^(revSend|space|panMode|cutoff|reso|wetOnly)$/.test(path) ||
-            /^(delay|dist|chorus|phaser|autopan|glitch|spat|eq)\./.test(path)) {
+        // …ONLY ON THE PLAYING AREA. Layer ids are per-area, so `v2:<id>` here can
+        // be ANOTHER area's sounding chain while you edit this one mid-play — the
+        // edit is stored and applies when this area next plays (`_ambLiveApplyOK`).
+        if ((/^(revSend|space|panMode|cutoff|reso|wetOnly)$/.test(path) ||
+            /^(delay|dist|chorus|phaser|autopan|glitch|spat|eq)\./.test(path)) && _ambLiveApplyOK(E)) {
           const k2 = 'v2:' + ctx.L.id;
           try { _ambApplyLayerFx(k2, ctx.L); } catch (e) {}
           try { _ambApplyLayerPan(k2, ctx.L); } catch (e) {}
@@ -23680,7 +23713,7 @@
         L.part.notes.push(nn);
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
         try { E2.getCfg(); } catch (e) {}              // coerce, prune, RE-SORT
-        try { if (E2._v2Phase) delete E2._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+        try { if (E2._v2Phase && _ambLiveApplyOK(E2)) delete E2._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
         let idx = nearestNote(L.part.notes, t, row);
         try {
           const cA = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
@@ -24174,7 +24207,7 @@
             mselSet(L, nx);
           }
           if (NE && NE.id === (L.id | 0)) NE.idx = nearestNote(L.part.notes, t, midi);
-          try { if (E._v2Phase) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+          try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
           rerender();
           try { drawPartViz(card, L, E); } catch (e) {}
           try { neSync(card, L, E); } catch (e) {}
@@ -24734,7 +24767,7 @@
           ft.textContent = nv ? ft.getAttribute('data-on') : ft.getAttribute('data-off');
           commit(ctx);
           // a dryKill flips the engaged set, which is a chain change
-          if (/^(delay|dist|chorus|phaser|autopan|glitch)\./.test(path)) {
+          if (/^(delay|dist|chorus|phaser|autopan|glitch)\./.test(path) && _ambLiveApplyOK(E)) {
             try { _ambApplyLayerFx('v2:' + ctx.L.id, ctx.L); } catch (e) {}
           }
           return;
@@ -24774,11 +24807,11 @@
           // APPLY NOW, not when the schedule runs dry — the same cancel +
           // drop-phase pair every other live edit here does.
           try {
-            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+            if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
               cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now());
             }
           } catch (e) {}
-          try { if (E._v2Phase) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
+          try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
           try { if (V2.isStaged(ctx.L)) stageVizDraw(ctx.card, ctx.L); else drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { if (!V2.isStaged(ctx.L) && typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
@@ -24827,11 +24860,11 @@
           } catch (e) {}
           try { applyGate(ctx.card, ctx.L); } catch (e) {}
           try {
-            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+            if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
               cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
             }
           } catch (e) {}
-          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}   // re-lights the switch via vizChrome
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
@@ -24855,11 +24888,11 @@
           // it changes what the NEXT cycles play, so the ones already scheduled
           // are superseded — the same pair every live edit on this card does
           try {
-            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+            if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
               cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
             }
           } catch (e) {}
-          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
@@ -24875,11 +24908,11 @@
           // the old answer are superseded — the same pair every other live edit
           // on this card does.
           try {
-            if (E.timer && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
+            if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function' && typeof Tone !== 'undefined') {
               cancelBloomFutureVoices('v2:' + ctx.L.id, Tone.now());
             }
           } catch (e) {}
-          try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+          try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
           try { drawPartViz(ctx.card, ctx.L, E); } catch (e) {}
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
           return;
@@ -24947,7 +24980,7 @@
               applyGate(ctx.card, ctx.L);
               // A source change is a GENERATION change: re-anchor so the next
               // cycle is built from the new source rather than a cycle later.
-              try { if (E._v2Phase) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
+              try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + ctx.L.id]; } catch (e) {}
               try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             });
           } catch (e) {}
@@ -25035,12 +25068,18 @@
           commit(ctx); h._sig = ''; V2.render(E);
           return;
         }
+        const bed = t.closest('.v2-busedit');
+        if (bed) {
+          const ctx = layerOf(bed); if (!ctx) return;
+          try { _ambBusModal(E, ctx.L.bus || 'a'); } catch (e) { console.warn('bus editor failed', e); }
+          return;
+        }
         const wt = t.closest('.v2-wettoggle');
         if (wt) {
           const ctx = layerOf(wt); if (!ctx) return;
           ctx.L.wetOnly = ctx.L.wetOnly ? 0 : 1;
           commit(ctx);
-          try { _ambApplyLayerFx('v2:' + ctx.L.id, ctx.L); } catch (e) {}
+          if (_ambLiveApplyOK(E)) { try { _ambApplyLayerFx('v2:' + ctx.L.id, ctx.L); } catch (e) {} }
           h._sig = ''; V2.render(E);
           return;
         }
@@ -25468,7 +25507,7 @@
             try { V2.clearPart(E, ctx.L); } catch (e) {}
             setMode(ctx.L, 'draw');
             // the live-edit pair: anything already scheduled is stale now
-            try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
+            try { if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             h._sig = ''; V2.render(E);
             try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
@@ -25535,8 +25574,8 @@
             if (!V2.clearPart(E, ctx.L)) return;
             setMode(ctx.L, 'draw');
             // the live-edit pair: anything already scheduled is stale now
-            try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
-            try { if (E._v2Phase) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
+            try { if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (ctx.L.id | 0), Tone.now()); } catch (e) {}
+            try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (ctx.L.id | 0)]; } catch (e) {}
             try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
             h._sig = ''; V2.render(E);
             try { if (typeof showToast === 'function') showToast('\u232b Empty \u2014 \u270e Draw is on: tap the drawing to add the first note.', { ms: 4500 }); } catch (e) {}
@@ -26885,7 +26924,7 @@
                     if (!ok) return;
                     const c2 = E.getCfg();
                     c2.layers = (c2.layers || []).filter(x => !(x && x.id === lid));
-                    try { if (E._v2Phase) delete E._v2Phase['v2:' + lid]; } catch (e) {}
+                    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + lid]; } catch (e) {}
                     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
                     h._sig = ''; V2.render(E);
                   });

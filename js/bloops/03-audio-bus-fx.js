@@ -1824,12 +1824,24 @@
       }
       try { b.gain.connect(b.tap[name]); } catch (e) {}
       if (fxSendBus[name]) { try { b.tap[name].connect(fxSendBus[name]); } catch (e) {} }
-      try { b.tap[name].gain.value = v / 100; } catch (e) {}
+      // RAMPED, never stepped: a bus ramp writes this ~40×/s, and a stepped gain
+      // zippers (UI rule 3e — gain-like changes ramp ≥10 ms).
+      try { const g = b.tap[name].gain; if (g.rampTo) g.rampTo(v / 100, 0.03); else g.value = v / 100; } catch (e) {}
+    }
+    // A bus's own LEVEL — its sum gain, 0–100 % of unity (absent = 100). Ramped for
+    // the same reason as the sends. The sends tap AFTER this gain, so turning a bus
+    // down turns its FX sends down with it, as a console's post-fader send does.
+    function setBloomBusLevel(id, level) {
+      const b = bloomBuses[String(id || 'a')];
+      if (!b || !b.gain) return;
+      const v = Math.max(0, Math.min(100, Number.isFinite(level) ? level : 100));
+      try { const g = b.gain.gain; if (g.rampTo) g.rampTo(v / 100, 0.03); else g.value = v / 100; } catch (e) {}
     }
     try {
       window.getBloomBus = getBloomBus;
       window.routeBloomBus = routeBloomBus;
       window.setBloomBusSend = setBloomBusSend;
+      window.setBloomBusLevel = setBloomBusLevel;
       window.BLOOM_BUS_ENTRIES = BLOOM_BUS_ENTRIES;
       window.bloomBuses = bloomBuses;
     } catch (e) {}

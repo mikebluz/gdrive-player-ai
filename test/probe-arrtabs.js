@@ -180,38 +180,36 @@ const ok = (name, cond, detail) => {
   ok('…so every group is spaced the same', !!lay.gaps.length &&
     lay.gaps.every((g) => Math.abs(g - lay.gaps[0]) < 3), JSON.stringify([lay.vis, lay.gaps]));
 
-  console.log('\n  ♯ Key moved, it did not die');
+  console.log('\n  ♯ Key lives in the Area block (hoisted from ⇶ Arrangement, 2026-10-02)');
   await page.evaluate(() => { const d = document.querySelector('.ambient-grp-pop .sm-apply'); if (d) d.click(); });
   await zz(600);
   const key = await page.evaluate(() => {
-    const g = document.querySelector('[id$="proggrp-keysec"]');
-    if (!g) return { err: 'the Key subsection is gone entirely' };
-    const inArr = !!g.closest('[id$="-progsec"]');
-    const h = g.querySelector('.ambient-grp-head');
-    h.scrollIntoView({ block: 'center' });
-    const r = h.getBoundingClientRect();
-    return { inArr, txt: h.textContent.trim(),
-             reach: !!(h.offsetParent && r.width > 40 && r.height > 20),
-             rect: [Math.round(r.width), Math.round(r.height)] };
-  });
-  ok('♯ Key lives inside ⇶ Arrangement now', !key.err && key.inArr === true, JSON.stringify(key));
-  ok('…and its door is reachable, measured', key.reach === true, JSON.stringify(key));
-  ok('a real touch opens it', await tap('[id$="proggrp-keysec"] .ambient-grp-head'));
-  const inner = await page.evaluate(() => {
-    const t = document.querySelector('[id$="key-toggle"]');
-    const ind = document.querySelector('[id$="cfg-keyind"]');
+    if (typeof _ambAreasExpanded !== 'undefined' && !_ambAreasExpanded) {
+      const tg = document.querySelector('.ambient-areas-toggle'); if (tg) tg.click();
+    }
+    const row = document.querySelector('.ambient-area-key');
+    if (!row) return { err: 'the area Key row is gone entirely' };
+    const t = row.querySelector('[id$="key-toggle"]');
+    if (t) t.scrollIntoView({ block: 'center' });
     const r = t ? t.getBoundingClientRect() : null;
-    return { toggle: !!t, ind: !!ind,
-             reach: !!(t && t.offsetParent && r.width > 40 && r.height > 14),
+    return { inArea: !!row.closest('.ambient-areas'),
+             leftArrangement: !document.querySelector('[id$="proggrp-keysec"]'),
+             reach: !!(t && t.offsetParent && r.width > 40 && r.height > 20),
              rect: r ? [Math.round(r.width), Math.round(r.height)] : null,
              // the ids the wiring binds to must have survived the move
-             body: !!document.querySelector('[id$="keysec-body"]'),
-             pane: !!document.querySelector('[id$="-keysec"]:not([id*="proggrp"])') };
+             ind: !!row.querySelector('[id$="cfg-keyind"]'), follow: !!row.querySelector('[id$="key-follow"]'),
+             rot: !!row.querySelector('[id$="key-moderot"]') };
   });
-  ok('…the Chromatic⟷Key toggle came with it, and is reachable',
-    inner.toggle && inner.reach === true, JSON.stringify(inner));
-  ok('…and every id its wiring binds to survived the move',
-    inner.ind && inner.body && inner.pane, JSON.stringify(inner));
+  ok('♯ Key is an Area setting now, not an Arrangement one', !key.err && key.inArea && key.leftArrangement, JSON.stringify(key));
+  ok('…its toggle is reachable, measured', key.reach === true, JSON.stringify(key));
+  ok('a real touch flips the area key', await (async () => {
+    const before = await page.evaluate(() => !!_masterEng.getCfg().keyOn);
+    if (!(await tap('.ambient-area-key [id$="key-toggle"]'))) return false;
+    const after = await page.evaluate(() => !!_masterEng.getCfg().keyOn);
+    await tap('.ambient-area-key [id$="key-toggle"]');   // put it back
+    return before !== after;
+  })());
+  ok('…and every id its wiring binds to survived the move', key.ind && key.follow && key.rot, JSON.stringify(key));
 
   ok('no page errors', errs.length === 0, errs.slice(0, 4).join(' | '));
   console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

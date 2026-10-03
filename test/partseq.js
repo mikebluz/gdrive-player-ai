@@ -104,9 +104,9 @@ const CHROME = process.env.CHROME_PATH
       // part", on every pass — which is the PART DEFAULT, not N identical cells.
       eq('migrate/bare string becomes the part default',
         c2.motif.partSeqs[1], { all: 'solo' });
-      // v10 (↔ Rubato leaves Salt) is the current stamp. This check pins the
-      // CONTRACT "normalize stamps the current version", not the number 9.
-      eq('migrate/stamped current', c2.schemaVersion, 10);
+      // v11 (Main bus connected) is the current stamp. This check pins the
+      // CONTRACT "normalize stamps the current version", not the number.
+      eq('migrate/stamped current', c2.schemaVersion, 11);
       // Re-normalising must be a no-op, or the migration is not idempotent.
       eq('migrate/idempotent', E.getCfg().bed.partSeqs[0],
         { '0:*': 'riffA', '1:*': 'riffB', '2:*': 'riffA', '3:*': 'riffB', '4:*': 'riffA', '5:*': 'riffB' });
@@ -840,7 +840,7 @@ const CHROME = process.env.CHROME_PATH
         // zero, not as absence — absence would inherit the area's 65.
         eq('rubato/a part zero migrates as explicit', (m.prog.parts[0] || {}).rubato, { amount: 0 });
         eq('rubato/…and still means off', _ambRubatoAt(m, 0), 0);
-        eq('rubato/stamped v10', m.schemaVersion, 10);
+        eq('rubato/stamped current (v11)', m.schemaVersion, 11);
       }
       delete cfg.prog.rubato;
       cfg.prog.parts.forEach(x => { delete x.rubato; delete x.salt; });

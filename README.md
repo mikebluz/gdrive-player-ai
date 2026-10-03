@@ -113,8 +113,12 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
      so N uncorrelated lanes sum to ≈ one lane's level            lane sums here
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
 
-   Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb)
-     ─► the layer's MIX BUS ─► bloomMasterGain (adaptive trim) ─► masterBus
+   Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb), then by bus:
+     Main (a):  ─► bloomMasterGain (adaptive trim) ─► [Width chorus] ─┬─► masterBus          (Main untouched)
+                                                                      └─► Main's bus gain ─► entry + sends
+                                                                          (spliced in only while Main has a
+                                                                           setting: `_ambBloomMainResplice`)
+     B / C / D: ─► that bus's gain ─► entry + sends   (does NOT pass bloomMasterGain or Width)
      the trim is `max(0.5, 1/√N)` over sounding Bloom layers (`_ambUpdateBloomMasterTrim`) — one layer
      runs at ×1, only 4+ reach the −6 dB floor — and evens its dense mix against lane playback
      (which gets the laneSumBus headroom trim).
@@ -136,8 +140,13 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                                                    uses, which Bloom could not
                                                    reach before buses existed.
 
+     Bus gain = the bus's LEVEL (0-100 % of unity, absent = 100); the sends tap AFTER it
+     (post-fader). Bus ramps (`bus:<id>` layerKey, in the bus editor) drive level and sends
+     on the NODES only; the editor's values are restored on stop.
      Bus 'a' with no settings is byte-identical to the old routing (golden gate
-     depends on that). Settings live in cfg.buses[id] = {name, entry, sends} (`direct` is a legacy alias for entry:'direct').
+     depends on that). Settings live in cfg.buses[id] = {name, entry, sends, level} (`direct`
+     is a legacy alias for entry:'direct'). Before v11, Main's sends/entry were stored but
+     never reached audio; the v11 migration clears them so old projects sound unchanged.
 
    MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
    masterBus (Gain 0.6) ─► [DC block / sub HPF ~28 Hz] ─► [Master Warmth stage] ─► [Vinyl: wobble → age LPF]

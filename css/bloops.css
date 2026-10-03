@@ -2621,6 +2621,10 @@
     @media (hover: hover) { .ambient-areas-toggle:hover { border-color: #9f7aea; color: #d6bcfa; } }
     .ambient-areas.collapsed .ambient-areas-toggle { transform: rotate(-90deg); }
     /* Orchestration row: Single/Sequence + Shuffle + active area's Plays × Bars. */
+    /* Area rows/controls that do not apply to this area are [hidden] (multi-area
+       only, or v1-only) — every one of them carries a display rule that beats the
+       attribute's default, so say it here. */
+    .ambient-orch[hidden], .ambient-orch > [hidden] { display: none !important; }
     .ambient-orch {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
       padding: 8px 10px; margin: 0; border: 1px solid #2d2d3f; border-radius: 8px;
@@ -2890,6 +2894,13 @@
       box-shadow: 0 0 16px rgba(246, 173, 85, 0.75);
     }
     .ambient-seed { font-family: 'Segoe UI', sans-serif; font-size: 0.75rem; color: #6b6b8a; }
+    /* The Take label is the door to the take history — tappable, with a finger-sized hit area. */
+    .ambient-seed.ambient-take-pick {
+      cursor: pointer; padding: 8px 6px; margin: -8px -6px; border-radius: 6px;
+      text-decoration: underline dotted rgba(107, 107, 138, 0.6); text-underline-offset: 3px;
+      white-space: nowrap;
+    }
+    .ambient-seed.ambient-take-pick:hover, .ambient-seed.ambient-take-pick:focus-visible { color: #a0a0c8; outline: none; background: rgba(159, 122, 234, 0.12); }
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
     /* A LONG HINT MUST NOT EAT THE SLIDER. The third column is `auto`, and
        .ambient-hint is nowrap, so a wordy hint takes whatever it needs and the
@@ -3434,6 +3445,20 @@
        that opened it and read as a dead button. Above `.sm-overlay` (10300) so a
        ⋯ actions menu cannot land under it either, below `.sd-overlay` (10400). */
     .modal-overlay.amb-ramptgt-ov { z-index: 10320; }
+    /* Bus editor — same reason: its door is v2 card ▸ Mix ▸ Space (inside the sheet).
+       Above the sheet and .sm-overlay, BELOW the ramp picker it opens (10320). */
+    .modal-overlay.amb-bus-ov { z-index: 10310; }
+    /* Bus editor body — the Salt dial grid (.ambient-salt-dials) for Level and the
+       ten sends; Name / Master FX stack full-width above it (in the old 3-column
+       ctrl row the long hint squeezed the Master FX select down to its arrow). */
+    .step-div-modal.amb-bus-modal { width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; box-sizing: border-box; }
+    .amb-bus-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 8px 0 12px; }
+    .amb-bus-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .amb-bus-field > span:first-child { font: 700 0.76rem 'Segoe UI', sans-serif; color: #cfd4ff; }
+    .amb-bus-field > input, .amb-bus-field > select { width: 100%; box-sizing: border-box; min-width: 0; }
+    .amb-bus-field > .ambient-hint { white-space: normal; overflow-wrap: anywhere; }
+    /* one cell (Level) sits centred at cell width rather than stretching the row */
+    .amb-bus-dials:has(> .amb-bus-dial:only-child) { grid-template-columns: minmax(118px, 160px); justify-content: center; }
     .amb-ramptgt-modal { min-width: min(92vw, 360px); }
     .amb-ramptgt-list { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow-y: auto; margin: 8px 0; }
     .amb-ramptgt-group {
@@ -3509,6 +3534,11 @@
       background: rgba(255,255,255,0.02); display: flex; flex-direction: column; gap: 0;
     }
     .ambient-tabsec-bar { display: flex; gap: 4px; flex-wrap: wrap; }
+    /* FOUR tabs on a phone: an even 2×2, not three in a row and Monitor stranded
+       alone full-width underneath (measured at 390px when ✦ Global FX became a tab). */
+    @media (max-width: 480px) {
+      .ambient-tabsec-bar:has(> .ambient-tabsec-tab:nth-child(4)) { display: grid; grid-template-columns: 1fr 1fr; }
+    }
     .ambient-tabsec-tab {
       flex: 1 1 auto; min-width: 0; padding: 8px 10px; text-align: center;
       border: 1px solid #2d2d3f; border-radius: 7px; background: rgba(255,255,255,0.02);
@@ -3528,6 +3558,8 @@
     .ambient-tabsec-pane.ambient-groove {
       border: 0; background: none; padding: 0; border-radius: 0;
     }
+    /* ✦ Global FX pane: its blocks stack with the same gap the mixer uses. */
+    .ambient-tabsec-pane.ambient-globalfx.active { display: flex; flex-direction: column; gap: 8px; }
     /* Key indicator sits at the top of the Key/Progression pane. */
     .ambient-progsec-topline { display: flex; align-items: center; min-height: 20px; margin-bottom: 4px; }
     .ambient-progsec-topline:empty { display: none; }
@@ -4254,9 +4286,6 @@
     .ambient-mixer-head { display: flex; align-items: center; gap: 8px; cursor: pointer; touch-action: manipulation; user-select: none; min-height: 34px; }
     /* Mixer title styled to match the Configure summary (purple, 700) + a faders glyph. */
     .ambient-mixer-title { font: 700 0.9rem 'Segoe UI', sans-serif; color: #d6bcfa; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
-    /* Global FX subsection (Warmth/Width/Dynamics/Reverb) moved below the mixer faders. */
-    .ambient-mixer-globalfx { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(159,122,234,0.22); }
-    .ambient-mixer-globalfx > .ambient-mod-sub { margin-bottom: 6px; }
     /* Collapse caret on the RIGHT, matching the layer-header collapse buttons. */
     .ambient-mixer-toggle {
       margin-left: auto; flex: 0 0 auto;
@@ -4268,7 +4297,6 @@
     .ambient-mixer.collapsed .ambient-mixer-strip { display: none; }
     /* Master Fade In/Out controls under the mixer strip; hidden when collapsed. */
     .ambient-mixer.collapsed .ambient-mixer-fades { display: none; }
-    .ambient-mixer.collapsed .ambient-mixer-globalfx { display: none; }
     .ambient-mixer-fades { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 2px; margin-top: 4px; border-top: 1px solid #20202e; }
     .ambient-mixer-fades .ambient-mod-sub { margin: 2px 0; }
     .ambient-mixer-strip {
@@ -4355,6 +4383,8 @@
     }
     .ambient-ramp-head { display: flex; align-items: center; gap: 8px; }
     .ambient-ramp-head .ambient-ramp-target { flex: 1 1 auto; min-width: 0; }
+    /* ♩ Tempo ramp: the target is fixed, so it is a label, not a picker. */
+    .ambient-ramp-head .ambient-ramp-fixed { flex: 1 1 auto; min-width: 0; color: #c4b5fd; font-size: 0.85rem; font-weight: 600; overflow-wrap: anywhere; }
     .ambient-ramp-head .ambient-seq-del { margin-left: 0; }
     .ambient-ramp-params { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
     .ambient-ramp-hold { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
@@ -14931,10 +14961,23 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
        sized cell, wrong for a sentence. Any prose using it must re-enable
        wrapping or it runs straight out of its container (this footnote measured
        723px inside a 506px box). See the text-wrapping rule in CLAUDE.md. */
-    .ambient-keysec-foot {
-      white-space: normal; overflow-wrap: anywhere; line-height: 1.5;
-      display: block; margin-top: 10px;
+    /* ◆ Area unit (top of ▤ Parts): label and its readout on one line, select below. */
+    .ambient-areaunit-row { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+    .ambient-areaunit-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .ambient-areaunit-head > .ambient-orch-lbl { flex: 0 0 auto; }
+    .ambient-areaunit-head > .ambient-hint { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .ambient-areaunit-row > select { width: 100%; box-sizing: border-box; }
+    /* ♯ AREA KEY ROW (in the Area block since 2026-10-02). The toggle is the row's
+       label — compact, not the full-width section-heading button it was in
+       Arrangement — and the row's own hint repeats the key indicator, so it hides. */
+    .ambient-area-key { align-items: center; }
+    .ambient-area-key > .amb-keytoggle {
+      flex: 0 0 auto; width: auto; margin: 0; padding: 6px 12px; min-height: 36px;
+      font-size: 0.85rem; border-radius: 18px;
     }
+    .ambient-area-key > .ambient-cfg-keyind { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .ambient-area-key .ambient-key { flex: 1 1 100%; margin: 0; }
+    .ambient-area-key .ambient-key > .ambient-hint { display: none; }
 
     /* Metascheduler: the across-iterations axis of Quick edit. Its cells carry
        no chord tint (the harmony is identical every time round), so they take a
@@ -17813,3 +17856,194 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 /* ⇅ Mix — the Mixer value says where the mix has taken a fader, marked while that
    is not the number you set (the fader itself stays where you put it) */
 .ambient-mix-val.mix-moved { color: #8fd0c8; font-style: italic; }
+
+    /* ===== ▤ PARTS V2 (2026-10-03) — one header row, plain part cards, chord chips
+       as wide as they are held, and two full doors per part: ✎ Edit changes (purple,
+       the chords) and ⧖ Cadence / ⏸ Length (teal, the timing). Mock:
+       claude.ai/artifact/Je39C3rFGATakVhdDP7Ue3. Rendered by _ambRenderProgOverview. */
+    .ambient-pov-bar.pov2-bar { flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .pov2-spacer { flex: 1 1 auto !important; min-width: 0; }
+    .pov2-break { flex: 1 1 100% !important; height: 0; }
+    .pov2-verchip { display: inline-flex; align-items: center; min-height: 36px; padding: 0 10px; border-radius: 10px;
+      color: #c4b5fd; font: 600 0.82rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation;
+      max-width: 50%; overflow-wrap: anywhere; }
+    .pov2-seg { display: inline-flex; border: 1px solid #2d2d3f; border-radius: 10px; overflow: hidden; }
+    .pov2-segbtn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 44px;
+      padding: 0 10px; color: #8d8ab0; font: 700 0.8rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation; }
+    .pov2-segbtn.on { background: #2a2350; color: #e9e3ff; }
+    .pov2-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+      border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #b8b8d0; font-size: 1.05rem;
+      cursor: pointer; touch-action: manipulation; flex: none; }
+
+    .ambient-pov-part.pv2 { padding: 10px 10px 12px; border-radius: 14px; border-color: #2d2d4a; background: #0e0e1c;
+      display: flex; flex-direction: column; gap: 10px; }
+    .ambient-pov-part.pv2.pov-part-open { border-style: dashed; }
+    .ambient-pov-part.pv2.pov-part-revisit { padding: 6px 10px; border-style: dotted; }
+    .pov2-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    /* the number badge — still the drag handle (`[data-povgrab]`) */
+    .ambient-pov-part.pv2 .ambient-pov-ord { position: static; width: 28px; height: 28px; min-width: 28px; border: 0;
+      border-radius: 14px; background: #2a2350; flex: none; }
+    .ambient-pov-part.pv2 .ambient-pov-ord > b { font-size: 0.82rem; font-weight: 800; color: #cfc7ff; }
+    .ambient-pov-part.pv2 .ambient-pov-ord.pov-ord-none { background: transparent; }
+    /* name and its readout on ONE line (wrapping only when the name is long) — the
+       stacked readout left a tall empty band over a solo part (user, 2026-10-03) */
+    .pov2-id { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 1px; }
+    .pov2-id .ambient-pov-partname { font: 700 0.95rem 'Segoe UI', sans-serif; color: #ece8f8; text-transform: none;
+      letter-spacing: 0; overflow-wrap: anywhere; cursor: pointer; white-space: normal; overflow: visible; text-overflow: clip; }
+    .pov2-meta { font-size: 0.76rem; color: #8d8ab0; overflow-wrap: anywhere; }
+    .pov2-keyarea { cursor: pointer; }
+    .pov2-meta .pov2-keyown { color: #f5c27a; font-weight: 700; cursor: pointer; }
+    .pov2-head .ambient-pov-dots { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none; }
+
+    /* chords: as wide as they are held — a FIXED 64px per bar (inline width; see the
+       per-bar rule further down — they no longer stretch to fill the row). The 72px floor
+       on .ambient-pov-chord existed because a SHRINK-WRAPPED chip resized when the
+       playhead relabelled it; here the width comes from the cadence, never the
+       label, so the floor drops to the 44px touch minimum — at 72 four chips fill a
+       phone row and every cadence drew as even (measured 2026-10-03). A long name
+       wraps inside its chip instead of resizing it. */
+    .pov2-chords { gap: 6px; flex-wrap: wrap; }
+    .pov2-chords .ambient-pov-chord { flex: 1 1 0; min-width: 44px; min-height: 44px; border-radius: 10px; padding: 2px 3px; }
+    .pov2-chords .ambient-pov-chord .ambient-pov-nm,
+    .pov2-chords .ambient-pov-chord .ambient-pov-rn { white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.1; }
+    .ambient-pov-part.pv2 .ambient-pov-ord.pov-ord-none > b { visibility: hidden; }
+
+    .pov2-acts { display: flex; gap: 8px; }
+    .pov2-act { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      min-height: 44px; padding: 0 8px; border-radius: 10px; font: 700 0.85rem 'Segoe UI', sans-serif;
+      cursor: pointer; touch-action: manipulation; text-align: center; overflow-wrap: anywhere; }
+    .pov2-act > i { font-style: normal; font-weight: 400; }
+    .pov2-edit { border: 1px solid #3b3366; background: #191632; color: #d9d2ff; }
+    .pov2-edit > i { color: #a9a3d6; }
+    .pov2-time { border: 1px solid #1f5a52; background: #0b1f1d; color: #9ff0e2; }
+    .pov2-time > i { color: #6fbfb2; }
+    .pov2-time.pov2-shaped { border-color: #2fb5a0; background: #0f3a35; color: #d5fff8; }
+    .pov2-time.pov2-shaped > i { color: #7ef0dc; font-weight: 700; }
+    .pov2-openblk { display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 10px;
+      border: 1px dashed #2d2d4a; color: #7a77a0; font-size: 0.8rem; text-align: center; padding: 0 8px; }
+    .ambient-pov-addpart.pov2-addpart { display: flex; align-items: center; justify-content: center; width: 100%;
+      min-height: 44px; margin-top: 2px; border-radius: 12px; box-sizing: border-box; }
+
+    /* ===== ＋ ADD PART V2 (2026-10-03) — one sheet that picks the progression inline
+       (search · source · length · rows with the chords in the chosen key). */
+    .sm-modal.ap2 { width: min(480px, 94vw); max-height: 92vh; display: flex; flex-direction: column; gap: 10px;
+      box-sizing: border-box; overflow: hidden; }
+    .ap2-title { display: flex; align-items: center; gap: 8px; }
+    .ap2-title .sm-title { flex: 1 1 auto; margin: 0; }
+    .ap2-x { width: 44px; height: 44px; border: 0; background: transparent; color: #a9a6c7; font-size: 1.1rem; cursor: pointer; flex: none; }
+    .ap2-seg { display: flex; gap: 0; border: 1px solid #2d2d3f; border-radius: 12px; overflow: hidden; }
+    .ap2-seg > .ambient-seg { flex: 1 1 0; min-height: 44px; border: 0; border-radius: 0; }
+    .ap2-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ap2-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .ap2-name { flex: 1 1 140px; }
+    .ap2-name > input { width: 100%; box-sizing: border-box; min-height: 40px; }
+    .ap2-key { flex: 0 1 auto; }
+    .ap2-keysel { display: flex; gap: 6px; }
+    .ap2-keysel > select { width: auto; min-height: 40px; }
+    .ap2-lbl { font: 700 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #7a77a0; }
+    .ap2-lbl > i { font-style: normal; font-weight: 400; letter-spacing: 0; text-transform: none; color: #6fbfb2; }
+    .ap2-lbl > i.ap2-mod { color: #f5c27a; }
+    .ap2-changes { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1 1 auto; }
+    .ap2-find { width: 100%; box-sizing: border-box; min-height: 40px; }
+    .ap2-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ap2-chips > .ambient-seg { min-height: 36px; border-radius: 18px; }
+    .ap2-chips > .ambient-seg > i { font-style: normal; font-weight: 400; opacity: 0.7; margin-left: 2px; }
+    .ap2-len > .ambient-seg { min-height: 32px; font-size: 0.75rem; }
+    /* the list takes ALL the sheet's free height (a fixed 38vh left ~3 rows on a phone) */
+    .ap2-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 140px; flex: 1 1 auto;
+      padding-right: 2px; -webkit-overflow-scrolling: touch; }
+    .ap2 input.ap-name, .ap2 input.ap2-find { min-height: 40px; padding: 0 10px; border: 1px solid #2d2d3f; border-radius: 10px;
+      background: #0b0b18; color: #e6e3f5; font: 600 0.9rem 'Segoe UI', sans-serif; text-align: left; box-sizing: border-box; width: 100%; }
+    .ap2 input.ap2-find { font-weight: 400; }
+    .ap2 input.ap-name::placeholder, .ap2 input.ap2-find::placeholder { color: #6b6b8a; }
+    .ap2 .ap-note:empty, .ap2 .ap-holdnote:empty { display: none; }
+    .ap2-opt { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: 12px; border: 1px solid #23233a;
+      background: #0e0e1c; color: #e6e3f5; text-align: left; cursor: pointer; flex: none; min-height: 44px; box-sizing: border-box; }
+    .ap2-opt.on { border-color: #8b6be0; background: #17132e; box-shadow: 0 0 0 1px #8b6be0 inset; }
+    .ap2-t1 { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+    .ap2-rn { font: 700 0.82rem 'Segoe UI', sans-serif; min-width: 0; overflow-wrap: anywhere; }
+    .ap2-tag { font-size: 0.74rem; color: #8d8ab0; flex: none; }
+    .ap2-cnt { margin-left: auto; font-size: 0.7rem; color: #7a77a0; flex: none; }
+    .ap2-ch { font: 600 0.76rem 'Segoe UI', sans-serif; color: #b9a9ff; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+    .ap2-empty { padding: 16px 8px; text-align: center; color: #7a77a0; font-size: 0.8rem; }
+    .ap2-tools { display: flex; gap: 8px; }
+    .ap2-tools > .ap2-tool { flex: 1 1 0; min-height: 44px; border-style: dashed; }
+    .ap2-foot { margin-top: 0; }
+    .ap2-foot .ap-next[disabled] { opacity: 0.5; cursor: default; }
+    /* ONLY THE LIST GIVES WAY. In a height-capped flex column every child shrinks by
+       default, so a growing list squashed the Kind switch to a 4px bar. */
+    .sm-modal.ap2 > *, .ap2-changes > * { flex-shrink: 0; }
+    .sm-modal.ap2 > .ap2-changes { flex-shrink: 1; min-height: 0; }
+    .ap2-changes > .ap2-list { flex-shrink: 1; }
+
+    /* ===== ✎ EDIT CHANGES V2 (2026-10-03) — rendered by _ambPeRender. Header (name ·
+       ▶ · ⋯ · ✕), the chord strip as the hero (chips as wide as they are held), one
+       panel for the selected chord, the all-chords tools, Cancel / Save. */
+    .pe2-head { display: flex; align-items: center; gap: 6px; }
+    .pe2-name { flex: 1 1 auto; min-width: 0; min-height: 44px; border: 0; background: transparent; padding: 0;
+      text-align: left; color: #ece8f8; font: 800 1.15rem 'Segoe UI', sans-serif; cursor: pointer; overflow-wrap: anywhere; }
+    .pe2-name > small { display: block; font: 600 0.7rem 'Segoe UI', sans-serif; color: #7a77a0; letter-spacing: 0.04em; }
+    .pe2-name > i { font-style: normal; font-weight: 400; font-size: 0.8rem; color: #7a77a0; }
+    .pe2-ib { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none;
+      border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #c9c4ee; font: 700 1rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .pe2-ib.pe-preview { color: #7ef0dc; border-color: #1f5a52; background: #0b1f1d; }
+    .pe2-ib.pe-preview.on { color: #ffd8a8; border-color: #8a6420; background: #2a2112; }
+    .pe2-ib.pe2-x { border: 0; background: transparent; color: #a9a6c7; }
+    .pe2-lbl { font: 700 0.7rem 'Segoe UI', sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: #7a77a0; }
+    .pe2-striphead { display: flex; align-items: center; gap: 8px; }
+    .pe2-striphead > .pe2-lbl { flex: 1 1 auto; }
+    .pe2-scaletog { min-height: 32px; padding: 0 10px; border-radius: 16px; font-size: 0.75rem; }
+    /* the strip: one row, chips as wide as they are held (inline flex-grow, basis 0) */
+    .pe-chords.pe2-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pe2-strip > .pe-chord { flex: 1 1 0; min-width: 44px; min-height: 60px; margin: 0; box-sizing: border-box; }
+    .pe2-strip > .pe-chord.pe-add, .pe2-strip > .pe-chord.pe-allchords { flex: 0 0 44px; }
+    .pe2-strip > .pe-chord.pe-allchords { flex-basis: auto; padding: 0 10px; }
+    .pe2-panel { border: 1px solid #2d2d4a; border-radius: 14px; background: #0e0e1c; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .pe2-phead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .pe2-phead > b { font-size: 1rem; color: #ece8f8; }
+    .pe2-phead > b > em { font-style: normal; color: #7ef0dc; margin-left: 4px; }
+    .pe2-phead > span { font-size: 0.8rem; color: #8d8ab0; overflow-wrap: anywhere; }
+    .pe2-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .pe2-k { width: 56px; flex: none; font: 600 0.82rem 'Segoe UI', sans-serif; color: #a9a6c7; }
+    .pe2-row > select { min-height: 44px; min-width: 0; }
+    .pe2-row > .pe-rootsel { flex: 0 0 auto; width: 84px; }
+    .pe2-row > .pe-qualsel { flex: 1 1 auto; width: auto; }
+    .pe2-step { display: flex; align-items: center; flex: 1 1 auto; border: 1px solid #1f5a52; border-radius: 10px; overflow: hidden; background: #0b1f1d; }
+    .pe2-step > button { width: 44px; height: 44px; flex: none; border: 0; background: transparent; color: #9ff0e2; font: 700 1.2rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .pe2-step > input { flex: 1 1 auto; min-width: 0; height: 44px; border: 0; background: transparent; color: #d5fff8;
+      text-align: center; font: 700 1rem 'Segoe UI', sans-serif; }
+    .pe2-step > input::placeholder { color: #6fbfb2; }
+    .pe2-nudge { display: flex; flex: 1 1 auto; border: 1px solid #2d2d3f; border-radius: 10px; overflow: hidden; }
+    .pe2-nudge > button { flex: 1 1 0; min-width: 0; min-height: 44px; border: 0; border-right: 1px solid #2d2d3f; background: transparent;
+      color: #cfc7ff; font: 600 0.8rem 'Segoe UI', sans-serif; cursor: pointer; padding: 0 2px; }
+    .pe2-nudge > button:last-child { border-right: 0; }
+    .pe2-nudge > button.pe-dt { color: #7ef0dc; }
+    .pe2-pfoot { border-top: 1px solid #22223a; padding-top: 10px; justify-content: space-between; }
+    .pe2-pfoot > .pe2-digin { flex: 1 1 auto; min-height: 40px; }
+    .pe2-pfoot > .pe2-rm { flex: 0 0 auto; min-height: 40px; padding: 0 14px; }
+    .pe2-tools { display: flex; flex-direction: column; gap: 8px; }
+    .pe2-toolrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .pe2-toolrow > .pe-partgrp { margin: 0; }
+    .pe2-tool { min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f;
+      color: #c9c4ee; font: 600 0.8rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .pe2-tool[disabled] { opacity: 0.45; cursor: default; }
+    .pe-save.pe2-footer { display: flex; gap: 8px; justify-content: stretch; }
+    .pe2-footer > .pe2-cancel { flex: 0 0 auto; min-height: 48px; padding: 0 18px; }
+    .pe2-footer > .pe2-save { flex: 1 1 auto; min-height: 48px; }
+    /* the panel's foot buttons lost their old header-scoped styles when they moved */
+    .pe2-pfoot > button { border-radius: 10px; border: 1px solid #2d2d3f; background: transparent; color: #c9c4ee;
+      font: 600 0.82rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .pe2-pfoot > .pe2-digin.on { background: #2a2350; border-color: #5b4a99; color: #e9e3ff; }
+    .pe2-pfoot > .pe2-rm { border-color: #6b2a2a; color: #ff9c9c; }
+    .pe2-pfoot > .pe2-rm[disabled] { opacity: 0.4; cursor: default; }
+    /* "Bars each" on one line inside the tools row */
+    .pe2-toolrow > .pe-partgrp { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; flex: 1 1 100%; }
+    .pe2-toolrow > .pe-partgrp > .pe-partgrp-lbl { margin: 0; white-space: nowrap; }
+    .pe2-toolrow > .pe-partgrp > .pe-partlen { width: 72px; min-height: 40px; box-sizing: border-box; }
+    /* a phone-width rule gives .pe-partgrp-lbl `min-width: 100%` (it stacks the part bar); not here */
+    .pe2-toolrow > .pe-partgrp > .pe-partgrp-lbl { min-width: 0 !important; }
+    /* CHIPS ARE A FIXED WIDTH PER BAR (64px a bar, 44px floor, the row at most) — not
+       stretched to fill the row (user, 2026-10-03: a lone chord filled the whole strip). */
+    .pe2-strip > .pe-chord:not(.pe-add):not(.pe-allchords), .pov2-chords .ambient-pov-chord { flex: 0 0 auto; }
+
+    .pe2-strip > .pe-chord.pe-allchords { justify-content: center; align-items: center; }

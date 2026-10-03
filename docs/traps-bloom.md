@@ -186,6 +186,9 @@
 - **Hand-offs switch on the HORIZON, not on `now`** — the tick schedules ~1.3 s ahead, so the Write
   engage, the area advance and a phrase swap all act a lookahead early. `now`-based engage against
   horizon-based thaw was a hole nobody scheduled.
+- **Layer ids are PER-AREA, so an engine key (`v2:1`, `bed`) can be ANOTHER area's sounding chain.**
+  Every live push from a card (cancel, phase drop, FX/level/bus) must pass `_ambLiveApplyOK(E)`, and
+  every playhead `_ambViewIsPlaying(E)`; v2 shipped with neither and edited the playing area.
 - **The tick captures `cfg` ONCE at the top; the orch advance swaps the play area mid-tick — so the
   tick must `return` after firing it**, or it re-generates the outgoing area with a stale cfg.
 - **ENGINE time vs AUDIBLE time at an area boundary:** the advance fires ~0.6 s early and flips
@@ -2384,3 +2387,9 @@ Bloom is moving toward a **composable-layers** model (a layer = Voice × Note-so
 3. **Additive-only; never repurpose a field.** Add new fields with defaults; don't change what an existing field means. An old build reading a new project must degrade safely (unknown fields normalized away).
 4. **Backwards compatibility is an invariant, not a migration project.** A legacy layer with only `type` must keep producing byte-identical output. When Phase 2 adds `generator`/`voice`, they are *derived* from `type` on load and dispatch falls back to `type` — same core, same params.
 5. **The invariant harness (`23-bloom-harness.js`) is the gate.** It hashes `[at,freq,durMs,voice,pan,level]` per note over seeded RNG/fixed ticks. Any schema change must keep it green; an intentional output change is a deliberate, reviewed baseline bump — never silent drift. Adding/removing an `_ambRand()` call on a covered path shifts every downstream draw, so keep RNG draws identical on default paths.
+- **A progression appended IN ANOTHER KEY is only TRANSPOSED by `_ambProgAppendPart`** — first chord moved
+  onto the part's root, qualities kept from the AREA key — so a minor part got major chords and a
+  progression not starting on its tonic was re-rooted. The catalog resolves degrees against
+  `_ambKeyCfg()`, so the ＋ Add part sheet builds it for the CHOSEN key (stand-in cfg swapped onto
+  `E._cfg` for the sync call) and appends with `noShift`. The ⋯/menu path still transposes.
+

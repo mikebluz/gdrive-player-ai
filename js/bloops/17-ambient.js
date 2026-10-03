@@ -274,6 +274,15 @@
     // There is now a single label — _ambAreaLabel — and this is kept only as its
     // alias, so a future caller can't reintroduce the split.
     function _ambAreaChipLabel(cfg, i) { return _ambAreaLabel(cfg, i); }
+    // Does this area still carry a LAYER MODEL v1 layer? Fresh primaries ship
+    // `present:false`; a pre-default save has `present` undefined = present.
+    // v2 lives in `cfg.layers` and is deliberately NOT counted — the rows gated on
+    // this (Bar Lock, ◈ unit, area Evolve) never act on a v2 layer.
+    function _ambAreaHasV1(cfg) {
+      if (!cfg) return false;
+      if (['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && typeof cfg[k] === 'object' && cfg[k].present !== false)) return true;
+      return [cfg.extras, cfg.seqs, cfg.samples].some(a => Array.isArray(a) && a.some(Boolean));
+    }
     // Per-area accent palette — index 0 = the original purple (Area 1), then a
     // distinct hue per additional area (cycled). Colours each area's chip and the
     // active area's layer highlights so areas read apart at a glance.
@@ -799,6 +808,13 @@
     // generative layer draws its material from the area take, so "Pattern" there
     // would be a lie (the honest lever is the area-level New take).
     function _ambSibCaps(type, L) {
+      // A v2 layer (cfg.layers) has no v1 schema and keeps its voice in
+      // `L.instrument.tone`; only a PITCHED v2 voice has a tone to roll (a kit,
+      // loop or speech layer does not), and it has no euclid/register/settings rows.
+      if (type === 'v2') {
+        const vo = (L && L.instrument && L.instrument.voice) || '';
+        return { tone: !(vo === 'kit' || vo === 'loop' || vo === 'speech'), pattern: false, octave: false, settings: false, drop: true };
+      }
       const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[type] : null;
       const euclid = (type === 'bass')
         || (type === 'beat' && L && L.gen === 'euclid' && !L.euclidKit)
@@ -863,6 +879,12 @@
           if (x && (x.id | 0) === id && (x.type === type || !x.type)) arr.splice(i, 1);
         }
       };
+      // LAYER MODEL v2 lives in its own store, keyed `v2:<id>` — splicing only
+      // `extras` left the layer in place while the toast counted it dropped.
+      if (type === 'v2') {
+        if (Array.isArray(cfg.layers)) cfg.layers = cfg.layers.filter(x => !(x && (x.id | 0) === id));
+        return;
+      }
       rm(cfg.extras);                        // schema v2/C3: the single home for seq/samp too
       if (type === 'seq') rm(cfg.seqs);      // …plus the legacy lists, for older projects
       if (type === 'samp') rm(cfg.samples);
@@ -924,7 +946,9 @@
         notes.push('transposed +' + (((semis % 12) + 12) % 12) + ' semitone' + (semis === 1 ? '' : 's'));
       }
       if (A.newTake) {
+        const _seed0 = cfg.seed;
         cfg.seed = ((((cfg.seed | 0) * 1664525 + 1013904223 + Math.floor(Math.random() * 1e6)) >>> 0) || 1);
+        _ambTakeRoll(cfg, _seed0, cfg.seed);
         ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) { try { _ambApplyTakeReroll(cfg[k], cfg.seed); } catch (e) {} } });
         (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(L => { try { _ambApplyTakeReroll(L, cfg.seed); } catch (e) {} });
         notes.push('new take (' + (cfg.seed >>> 0).toString(36) + ')');
@@ -1317,10 +1341,19 @@
       el.classList.toggle('warn', !(u.clean || u.bars <= 0));
       if (el.title !== u.tip) el.title = u.tip;
     }
-    function _ambAreaStripHtml() {
+    function _ambAreaStripHtml(keyHtml) {
       const s = _masterBloomState();
       const seq = (s.orch.mode === 'sequence');
       const act = s.areas[s.activeIdx] || {};
+      // WHICH ROWS MEAN ANYTHING HERE (user, 2026-10-02). Plays / ⚄ / § only
+      // decide how long an area runs before the NEXT one, so they need a second
+      // area. 🔒 Bar Lock, the ◈ unit badge and area Evolve drive v1's capture /
+      // freeze machinery, which never touches a v2 layer — so they show only
+      // while the area still has a v1 layer. Bars serves both (play length, and
+      // Bar Lock's loop length). Hidden, not removed: the wiring stays bound.
+      const _multi = s.areas.length > 1;
+      const _v1 = _ambAreaHasV1(act);
+      const _hid = (show) => (show ? '' : ' hidden');
       // The NATURAL seamless unit (LCM of capturable layers) — shown as a readout
       // beside the Bars picker AT ALL TIMES (locked or not), so the user can set Bars
       // to it (or a multiple) BEFORE locking. When locked, the lock LOOP LENGTH is the
@@ -1330,9 +1363,6 @@
       const unitBars = _u0.bars, _clean = _u0.clean;
       const unitLabel = _u0.label, unitTip = _u0.tip;
       const _ub = Math.max(1, (act.bars | 0) || 4);
-      const _auN = Math.max(1, (act.areaUnit && act.areaUnit.num | 0) || 1);
-      const _auD = Math.max(1, (act.areaUnit && act.areaUnit.den | 0) || 1);
-      const _auVal = _auN + '/' + _auD;
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
       // AUDIBLE index, not the engine's `_playIdx` — the advance flips that ~0.6s
@@ -1388,43 +1418,39 @@
           '<button type="button" id="ambient-regen-btn" class="ambient-regen ambient-area-take" title="Roll a new TAKE of this area — same layers, tones, timing, key &amp; mix (the arrangement), but a fresh realization of the random choices (which notes get picked, where they land). Same song, different performance. The ID beside it names this take; the same ID always replays it, so a take you like is reproducible.">🎲 New take</button>' +
           '<span class="ambient-seed" id="ambient-seed-val" title="This area’s take ID — the fingerprint of its random choices. New take rolls a new one; the same ID replays the same performance.">Take —</span>' +
         '</div>' +
-        // AREA UNIT — the timing anchor the whole rig references. It lived in the
-        // ⏱ Scheduler, which put a set-once decision inside the densest, most
-        // frequently-read panel (and cost two rows there: a green readout that
-        // only repeated the select, and a permanently EMPTY strip). It is an
-        // area-level setting like Plays and Bars, so it belongs with them.
-        '<div class="ambient-orch ambient-orch-unitrow">' +
-          '<label class="ambient-orch-lbl" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">◆ Area unit</label>' +
-          '<select class="ambient-orch-areaunit" title="AREA UNIT — the timing anchor everything else follows. Each layer’s cycle inherits this (× its own ratio) unless it overrides to an absolute bar length or opts out to Free.">' +
-          [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
-            .map(o => '<option value="' + o[0] + '"' + (o[0] === _auVal ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
-          '</select>' +
-        '</div>' +
+        // ♯ AREA KEY (hoisted here from ⇶ Arrangement, 2026-10-02): it is a
+        // per-AREA setting like tempo, and every layer in the area inherits it —
+        // inside Arrangement it read as a part setting. Built by the panel (it
+        // owns `keyRowHtml`) and passed in; ids unchanged, so its wiring binds.
+        (keyHtml || '') +
+        // ◆ AREA UNIT MOVED INTO ▤ PARTS (2026-10-02): it is the unit part lengths
+        // are measured in ("2 × Area unit"), so it sits beside the parts it sizes.
+        // Same class, so `_ambWireAreaStrip` binds it there unchanged.
         // Plays × random + Bar Lock + Bars.
-        '<div class="ambient-orch">' +
-          '<label class="ambient-orch-lbl">x</label>' +
-          '<select class="ambient-orch-plays" title="How many times this area plays before advancing">' + _ambNumOpts(Math.max(1, (act.plays | 0) || 1)) + '</select>' +
+        '<div class="ambient-orch ambient-orch-playsrow"' + _hid(_multi || _v1) + '>' +
+          '<label class="ambient-orch-lbl"' + _hid(_multi) + '>x</label>' +
+          '<select class="ambient-orch-plays"' + _hid(_multi) + ' title="How many times this area plays before advancing">' + _ambNumOpts(Math.max(1, (act.plays | 0) || 1)) + '</select>' +
           // Stochastic: play a RANDOM number of times in [1, Plays] each entry.
-          '<button type="button" class="ambient-orch-rand' + (act.playsRandom ? ' on' : '') + '" title="Stochastic — play this area a random number of times (1 to Plays) on each pass">⚄</button>' +
+          '<button type="button" class="ambient-orch-rand' + (act.playsRandom ? ' on' : '') + '"' + _hid(_multi) + ' title="Stochastic — play this area a random number of times (1 to Plays) on each pass">⚄</button>' +
           // COUNT IN SECTION CYCLES — hidden until the area has sections, since
           // without them it would silently mean nothing.
-          (_ambSectionCycleBars(act) > 0
-            ? '<button type="button" class="ambient-orch-secunit' + (act.playsUnit === 'sections' ? ' on' : '') + '" title="Count plays in SECTION CYCLES — one play = one full pass through this area&#39;s sections, instead of its Bars">§</button>'
+          (_multi && _ambSectionCycleBars(act) > 0
+            ? '<button type="button" class="ambient-orch-secunit' + (act.playsUnit !== 'bars' ? ' on' : '') + '" title="Count plays in SECTION CYCLES — one play = one full pass through this area&#39;s sections, instead of its Bars">§</button>'
             : '') +
           // Bar Lock: capture the bar-rational layers over their combined loop and
           // repeat verbatim; free layers improvise live over it. When on, Bars is the
           // AUTO loop length (LCM); when off, a manual section length.
-          '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '" title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒</button>' +
+          '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '"' + _hid(_v1) + ' title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒</button>' +
           '<label class="ambient-orch-lbl">Bars</label>' +
           '<select class="ambient-orch-bars" title="Length of one play — and, when 🔒 Bar Lock is on, the loop length (a hard override of the natural unit shown beside it)">' + _ambNumOpts(Math.max(1, (act.bars | 0) || 4)) + '</select>' +
-          '<span class="ambient-orch-unit' + (_clean || unitBars <= 0 ? '' : ' warn') + '" title="' + _ambEscText(unitTip) + '">' + _ambEscText(unitLabel) + '</span>' +
+          '<span class="ambient-orch-unit' + (_clean || unitBars <= 0 ? '' : ' warn') + '"' + _hid(_v1) + ' title="' + _ambEscText(unitTip) + '">' + _ambEscText(unitLabel) + '</span>' +
           // Live bar / play counter (during playback) — schedule areas by what you see here.
 
         '</div>' +
         // --- Area-level settings (moved here when the ⚙ Configure drawer was
         // dissolved): they all cascade to / govern this area's layers. ---
         // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
-        '<div class="ambient-orch ambient-area-write">' +
+        '<div class="ambient-orch ambient-area-write"' + _hid(_v1) + '>' +
           '<span class="ambient-orch-lbl ambient-start-lbl" title="Area Evolve — every layer generates X bars, loops that exact pattern until it has played Y times, then evolves a fresh one. Cascades to all layers; a layer’s own Evolve control overrides (its Evolve wins, its Off opts out).">Evolve</span>' +
           '<span class="ambient-seg-row">' +
             '<button type="button" class="ambient-seg" id="ambient-areawrite-off" title="Continuous — every cascading layer re-rolls a fresh pattern each cycle.">Continuous</button>' +
@@ -1666,6 +1692,7 @@
           }); } catch (e) {}
         }
         try { _ambRenderScheduler(_masterEng); } catch (e) {}
+        try { _ambSyncAreaUnitRow(_masterEng); } catch (e) {}   // its readout quotes the bars
         try { persistWorkspace(); } catch (e) {}
       });
       const randB = host.querySelector('.ambient-orch-rand');
@@ -1677,8 +1704,8 @@
       });
       const secU = host.querySelector('.ambient-orch-secunit');
       if (secU) secU.addEventListener('click', () => {
-        masterAmbient.playsUnit = (masterAmbient.playsUnit === 'sections') ? 'bars' : 'sections';
-        secU.classList.toggle('on', masterAmbient.playsUnit === 'sections');
+        masterAmbient.playsUnit = (masterAmbient.playsUnit === 'bars') ? 'sections' : 'bars';
+        secU.classList.toggle('on', masterAmbient.playsUnit !== 'bars');
         if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
         try { persistWorkspace(); } catch (e) {}
       });
@@ -1723,7 +1750,10 @@
       // whose sections sum to 12 bars but whose `bars` is 8 otherwise advances
       // mid-arrangement every time. Falls back to `bars` when the area has no
       // sections, so the setting can't strand an area at a stale length.
-      const secCyc = (cfg.playsUnit === 'sections') ? _ambSectionCycleBars(cfg) : 0;
+      // DEFAULT = SECTIONS (user, 2026-10-02): an area with parts counts a play
+      // as one pass through them, so ×2 never advances mid-part; `'bars'` is the
+      // explicit opt-out the § toggle writes.
+      const secCyc = (cfg.playsUnit !== 'bars') ? _ambSectionCycleBars(cfg) : 0;
       const bars  = (secCyc > 0) ? secCyc : Math.max(1, cfg.bars | 0);
       const plays = Number.isFinite(playsOverride) ? Math.max(1, playsOverride | 0) : Math.max(1, cfg.plays | 0);
       // Bar Lock now HONORS the manual `bars` (a hard override of the natural unit),
@@ -2003,7 +2033,7 @@
         // the future, so each position is negative). See _ambUpdatePlayheads.
         E._orchPrevPhase = { clocks: E.clocks, iters: E.iters, runPhase: E.runPhase,
           arpState: E.arpState, bassPhase: E.bassPhase, shapePhase: E.shapePhase,
-          seqState: E.seqState, cfg: s.areas[playIdx],
+          seqState: E.seqState, v2Phase: E._v2Phase, cfg: s.areas[playIdx],
           progAnchor: E._progAnchor, playStartAt: E._playStartAt };
         _ambResetClocks(E);
         // Anchor the incoming area's grid to the PRECISE boundary (not the late tick),
@@ -2097,6 +2127,8 @@
         entry: entry,
         direct: entry === 'direct',
         sends: (b && b.sends && typeof b.sends === 'object') ? b.sends : {},
+        // 0–100 % of unity; ABSENT = 100 (every bus before this sounded at unity)
+        level: (b && Number.isFinite(b.level)) ? Math.max(0, Math.min(100, b.level)) : 100,
       };
     }
     function _ambBusSet(cfg, id, patch) {
@@ -2113,11 +2145,25 @@
         if (typeof getBloomBus !== 'function') return;
         const c = _ambBusCfg(cfg, id);
         const has = !!(cfg && cfg.buses && cfg.buses[id]);
-        if (id === 'a' && !has) return;
+        const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
+        if (id === 'a') {
+          // MAIN IS SPLICED IN ONLY WHEN IT CARRIES A SETTING. Untouched, the Bloom
+          // master goes straight to the master bus exactly as it always has. An
+          // area switch to an area with no Main settings must UNDO a splice the
+          // previous area made, or its sends would keep feeding.
+          const live = has && (c.entry !== 'full' || c.level !== 100 || names.some(n => (c.sends[n] | 0) > 0));
+          if (!live) {
+            const b0 = (typeof bloomBuses !== 'undefined') ? bloomBuses.a : null;
+            if (b0) { Object.keys(b0.sends || {}).forEach(n => setBloomBusSend('a', n, 0)); try { setBloomBusLevel('a', 100); } catch (e) {} }
+            _ambBloomMainResplice(false);
+            return;
+          }
+        }
         getBloomBus(id);
         routeBloomBus(id, { entry: c.entry });
-        const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
         names.forEach(n => setBloomBusSend(id, n, (c.sends && c.sends[n]) | 0));
+        try { if (typeof setBloomBusLevel === 'function') setBloomBusLevel(id, c.level); } catch (e) {}
+        if (id === 'a') _ambBloomMainResplice(true);
       } catch (e) {}
     }
     function _ambBusApplyAll(cfg) { _AMB_BUS_IDS.forEach(id => _ambBusApply(cfg, id)); }
@@ -2131,10 +2177,34 @@
         return (b && b.gain) ? b.gain : _ambMasterBloomBus();
       } catch (e) { return _ambMasterBloomBus(); }
     }
+    // ── MAIN, CONNECTED (2026-10-02) ─────────────────────────────────────────
+    // Layers on Main go to the Bloom master gain (its adaptive trim and the
+    // Width chorus live there), never through `bloomBuses.a` — so everything in
+    // Main's bus editor (sends, Master FX entry) reached nothing. Main's bus
+    // gain is now spliced in AFTER the Bloom master when Main has a setting:
+    //   _bloomMasterGain → [Width chorus] → bloomBuses.a.gain → entry (+ sends)
+    // Untouched, the tail goes straight to masterBus as before.
+    let _bloomMainSpliced = false;
+    function _ambBloomMainSink() {
+      if (_bloomMainSpliced && typeof getBloomBus === 'function') {
+        try { const b = getBloomBus('a'); if (b && b.gain) return b.gain; } catch (e) {}
+      }
+      return masterBus;
+    }
+    function _ambBloomMainResplice(want) {
+      want = !!want;
+      if (want === _bloomMainSpliced) return;
+      _bloomMainSpliced = want;
+      const g = _bloomMasterGain;
+      if (!g || g === masterBus) return;   // not built yet — it connects to the sink when it is
+      const tail = _bloomMasterChorus || g;
+      try { tail.disconnect(); } catch (e) {}
+      try { tail.connect(_ambBloomMainSink()); } catch (e) { try { tail.connect(masterBus); } catch (x) {} }
+    }
     function _ambMasterBloomBus() {
       if (_bloomMasterGain) return _bloomMasterGain;
       if (typeof masterBus === 'undefined' || !masterBus || typeof Tone === 'undefined') return (typeof masterBus !== 'undefined' && masterBus) ? masterBus : Tone.getDestination();
-      try { _bloomMasterGain = new Tone.Gain(_BLOOM_MASTER_TRIM).connect(masterBus); }
+      try { _bloomMasterGain = new Tone.Gain(_BLOOM_MASTER_TRIM).connect(_ambBloomMainSink()); }
       catch (e) { return masterBus; }
       return _bloomMasterGain;
     }
@@ -2180,8 +2250,8 @@
           if (want) {
             if (!_bloomMasterChorus) { _bloomMasterChorus = new Tone.Chorus({ frequency: 1.2, delayTime: 4, depth: 0.6, feedback: 0.1, spread: 180, wet: 0 }); try { _bloomMasterChorus.start(); } catch (x) {} }
             try { _bloomMasterChorus.disconnect(); } catch (x) {}
-            _bloomMasterChorus.connect(masterBus); g.connect(_bloomMasterChorus);
-          } else { g.connect(masterBus); }
+            _bloomMasterChorus.connect(_ambBloomMainSink()); g.connect(_bloomMasterChorus);
+          } else { g.connect(_ambBloomMainSink()); }
         }
         if (_bloomMasterChorus) {
           _bloomMasterChorus.wet.value = Math.max(0, Math.min(1, (w.mix | 0) / 100));
@@ -2971,7 +3041,12 @@
     //         changes fall, vs what the chord is), and an object rather than a
     //         number so further timing variations have somewhere to live.
     //         Behaviour-preserving: the amount carries across verbatim.
-    const _AMB_SCHEMA_VERSION = 10;
+    //   v11 — MAIN BUS CONNECTED. Main's sends / Master-FX entry were stored but
+    //         never reached the audio (Main's layers bypassed its bus node), so a
+    //         saved value there was silent by construction. Main is now spliced
+    //         in, and those dead values are CLEARED once so an old project keeps
+    //         sounding exactly as it did (user, 2026-10-02). Name is kept.
+    const _AMB_SCHEMA_VERSION = 11;
     // v6 — normalize the additive PROG metadata (parts / versions / per-chord alts).
     // Every field is ABSENT on pre-v6 projects; this coerces when present and DELETES
     // empties, so a re-normalize of any current cfg leaves prog.chords byte-identical
@@ -3625,6 +3700,7 @@
       if (typeof cfg.queueMode !== 'boolean') cfg.queueMode = false;
       if (typeof cfg.tails !== 'boolean') cfg.tails = false; // Queue STOP: let reverb keep feeding past the boundary (fuller tail) vs cut the wet with the gate
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
+      _ambNormalizeTakes(cfg);   // take history — absent by default
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       if (typeof cfg.keyOn !== 'boolean') cfg.keyOn = d.keyOn;
       // Pre-keyFollow saves: an area with Key ON had a deliberately-chosen
@@ -3640,6 +3716,19 @@
       cfg.startVary = Math.max(0, Math.min(100, cfg.startVary | 0));   // area start cascade (0..100)
       if (!Number.isFinite(cfg.recQuant)) cfg.recQuant = d.recQuant;   // ●/🎤 snap grid (divisions/bar; 0 = off)
       cfg.recQuant = Math.max(0, Math.min(128, cfg.recQuant | 0));
+      if (_fromVer < 11 && cfg.buses && cfg.buses.a && typeof cfg.buses.a === 'object') {
+        delete cfg.buses.a.sends; delete cfg.buses.a.entry; delete cfg.buses.a.direct;
+        if (!Object.keys(cfg.buses.a).length) delete cfg.buses.a;
+      }
+      // bus LEVEL — additive, absent = 100 (unity); coerced when present
+      if (cfg.buses && typeof cfg.buses === 'object') {
+        Object.keys(cfg.buses).forEach(id => {
+          const b = cfg.buses[id];
+          if (b && typeof b === 'object' && 'level' in b) {
+            if (Number.isFinite(b.level)) b.level = Math.max(0, Math.min(100, Math.round(b.level))); else delete b.level;
+          }
+        });
+      }
       // AREA GROOVE (live macros): global Swing/Accent ADD to every layer's own
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
@@ -3923,7 +4012,7 @@
       // Orchestration play UNIT: 'sections' counts one play as a full section cycle.
       // Absent = bars (today's behaviour) and is DROPPED rather than stored, so the
       // default leaves no residue in the save.
-      if (cfg.playsUnit === 'sections') cfg.playsUnit = 'sections'; else if ('playsUnit' in cfg) delete cfg.playsUnit;
+      if (cfg.playsUnit !== 'sections' && cfg.playsUnit !== 'bars' && 'playsUnit' in cfg) delete cfg.playsUnit;
       // AREA Write (Configure) — phrase-cycle EVERY layer; per-layer Loop overrides.
       _ambNormalizeWriteObj(cfg, 'writeAll');
       if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;
@@ -7077,6 +7166,53 @@
     // is what lets ~10 existing readers (the lane, the cycle, _ambSectionAt) stay
     // exactly as they were, and it can never go stale because normalize runs on
     // every getCfg.
+    // ◆ WHY THE AREA UNIT MATTERS HERE — or [] when it decides nothing anyone
+    // would hear as a length. Its remaining small jobs (when a newly switched-on
+    // layer enters, the 🎤 Track join, the header pulse) are not reasons to show
+    // a control. ONE function, read by the row's visibility AND its readout.
+    function _ambAreaUnitWhy(cfg) {
+      if (!cfg) return [];
+      const out = [];
+      const fmt = (b) => (Math.round(b * 100) / 100) + ' bar' + (b === 1 ? '' : 's');
+      const ub = _ambAreaUnitBars(cfg);
+      const p = cfg.prog;
+      const hasChanges = !!(p && p.on && Array.isArray(p.chords) && p.chords.length);
+      if (!hasChanges) {
+        const units = Math.max(1, (cfg.partUnits | 0) || 1);
+        out.push('no changes, so one pass is ' + (units > 1 ? units + ' × ' : '') + 'this (' + fmt(units * ub) + ')');
+      }
+      (Array.isArray(cfg.sections) ? cfg.sections : []).forEach((sc, i) => {
+        const u = sc && sc.unit; if (!u) return;
+        const nm = (typeof sc.name === 'string' && sc.name.trim()) ? sc.name.trim() : ('Section ' + (i + 1));
+        const r = Math.max(1, u.num | 0) / Math.max(1, u.den | 0);
+        if (u.ref === 'area') out.push(nm + ' is sized ' + (r === 1 ? '' : (_ambFmtBpc ? _ambFmtBpc(r) : r) + ' × ') + 'this (' + fmt(r * ub) + ')');
+        else if (u.ref === 'changes') {
+          let cb = 0; try { cb = _ambSectionChangesBars(cfg, i); } catch (e) {}
+          if (!(cb > 0)) out.push(nm + '’s changes are gone, so it falls back to this');
+        }
+      });
+      try {
+        _ambMixerLayers(cfg).forEach(it => {
+          const L = it && it.layer;
+          if (L && L.on !== false && L.unit && L.unit.mode === 'sync' && L.unit.ref === 'area') out.push((it.name || it.key) + ' is synced to it');
+        });
+      } catch (e) {}
+      return out;
+    }
+    // Repaint the ▤ Parts row: shown only with a reason, the reason as its readout.
+    // Called from `_ambSyncFxVis` (after every arrangement re-render) and from the
+    // unit's own change handler — a readout with no second writer is frozen.
+    function _ambSyncAreaUnitRow(E) {
+      if (!E) return;
+      const row = _ambGet(E, 'ambient-areaunit-row'); if (!row) return;
+      let why = [];
+      try { why = _ambAreaUnitWhy(E.getCfg()); } catch (e) {}
+      const disp = why.length ? '' : 'none';
+      if (row.style.display !== disp) row.style.display = disp;
+      const el = _ambGet(E, 'ambient-areaunit-why');
+      const txt = why.length ? ('matters here: ' + why.join(' · ')) : '';
+      if (el && el.textContent !== txt) el.textContent = txt;
+    }
     function _ambAreaUnitBars(cfg) {
       const au = cfg && cfg.areaUnit;
       return Math.max(1, (au && au.num | 0) || 1) / Math.max(1, (au && au.den | 0) || 1);
@@ -9241,29 +9377,53 @@
     }
     // Set by the panel wiring (see ACTION REGISTRY). Null before the panel builds.
     let _ambProgActions = null;
+    // ONE WAY A PICKED PROGRESSION LANDS — shared by this menu and the ＋ Add part
+    // sheet (which picks inline since 2026-10-03), so the two cannot drift.
+    // `opts.append`: chain it on as a new PART (in `opts.partKey`) when chords exist.
+    function _ambProgApplyPick(E, name, chords, parts, opts) {
+      opts = opts || {};
+      _E = E; const c = E.getCfg(); if (!c) return;
+      if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
+      if (opts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
+        // APPEND MODE — chain this progression on as a new PART (Verse → Chorus → …).
+        _ambProgAppendPart(c.prog, name, chords, opts.partKey, !!opts.noShift);
+        c.prog.on = true;
+      } else {
+        c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
+        if (Array.isArray(parts) && parts.length) c.prog.parts = parts.map(p => ({ name: p.name, len: p.len })); else delete c.prog.parts;
+        _ambProgMarkSeed(c.prog, name);   // this IS the seed it came from
+      }
+      if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
+      try { _ambSyncControls(E); } catch (e) {}
+      try { _ambRefreshSrcChips(E); } catch (e) {}   // lock the per-layer Notes chips
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // The USER group (wrap progressions + published progs), key-filtered like the
+    // catalog — one list for this menu and the Add part sheet's "Mine".
+    function _ambUserProgs(cfg) {
+      const out = [];
+      const keyOn = !!(cfg && cfg.keyOn);
+      const wps = (typeof wrapProgs !== 'undefined' && Array.isArray(wrapProgs)) ? wrapProgs : [];
+      wps.forEach(wp => {
+        const chords = _ambWrapProgChords(wp);
+        if (!chords.length) return;
+        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+        out.push({ name: wp.name || 'Prog', chords: chords, parts: null });
+      });
+      _ambPublishedProgs().forEach(p => {
+        const chords = (p.chords || []).map(_ambCloneChord);
+        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+        out.push({ name: p.name, chords: chords, parts: p.parts || null });
+      });
+      return out;
+    }
     function _ambOpenGlobalProgMenu(E, x, y, opts) {
       if (typeof showCtxMenu !== 'function') return;
       opts = opts || {};
       _E = E;
       const cfg = E.getCfg();
       const keyOn = !!(cfg && cfg.keyOn);
-      const apply = (name, chords, parts) => {
-        _E = E; const c = E.getCfg(); if (!c) return;
-        if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
-        if (opts.append && Array.isArray(c.prog.chords) && c.prog.chords.length) {
-          // APPEND MODE — chain this progression on as a new PART (Verse → Chorus → …).
-          _ambProgAppendPart(c.prog, name, chords, opts.partKey);
-          c.prog.on = true;
-        } else {
-          c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
-          if (Array.isArray(parts) && parts.length) c.prog.parts = parts.map(p => ({ name: p.name, len: p.len })); else delete c.prog.parts;
-          _ambProgMarkSeed(c.prog, name);   // this IS the seed it came from
-        }
-        if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
-        try { _ambSyncControls(E); } catch (e) {}
-        try { _ambRefreshSrcChips(E); } catch (e) {}   // lock the per-layer Notes chips
-        if (typeof persistWorkspace === 'function') persistWorkspace();
-      };
+      const apply = (name, chords, parts) => _ambProgApplyPick(E, name, chords, parts, opts);
       const items = [];
       // SOURCE a progression — creating one answers the same question the seed
       // list does ("where does this progression come from"), so Generate and
@@ -9283,20 +9443,7 @@
         items.push('hr');
       }
       // USER group — wrap progressions (resolved to chords) + published progs.
-      const userItems = [];
-      const wps = (typeof wrapProgs !== 'undefined' && Array.isArray(wrapProgs)) ? wrapProgs : [];
-      wps.forEach(wp => {
-        const chords = _ambWrapProgChords(wp);
-        if (!chords.length) return;
-        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
-        userItems.push({ label: '  ' + (wp.name || 'Prog'), fn: () => apply(wp.name || 'Prog', chords) });
-      });
-      const pub = _ambPublishedProgs();
-      pub.forEach(p => {
-        const chords = (p.chords || []).map(_ambCloneChord);
-        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
-        userItems.push({ label: '  ' + p.name, fn: () => apply(p.name, chords, p.parts) });
-      });
+      const userItems = _ambUserProgs(cfg).map(u => ({ label: '  ' + u.name, fn: () => apply(u.name, u.chords, u.parts) }));
       if (userItems.length) { items.push({ label: 'User', disabled: true }); userItems.forEach(i => items.push(i)); }
       // STANDARD group — the full Prog-pad catalog, one submenu per family
       // (flat it would be ~100 rows). Key-filtered per entry; a family with
@@ -9855,7 +10002,7 @@
           } else if (ps[pi].key) ps[pi].key.scale = String(selK.value || 'major');
           _ambPeRender();   // the scale select only exists once a root is set
         });
-        document.addEventListener('pointerdown', (e) => { if (_ambProgEd && host.style.display !== 'none' && !host.contains(e.target) && !(e.target.closest && e.target.closest('#ambient-prog-edit'))) _ambPeClose(); }, true);
+        document.addEventListener('pointerdown', (e) => { if (_ambProgEd && host.style.display !== 'none' && !host.contains(e.target) && !(e.target.closest && (e.target.closest('#ambient-prog-edit') || e.target.closest('.ctx-menu')))) _ambPeClose(); }, true);
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _ambProgEd) _ambPeClose(); });
       }
       _ambPeRender();
@@ -10297,7 +10444,7 @@
         if (!_cb.length) return '';
         const _uni = _cb.every(v => v === _cb[0]);
         return '<div class="pe-partgrp">' +
-          '<span class="pe-partgrp-lbl">Length</span>' +
+          '<span class="pe-partgrp-lbl">Bars each</span>' +
           '<input type="text" class="pe-partlen" id="pe-alllen" value="' + (_uni ? esc(_ambFmtBpc(_cb[0])) : '') + '"' +
             (_uni ? '' : ' placeholder="mixed"') +
             ' title="Set EVERY chord in this progression to one length (1, 1/2, 8/7…). The per-chord field below still sets them individually." />' +
@@ -10396,7 +10543,6 @@
                 '<span class="pe-partgrp-hint">' + (_pchance >= 100 ? 'comes round every time'
                   : (_pchance <= 0 ? 'never comes round' : ('comes round about ' + _pchance + '% of the time'))) + '</span>' +
               '</div>' +
-              _quickLenHtml() +
               // PER-PART KEY: a real mid-progression modulation. It already existed
               // in the engine but its only UI was a chip on the overview strip.
               // Setting it here records the key in force; it does NOT transpose the
@@ -10459,7 +10605,6 @@
               '</div>') +
             sec('Structure',
               '<div class="pe-partgrp pe-partgrp-struct">' +
-                '<button type="button" class="pe-partbtn" data-pe="partadd" title="Divide ' + pnm + ' in two at the chord you have selected">✂ Split at selection</button>' +
                 // MERGE — named by direction and by the part absorbed into, because
                 // "Remove part" was always a merge (the chords are never deleted) and
                 // read as destructive. The TARGET's name, repeats, key and salt win;
@@ -10487,7 +10632,7 @@
       // untouched for the simple case this protects.
       const secOpen = (k) => {
         if (ed._secOpen && Object.prototype.hasOwnProperty.call(ed._secOpen, k)) return !!ed._secOpen[k];
-        return k === 'part' && !!(_peParts && _peParts.length > 1);
+        return false;   // ✎ EDIT V2: Part settings start folded — the chord is the work
       };
       const secWrap = (k, label, body, sum) => {
         const o = secOpen(k);
@@ -10503,6 +10648,8 @@
       // strip DRAWS, and the way out is drawn beside it rather than left to the
       // part tabs, which are not obviously a way out of a chord.
       const _peOne = (Number.isFinite(ed.one) && ed.one >= _peRange.from && ed.one < _peRange.to) ? (ed.one | 0) : -1;
+      const _peDflt = (gcfg && Number.isFinite(gcfg.barsPerChord) && gcfg.barsPerChord > 0) ? gcfg.barsPerChord : 1;
+      const _peBarsOf = (c) => (Number.isFinite(c.bars) && c.bars > 0) ? c.bars : _peDflt;
       const chordsRow = (_peOne >= 0
         ? ('<button type="button" class="pe-chord pe-allchords" data-pe="allchords" ' +
              'title="Back to every chord in these changes">\u25c2 All</button>')
@@ -10514,7 +10661,7 @@
         // A transition is not a chord and must not read as one — it takes the
         // walk accent and opts out of the in/out-of-key colouring, which has no
         // meaning for a line that is passing through by design.
-        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(fn(c))) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · written ' + esc(_ambPeChLabel(c)) : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + // WHAT IT SOUNDS, ON THE CARD (2026-09-20). This pane edits the SCORE, so
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + (_ambIsTransition(c) ? ' pe-trans' : (showScale ? (_ambPeChordInScale(fn(c), kRoot, kScale) ? ' chord-in' : ' chord-out') : '')) + '" style="width:min(100%,' + Math.max(44, Math.round(_peBarsOf(c) * 64)) + 'px)" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(fn(c))) + (rn ? ' (' + esc(rn) + ')' : '') + (_vsEd ? ' · written ' + esc(_ambPeChLabel(c)) : '') + (showScale && !_ambPeChordInScale(fn(c), kRoot, kScale) ? ' · out of key' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + // WHAT IT SOUNDS, ON THE CARD (2026-09-20). This pane edits the SCORE, so
         // the note names are the written ones — but under Key/transpose the engine
         // re-roots the whole progression, so a written C E G SOUNDS as D. The
         // sounding name was in the `title` only, which a phone never shows (the
@@ -10613,91 +10760,89 @@
           '<button type="button" class="pe-title-ren" data-pe="' + act + '" title="Rename these changes">\u270e Rename</button>' +
           '</div>';
       })();
+      // ── ✎ EDIT CHANGES V2 (2026-10-03, user: "it's very busy") ───────────────
+      // Header = the name (tap to rename) · ▶ Preview · ⋯ · ✕. Then the part tabs,
+      // the CHORD STRIP as the hero (chips as wide as they are held, like the ▤
+      // Parts cards), ONE panel for the selected chord (Chord · Bars · Move ·
+      // Alternates · Notes / Remove), the ALL-CHORDS tools, the part's own
+      // settings folded, and a footer of Cancel / Save. The once-in-a-while
+      // actions (Clone, ＋ Pad, Save to seed list, Delete) are in ⋯ (`pe2more`).
+      // Every control keeps its data-pe / id, so `_ambPeAct` and
+      // `_ambPeWireFooter` drive it unchanged. Mock: the "✎ Edit changes — V2" row
+      // of claude.ai/artifact/Je39C3rFGATakVhdDP7Ue3.
+      const _isLayerEd = !!(ed.target && ed.target.label === 'Edit layer progression');
+      const _renInfo = (() => {
+        const ps = _ambPeParts(ed), pi = Math.max(0, ed.part | 0);
+        if (ps && ps[pi]) return { nm: ps[pi].name || ('Changes ' + (pi + 1)), act: 'partren:' + pi };
+        return { nm: _ambPeProgName(ed), act: 'progren' };
+      })();
+      const _kindLbl = (ed.target && ed.target.label && ed.target.label !== 'Edit progression') ? ed.target.label : '';
+      const _pe2Head = '<div class="pe2-head">' +
+          '<button type="button" class="pe2-name" data-pe="' + _renInfo.act + '" title="Rename these changes">' +
+            (_kindLbl ? '<small>' + esc(_kindLbl) + '</small>' : '') + esc(_renInfo.nm) + ' <i>✎</i></button>' +
+          '<button type="button" class="pe2-ib pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" aria-label="' + (ed._pvOn ? 'Stop' : 'Preview') + '" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■' : '▶') + '</button>' +
+          '<button type="button" class="pe2-ib" data-pe="pe2more" aria-label="More" title="Rename, clone, add a pad layer, save to the seed list, delete">⋯</button>' +
+          '<button type="button" class="pe2-ib pe2-x" data-pe="cancel" aria-label="Close without saving" title="Close without saving">✕</button>' +
+        '</div>';
+      const _barsTot = ed.chords.slice(_peRange.from, _peRange.to).reduce((a2, c) => a2 + (_ambIsTransition(c) ? 0 : _peBarsOf(c)), 0);
+      const _pe2Strip = '<div class="pe2-striphead"><span class="pe2-lbl">Chords · ' + esc(_ambFmtBpc(_barsTot)) + ' bar' + (Math.abs(_barsTot - 1) < 1e-6 ? '' : 's') + '</span>' +
+          (diatonic ? '<button type="button" class="pe-scaletog pe2-scaletog' + (scaleView ? ' on' : '') + '" data-pe="scaleview" title="' + (scaleView ? 'Scale colouring ON — in-key roots, notes and chords are highlighted, out-of-key ones amber. Tap to turn off.' : 'Colour roots, notes and chords by whether they are in the key') + '">◈ in key</button>' : '') +
+        '</div>' +
+        '<div class="pe-chords pe2-strip">' + chordsRow + '</div>';
+      const _barsStep = (title) => '<span class="pe2-step">' +
+          '<button type="button" data-pe="lenstep:-1" aria-label="Fewer bars" title="Fewer bars">−</button>' +
+          '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="' + esc(title) + '" aria-label="Bars" />' +
+          '<button type="button" data-pe="lenstep:1" aria-label="More bars" title="More bars">+</button></span>';
+      const _canSplit = ed.chords.length >= 2;
+      const _pe2Tools = '<div class="pe2-tools"><span class="pe2-lbl">All chords' + (_pcur ? (' in ' + esc(_pcur.name || ('Changes ' + (ed.part + 1)))) : '') + '</span>' +
+          '<div class="pe2-toolrow">' + _quickLenHtml() +
+            '<button type="button" class="pe2-tool" data-pe="partadd"' + (_canSplit ? '' : ' disabled') + ' title="' + (_canSplit ? 'Divide these chords in two at the chord you have selected — the chords from the selection onward become a second set' : 'Add a second chord first — there is nothing to divide') + '">✂ Split at chord ' + (sel + 1) + '</button>' +
+            (!_isLayerEd ? ('<button type="button" class="pe2-tool" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
+              '<button type="button" class="pe2-tool" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>') : '') +
+          '</div></div>';
+      const _pe2Part = partBar ? secWrap('part', 'Part settings', partBar, pnmSum) : '';
+      const _pe2Foot = '<div class="pe-save pe2-footer">' +
+          '<button type="button" class="pe2-cancel" data-pe="cancel">Cancel</button>' +
+          '<button type="button" class="pe-apply pe2-save" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
       if (_ambIsTransition(ch)) {
-        host.innerHTML =
-          _peTitle +
-          partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
-                               : _soloBarHtml()) +
-          secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
-          '<div class="pe-chordhdr">Transition ' + (sel + 1) + ' of ' + ed.chords.length +
-            '<span class="pe-chordops"><button type="button" class="pe-x" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ remove</button></span></div>' +
-          '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the <b>chord matrix</b>: leave the cell on to walk, set it to <b>never</b> to sit the bar out.</div>' +
-          '<div class="pe-lenrow"><label>Length</label>' +
-            '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="1" title="How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line." />' +
-            '<span class="pe-lenhint">bars — blank = 1</span></div>', chordSum) +
-          '<div class="pe-save">' +
-            '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
-            '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing">⤓ Export…</button>' +
-            '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+        host.innerHTML = _pe2Head + partTabs + _pe2Strip +
+          '<div class="pe2-panel">' +
+            '<div class="pe2-phead"><b>Transition</b><span>' + (sel + 1) + ' of ' + ed.chords.length + '</span></div>' +
+            '<div class="pe-transnote">A <b>walk</b> from the chord before it to the chord after — composed fresh from the take seed, so it re-rolls with 🎲 New take and loops identically in between. Each layer opts in through its cell in the chord matrix.</div>' +
+            '<div class="pe2-row"><span class="pe2-k">Bars</span>' + _barsStep('How long the walk lasts, in bars (1, 1/2, 2…). Longer = more steps in the line.') + '</div>' +
+            '<div class="pe2-row pe2-pfoot"><span></span><button type="button" class="pe-x pe2-rm" data-pe="rmchord" title="Remove this transition"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ Remove transition</button></div>' +
+          '</div>' + _pe2Tools + _pe2Part + _pe2Foot;
         _ambPeWireFooter(host, ed);
         return;
       }
-      host.innerHTML =
-        _peTitle +
-        partTabs + (partBar ? secWrap('part', 'Changes settings', partBar, pnmSum)
-                             : _soloBarHtml()) +
-        secWrap('chords', 'Chords', '<div class="pe-chords">' + chordsRow + '</div>' +
-        '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length + (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') +
-          '<span class="pe-chordops">' +
-            '<button type="button" class="pe-scaletog' + (scaleView ? ' on' : '') + '" data-pe="scaleview" title="' + (diatonic ? (scaleView ? 'Scale coloring ON — in-key roots/notes/chords are highlighted, out-of-key are amber. Click to turn off.' : 'Click to color roots / notes / chords by whether they fit the key.') : 'No diatonic key set — scale coloring needs a key/scale.') + '"' + (diatonic ? '' : ' disabled') + '>◈ Scale</button>' +
-            '<button type="button" class="pe-digin-btn' + (digIn ? ' on' : '') + '" data-pe="digin" title="' + (digIn ? 'Hide the note-by-note tools' : 'Dig in — edit this chord note by note (♭ / ♯ / diatonic / invert / add / remove)') + '">' + (digIn ? '▴ Notes' : '⋯ Dig in') + '</button>' +
-            '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
+      const _rnSel = _ambPeRoman(fn(tgt), kRoot, kScale);
+      host.innerHTML = _pe2Head + partTabs + _pe2Strip +
+        '<div class="pe2-panel">' +
+          '<div class="pe2-phead"><b>' + esc(_ambChordShort(fn(tgt)) || '?') + (_rnSel ? ' <em>' + esc(_rnSel) + '</em>' : '') + '</b>' +
+            '<span>chord ' + (sel + 1) + ' of ' + ed.chords.length + ' · ' + esc(_ambPeChLabel(fn(tgt))) +
+            (ed.altSel >= 0 ? ' <span class="pe-editing-alt">· editing alt ' + (ed.altSel + 1) + '</span>' : '') + '</span></div>' +
+          '<div class="pe2-row"><span class="pe2-k">Chord</span>' + rootSel + qualSel + '</div>' +
+          '<div class="pe2-row"><span class="pe2-k">Bars</span>' + _barsStep('How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = ' + gbpcStr + ' (the default).') + '</div>' +
+          '<div class="pe2-row"><span class="pe2-k">Move</span><span class="pe2-nudge">' +
+            '<button type="button" data-pe="trdn" title="Down a semitone (chromatic)">◀ ½</button>' +
+            '<button type="button" data-pe="trup" title="Up a semitone (chromatic)">½ ▶</button>' +
+            (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Down a scale degree — stays in key">▽ deg</button>' +
+              '<button type="button" class="pe-dt" data-pe="dtup" title="Up a scale degree — stays in key">deg △</button>' : '') +
           '</span></div>' +
-        '<div class="pe-lenrow"><label>Chord length</label>' +
-          '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = ' + esc(gbpcStr) + ' bar (default)." />' +
-          '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
-        '<div class="pe-pickrow"><label>Root</label>' + rootSel +
-          (showScale ? '<span class="pe-pickhint" title="\u25c8 marks a root that is in the area key">\u25c8 in key</span>' : '') + '</div>' +
-        '<div class="pe-qrow"><label>Quality</label>' + qualSel + '</div>' +
-        '<div class="pe-nudgerow"><label>Nudge chord</label>' +
-          '<button type="button" data-pe="trdn" title="Down a semitone (chromatic)">◀ ½ step</button>' +
-          '<button type="button" data-pe="trup" title="Up a semitone (chromatic)">½ step ▶</button>' +
-          (diatonic ? '<button type="button" class="pe-dt" data-pe="dtdn" title="Down a scale degree — stays in key">▽ degree</button>' +
-            '<button type="button" class="pe-dt" data-pe="dtup" title="Up a scale degree — stays in key">degree △</button>' : '') +
-        '</div>' +
-        (digIn ?
-          '<div class="pe-digin">' +
-            '<div class="pe-digin-ops"><label>Notes</label><span class="pe-chordops">' +
-              '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
-              '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
-            '</span></div>' +
-            '<div class="pe-notes">' + noteChips + '</div>' +
-          '</div>' : '') +
-        altsRow +
-        // Operations ON the chords live WITH the chords — you want to see what
-        // Reharmonize rewrote and what Detect key read. Area scope only: both act
-        // on cfg.prog, which a layer-scope edit isn't.
-        ((ed.target && ed.target.label !== 'Edit layer progression') ?
-          '<div class="pe-ops">' +
-            '<button type="button" data-pe="reharm" title="Reharmonize — rewrite these chords once with same-function substitutions">♺ Reharmonize</button>' +
-            '<button type="button" data-pe="detectkey" title="Detect the key these chords imply and offer to set it">🔍 Detect key</button>' +
-          '</div>' : ''), chordSum) +
-        '<div class="pe-save">' +
-          '<button type="button" data-pe="cancel">Cancel</button>' +
-          // DELETE LIVES IN THE FOOTER, AND IT IS ALWAYS RENDERED. It was behind a
-          // fold, then conditional on having a chain — and BOTH times the report
-          // was the same: "I still see no delete button". A control that vanishes
-          // in the state you happen to be in is indistinguishable from one that
-          // does not exist, and the state it vanished in (a single set of
-          // changes) is the common one. So it is always here, and DISABLED with
-          // a title that says what to do instead when it cannot apply.
-          (function () {
-            const _kp = (_peParts && ed.part >= 0) ? _peParts[ed.part] : null;
-            const _kn = _kp ? ((_kp.name || ('Changes ' + (ed.part + 1)))) : '';
-            const _kok = !!(_peParts && _peParts.length > 1 && _kp);
-            // Live in BOTH cases: with a chain it deletes that set of changes,
-            // and with a single set it clears the progression — which is the
-            // same act, since one set of changes IS the progression.
-            return '<button type="button" class="pe-killbtn" data-pe="partkill:' + (ed.part | 0) + '" title="' +
-              (_kok ? ('Delete ' + esc(_kn) + ' AND its chords. Merging keeps the chords; this does not.')
-                    : ('Delete the whole progression \u2014 all ' + ed.chords.length + ' chord' + (ed.chords.length === 1 ? '' : 's') + '. This is the only set of changes, so it IS the progression.')) +
-              '">\u2715 Delete</button>';
-          })() +
-          '<button type="button" data-pe="clone" title="Duplicate this progression into a fresh editable copy">⧉ Clone</button>' +
-          '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
-          '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
-          '<button type="button" data-pe="export" title="Save this progression into the SEED list under a name of your choosing — the seed list is not touched by ordinary edits">⤓ Export…</button>' +
-          '<button type="button" class="pe-apply" data-pe="save" title="Save these changes to the CURRENT progression">Save</button></div>';
+          altsRow +
+          (digIn ?
+            '<div class="pe-digin">' +
+              '<div class="pe-digin-ops"><label>Notes</label><span class="pe-chordops">' +
+                '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
+                '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
+              '</span></div>' +
+              '<div class="pe-notes">' + noteChips + '</div>' +
+            '</div>' : '') +
+          '<div class="pe2-row pe2-pfoot">' +
+            '<button type="button" class="pe-digin-btn pe2-digin' + (digIn ? ' on' : '') + '" data-pe="digin" title="' + (digIn ? 'Hide the note-by-note tools' : 'Edit this chord note by note (♭ / ♯ / diatonic / invert / add / remove)') + '">··· ' + (digIn ? 'Hide notes' : 'Notes') + '</button>' +
+            '<button type="button" class="pe-x pe2-rm" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ Remove chord</button>' +
+          '</div>' +
+        '</div>' + _pe2Tools + _pe2Part + _pe2Foot;
       _ambPeWireFooter(host, ed);
     }
     // Name + per-chord length inputs, shared by the chord and transition bodies.
@@ -11013,6 +11158,34 @@
         return;
       }
       else if (op === 'cancel') { _ambPeClose(); return; }
+      // ✎ EDIT V2 — ⋯: the once-in-a-while actions, each the same `_ambPeAct` the
+      // old footer buttons ran.
+      else if (op === 'pe2more') {
+        const r0 = el ? el.getBoundingClientRect() : { right: 300, bottom: 80 };
+        const ps = _ambPeParts(ed), pi = Math.max(0, ed.part | 0);
+        const kp = (ps && ps.length > 1) ? ps[pi] : null;
+        const items = [
+          { label: '✎ Rename', fn: () => _ambPeAct(ps && ps[pi] ? ('partren:' + pi) : 'progren') },
+          { label: '⧉ Clone — a fresh editable copy', fn: () => _ambPeAct('clone') },
+          { label: '＋ Pad layer that plays this', fn: () => _ambPeAct('pad') },
+          { label: '⤓ Save to seed list…', fn: () => _ambPeAct('export') },
+          'hr',
+          { label: kp ? ('✕ Delete ' + (kp.name || ('Changes ' + (pi + 1))) + ' and its chords') : '✕ Delete the whole progression', fn: () => _ambPeAct('partkill:' + (ed.part | 0)) },
+        ];
+        setTimeout(() => { try { showCtxMenu(Math.max(8, r0.right - 260), r0.bottom + 4, items); } catch (e) {} }, 0);
+        return;
+      }
+      // Bars − / + : halves and doubles below one bar, whole bars above it.
+      else if (op === 'lenstep') {
+        const c0 = ed.chords[ed.sel]; if (!c0) return;
+        const dflt = (gcfg && Number.isFinite(gcfg.barsPerChord) && gcfg.barsPerChord > 0) ? gcfg.barsPerChord : 1;
+        const cur = (Number.isFinite(c0.bars) && c0.bars > 0) ? c0.bars : dflt;
+        const d = parseInt(arg, 10) || 0;
+        let nv = d > 0 ? (cur < 1 ? cur * 2 : cur + 1) : (cur > 1 ? Math.max(1, cur - 1) : cur / 2);
+        nv = Math.max(0.125, Math.min(64, Math.round(nv * 1000) / 1000));
+        c0.bars = nv;
+        _ambPeRender(); return;
+      }
       else if (op === 'pad') {
         _ambAddPadForProg(ed.E, serialize(), (ed.name || '').trim());
         return;   // keep the editor open so you can keep tweaking
@@ -20493,26 +20666,58 @@
       const cfg = E.getCfg(); if (!cfg) return;
       const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
       const c = _ambBusCfg(cfg, id);
-      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      // `amb-bus-ov` = the dialog band: opened from inside a v2 section sheet (z 10250).
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay amb-bus-ov';
       const modal = document.createElement('div'); modal.className = 'step-div-modal amb-bus-modal';
       const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
-      modal.innerHTML = '<div class="ambient-mod-sub">Bus \u2014 ' + esc(c.name) + '</div>' +
-        '<div class="ambient-ctrl"><label for="amb-bus-name">Name</label>' +
-          '<input type="text" id="amb-bus-name" class="ambient-bpc-input" value="' + esc(c.name) + '" maxlength="18"></div>' +
-        '<div class="ambient-ctrl"><label for="amb-bus-direct">Master FX</label>' +
-          '<select id="amb-bus-direct" class="ambient-select">' +
-            _AMB_BUS_ENTRIES.map(e => '<option value="' + e[0] + '"' + (c.entry === e[0] ? ' selected' : '') + '>' + esc(e[1]) + '</option>').join('') +
-          '</select><span class="ambient-hint">where it joins the master chain \u2014 the limiter always applies</span></div>' +
+      // DIAL GRID (user, 2026-10-02: "way too cramped, use the dial grid"). The
+      // same symmetric cells ✺ Salt uses (`.ambient-salt-dials`), painted by the
+      // one knob implementation (`V2.knobify`) over the SAME range inputs — ids,
+      // classes and handlers below are unchanged, so nothing is rewired.
+      const fxName = (n) => (typeof FX_LABELS !== 'undefined' && FX_LABELS[n]) || n;
+      const dial = (inputId, label, val, extraCls, dataFx, sub) =>
+        '<div class="ambient-ctrl ambient-salt-dial amb-bus-dial">' +
+          '<label for="' + inputId + '">' + esc(label) + '</label>' +
+          '<input type="range" class="ambient-sl' + (extraCls ? ' ' + extraCls : '') + '" id="' + inputId + '"' +
+            (dataFx ? ' data-fx="' + dataFx + '"' : '') + ' min="0" max="100" step="1" value="' + (val | 0) + '" aria-label="' + esc(label) + '">' +
+          '<span class="ambient-hint ambient-salt-sub">' + esc(sub || '%') + '</span></div>';
+      modal.innerHTML = '<div class="sm-title">Bus — ' + esc(c.name) + '</div>' +
+        '<div class="amb-bus-fields">' +
+          '<label class="amb-bus-field"><span>Name</span>' +
+            '<input type="text" id="amb-bus-name" class="ambient-bpc-input" value="' + esc(c.name) + '" maxlength="18"></label>' +
+          '<label class="amb-bus-field"><span>Master FX</span>' +
+            '<select id="amb-bus-direct" class="ambient-select">' +
+              _AMB_BUS_ENTRIES.map(e => '<option value="' + e[0] + '"' + (c.entry === e[0] ? ' selected' : '') + '>' + esc(e[1]) + '</option>').join('') +
+            '</select><span class="ambient-hint">where it joins the master chain — the limiter always applies</span></label>' +
+        '</div>' +
+        '<div class="ambient-salt-dials amb-bus-dials">' +
+          dial('amb-bus-level', 'Level', c.level, '', '', 'whole bus') +
+        '</div>' +
         '<div class="ambient-mod-sub">Sends into the shared FX</div>' +
-        names.map(n => '<div class="ambient-ctrl"><label for="amb-bus-s-' + n + '">' + esc(n) + '</label>' +
-          '<input type="range" id="amb-bus-s-' + n + '" class="ambient-range amb-bus-send" data-fx="' + n + '" min="0" max="100" step="1" value="' + ((c.sends[n] | 0)) + '">' +
-          '<span class="ambient-hint"><span id="amb-bus-v-' + n + '">' + (c.sends[n] | 0) + '</span>%</span></div>').join('') +
+        '<div class="ambient-salt-dials amb-bus-dials">' +
+          names.map(n => dial('amb-bus-s-' + n, fxName(n), c.sends[n], 'amb-bus-send', n)).join('') +
+        '</div>' +
+        // RAMPS — automate this bus's Level and sends (every layer on it at once)
+        _ambLayerRampsHtml('bus:' + id) +
         '<div class="amb-learn-pick-btns"><button type="button" class="ambient-seg amb-bus-close">Done</button></div>';
       overlay.appendChild(modal); document.body.appendChild(overlay);
       overlay.style.setProperty('display', 'flex', 'important');
+      try { if (window._v2 && window._v2.knobify) window._v2.knobify(modal); } catch (e) {}
       const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderExtras(E); } catch (e) {} };
       overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
       modal.querySelector('.amb-bus-close').addEventListener('click', close);
+      const lvEl = modal.querySelector('#amb-bus-level');
+      lvEl.addEventListener('input', () => {
+        const v = parseInt(lvEl.value, 10) | 0;
+        _ambBusSet(cfg, id, { level: v });
+        const out = modal.querySelector('#amb-bus-lv'); if (out) out.textContent = String(v);
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+      // The ＋ Ramp here is NOT caught by the host's delegated listener (this modal
+      // is on <body>), so it is bound directly; rows fill via _ambRenderRamps.
+      const rAdd = modal.querySelector('.ambient-ramp-add');
+      if (rAdd) rAdd.addEventListener('click', () => { try { _ambAddRamp(E, 'bus:' + id); } catch (e) {} });
+      try { _ambRenderRamps(E); } catch (e) {}
       const nameEl = modal.querySelector('#amb-bus-name');
       nameEl.addEventListener('change', () => { _ambBusSet(cfg, id, { name: nameEl.value.trim() }); if (typeof persistWorkspace === 'function') persistWorkspace(); });
       const dirEl = modal.querySelector('#amb-bus-direct');
@@ -31910,6 +32115,12 @@
     }
     function _ambStopRampClock(E) {
       if (E && E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      // A bus ramp drives the NODES only; put the editor's values back so a stop
+      // leaves each bus where its editor says (the next play starts the ramp at A).
+      try {
+        const c = E && (E._cfg || (E.getCfg && E.getCfg()));
+        if (c && Array.isArray(c.ramps) && c.ramps.some(r => r && /^bus:/.test(r.layerKey || ''))) _ambBusApplyAll(c);
+      } catch (e) {}
       try { _ambRampVizClear(E); } catch (e) {}
     }
     // When playback last STOPPED (Tone clock), and whether anything has ever
@@ -43188,69 +43399,162 @@
       const scales = (typeof SCALES !== 'undefined') ? Object.keys(SCALES) : ['major', 'minor'];
       const rootOpts = _AMB_CHROM.map((n, i) => '<option value="' + i + '"' + (i === aRoot ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
       const scaleOpts = scales.map(sc => '<option value="' + esc(sc) + '"' + (sc === aScale ? ' selected' : '') + '>' + esc(sc.charAt(0).toUpperCase() + sc.slice(1)) + '</option>').join('');
-      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov';
-      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal">' +
-        '<div class="sm-title">Add a part</div>' +
-        '<div class="ambient-step-modal-body">' +
-          // A part either carries changes or it does not. The open kind is the
-          // whole point of the consolidation — an arrangement block that is just
-          // time, which is what a section used to be.
-          '<div class="ambient-ctrl ambient-step-row"><label>Kind</label>' +
-            '<span class="ambient-seg-row ap-kind">' +
-              '<button type="button" class="ambient-seg active" data-kind="changes">Changes</button>' +
-              '<button type="button" class="ambient-seg" data-kind="open">No changes</button>' +
-            '</span></div>' +
-          '<div class="ap-open-only" style="display:none">' +
-            '<div class="ambient-addpart-hint">A part with no changes is a named block of time — an intro, a break, a vamp. '
-              + 'The harmony HOLDS while it plays: the chord in force stays in force and the changes resume after it.</div>' +
-            '<div class="ambient-ctrl ambient-step-row"><label>Name</label>' +
-              '<input type="text" class="ambient-step-inp ap-name" maxlength="16" placeholder="Bridge"></div>' +
-            '<div class="ambient-ctrl ambient-step-row"><label>Length</label>' +
-              '<input type="number" class="ambient-step-inp ap-bars" min="0.25" max="64" step="0.25" value="4">' +
-              // BAR OR CHANGE, on the row that states the number — the same pair the
-              // ⏸ Length menu offers, so one block has one vocabulary wherever it is set.
-              '<span class="ambient-seg-row ap-bunit">' +
-                '<button type="button" class="ambient-seg active" data-bunit="bar">bars</button>' +
-                '<button type="button" class="ambient-seg" data-bunit="chg">changes</button>' +
-              '</span></div>' +
-            '<div class="ambient-ctrl ambient-step-row"><label>Harmony</label>' +
-              '<span class="ambient-seg-row ap-hold">' +
-                '<button type="button" class="ambient-seg active" data-hold="1">Holds</button>' +
-                '<button type="button" class="ambient-seg" data-hold="0">Keeps running</button>' +
-              '</span></div>' +
-            '<div class="ambient-addpart-note ap-holdnote"></div>' +
-          '</div>' +
-          '<div class="ambient-addpart-hint ap-changes-only">A set of changes is a named stretch of the progression — Verse, Chorus. '
-            + 'It starts in the key of ' + esc(_inhFrom) + '; change it and the music MODULATES while this set plays, leaving the others alone. '
-            + 'The progression you pick next is transposed into this key, keeping its relative motion.</div>' +
-          '<div class="ambient-ctrl ambient-step-row"><label>Key</label>' +
-            '<span class="ambient-addpart-key">' +
-              '<select class="ambient-select ap-root">' + rootOpts + '</select>' +
-              '<select class="ambient-select ap-scale">' + scaleOpts + '</select>' +
-            '</span><span class="ambient-step-val ap-same"></span></div>' +
-          '<div class="ambient-addpart-note ap-note"></div>' +
+      // ── ＋ ADD PART V2 (2026-10-03) ──────────────────────────────────────────
+      // ONE SHEET. It used to ask kind + key, then close and open a SECOND menu
+      // (`_ambOpenGlobalProgMenu`) whose families were each a submenu. The
+      // progression is now picked right here: search, source (In key / Borrowed /
+      // Vapor / Mine — the same lists, `_ambProgCatalogForKey` + `_ambUserProgs`),
+      // a length filter, and rows that show the chords IN THE KEY YOU PICKED. It
+      // lands through `_ambProgApplyPick`, the menu's own path. Mock: the "＋ Add
+      // part V2" row of claude.ai/artifact/Je39C3rFGATakVhdDP7Ue3.
+      // THE LISTS ARE BUILT FOR THE KEY YOU PICK. The catalog resolves its degrees
+      // against the key `_ambKeyCfg()` reports, so for a part in another key/scale
+      // it is rebuilt against a stand-in config for THAT key (swapped onto the engine
+      // for the synchronous call, restored in `finally`) — "In key" for E minor is
+      // then E-minor progressions, not D-major ones moved up a tone. Rows hold their
+      // chords in STORED space, final: a standard row is resolved there, Vapor and
+      // Mine (literal chord sets) are transposed by the key interval, and the part
+      // is appended with `noShift`. The ⋯ menu path is unchanged.
+      const areaR = _ambAreaKeyRootPc(cfg), areaS = _ambAreaKeyScaleName(cfg);
+      const areaCat = _ambProgCatalogForKey(cfg);
+      const _mapList = (list, d) => list.map(t => ({ name: t.name, parts: t.parts || null,
+        chords: d ? t.chords.map(c => (c && !_ambIsTransition(c)) ? _ambChordShift(c, d) : c) : t.chords }));
+      let sources = [], srcId = null, builtFor = '';
+      const buildSources = (r, sc) => {
+        const sig = r + ':' + sc; if (sig === builtFor) return; builtFor = sig;
+        const changed = !(r === areaR && sc === areaS);
+        let cat = areaCat;
+        if (changed) {
+          const fake = Object.assign({}, cfg, { keyOn: true, keyFollow: false, keyRoot: unshift(r), keyScale: sc, prog: null });
+          const sv = E._cfg; _E = E; E._cfg = fake;
+          try { cat = _ambProgCatalogForKey(fake); } catch (e) { cat = areaCat; } finally { E._cfg = sv; }
+        }
+        const d = changed ? ((((r - areaR) % 12) + 12) % 12) : 0;
+        const byLab = Object.create(null); cat.forEach(([lab, list]) => { byLab[lab] = list; });
+        const areaVap = (areaCat.find(x => x[0] === 'Vapor') || [null, []])[1];
+        sources = cat.filter(([lab]) => lab !== 'Vapor').map(([lab, list]) => ({ id: lab, label: lab, list: _mapList(list, 0) }));
+        if (areaVap.length) sources.push({ id: 'Vapor', label: 'Vapor', list: _mapList(areaVap, d) });
+        sources.push({ id: 'Mine', label: 'Mine', list: _mapList(_ambUserProgs(cfg), d) });
+        if (!sources.some(s2 => s2.id === srcId && s2.list.length)) srcId = (sources.find(s2 => s2.list.length) || sources[0]).id;
+        pick = null;   // indexes belong to the lists just replaced
+      };
+      let lenB = 'any', query = '', pick = null;                     // pick = { src, i }
+      buildSources(aRoot, aScale);
+      const _nChords = (ch) => ch.filter(c => c && !_ambIsTransition(c)).length;
+      const _lenOk = (n) => lenB === 'any' || (lenB === '2-3' ? n <= 3 : lenB === '4' ? n === 4 : lenB === '5-8' ? (n >= 5 && n <= 8) : n >= 9);
+      const LENS = [['any', 'Any length'], ['2-3', '2–3'], ['4', '4'], ['5-8', '5–8'], ['9+', '9+']];
+      const ov = document.createElement('div'); ov.className = 'sm-overlay ambient-step-modal-ov ap2-ov';
+      ov.innerHTML = '<div class="sm-modal ambient-step-modal ambient-addpart-modal ap2">' +
+        '<div class="ap2-title"><span class="sm-title">Add a part</span>' +
+          '<button type="button" class="ap2-x ap-cancel" aria-label="Close">✕</button></div>' +
+        '<div class="ap2-seg ap-kind" role="group" aria-label="Kind">' +
+          '<button type="button" class="ambient-seg active" data-kind="changes">Changes</button>' +
+          '<button type="button" class="ambient-seg" data-kind="open">No changes</button></div>' +
+        '<div class="ap2-row">' +
+          '<label class="ap2-field ap2-name"><span class="ap2-lbl">Name</span>' +
+            '<input type="text" class="ambient-step-inp ap-name" maxlength="16" placeholder="Chorus"></label>' +
+          '<div class="ap2-field ap2-key"><span class="ap2-lbl"><span class="ap-keylbl">Key</span> <i class="ap-same"></i></span>' +
+            '<span class="ap2-keysel"><select class="ambient-select ap-root" aria-label="Key root">' + rootOpts + '</select>' +
+            '<select class="ambient-select ap-scale" aria-label="Key scale">' + scaleOpts + '</select></span></div>' +
         '</div>' +
-        '<div class="sm-footer">' +
+        // ---- CHANGES: the progression, picked here ----
+        '<div class="ap2-changes ap-changes-only">' +
+          '<span class="ap2-lbl">Progression</span>' +
+          '<input type="search" class="ambient-step-inp ap2-find" placeholder="Search — pop, jazz, blues, ii V I…" aria-label="Search progressions" autocomplete="off">' +
+          '<div class="ap2-chips ap2-src" role="group" aria-label="Where from"></div>' +
+          '<div class="ap2-chips ap2-len" role="group" aria-label="How many chords">' +
+            LENS.map(l => '<button type="button" class="ambient-seg' + (l[0] === 'any' ? ' active' : '') + '" data-len="' + l[0] + '">' + l[1] + '</button>').join('') + '</div>' +
+          '<div class="ap2-list" role="listbox" aria-label="Progressions"></div>' +
+          '<div class="ap2-tools">' +
+            '<button type="button" class="ambient-seg ap2-tool" data-tool="generate">✎ Build my own…</button>' +
+            '<button type="button" class="ambient-seg ap2-tool" data-tool="roman">⌨ Type numerals…</button></div>' +
+        '</div>' +
+        // ---- NO CHANGES: a named block of time ----
+        '<div class="ap-open-only" style="display:none">' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Length</label>' +
+            '<input type="number" class="ambient-step-inp ap-bars" min="0.25" max="64" step="0.25" value="4">' +
+            '<span class="ambient-seg-row ap-bunit">' +
+              '<button type="button" class="ambient-seg active" data-bunit="bar">bars</button>' +
+              '<button type="button" class="ambient-seg" data-bunit="chg">changes</button>' +
+            '</span></div>' +
+          '<div class="ambient-ctrl ambient-step-row"><label>Harmony</label>' +
+            '<span class="ambient-seg-row ap-hold">' +
+              '<button type="button" class="ambient-seg active" data-hold="1">Holds</button>' +
+              '<button type="button" class="ambient-seg" data-hold="0">Keeps running</button>' +
+            '</span></div>' +
+          '<div class="ambient-addpart-note ap-holdnote"></div>' +
+        '</div>' +
+        '<div class="ambient-addpart-note ap-note"></div>' +
+        '<div class="sm-footer ap2-foot">' +
           '<button type="button" class="sm-cancel ap-cancel">Cancel</button>' +
-          '<button type="button" class="sm-apply ap-next">Choose progression…</button>' +
+          '<button type="button" class="sm-apply ap-next" disabled>Pick a progression</button>' +
         '</div></div>';
       document.body.appendChild(ov);
       ov.style.setProperty('display', 'flex', 'important');
       const rootSel = ov.querySelector('.ap-root'), scaleSel = ov.querySelector('.ap-scale');
       const same = ov.querySelector('.ap-same'), note = ov.querySelector('.ap-note');
+      const nameInp = ov.querySelector('.ap-name');
+      const listEl = ov.querySelector('.ap2-list'), srcEl = ov.querySelector('.ap2-src');
+      const nextBtn = ov.querySelector('.ap-next');
       const close = () => { try { ov.remove(); } catch (e) {} };
-      const sync = () => {
-        const r = rootSel.value | 0, sc = scaleSel.value;
-        const unchanged = (r === aRoot && sc === aScale);
-        same.textContent = unchanged ? 'same as area' : 'modulates';
-        same.classList.toggle('ap-mod', !unchanged);
-        note.textContent = unchanged
-          ? 'No key change — this part stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + ' like the rest of the area.'
-          : 'This part will play in ' + _AMB_CHROM[r] + ' ' + sc + ', while the area stays in ' + _AMB_CHROM[aRoot] + ' ' + aScale + '.';
-      };
       let kind = 'changes', hold = 1;
+      const keyChanged = () => !((rootSel.value | 0) === aRoot && scaleSel.value === aScale);
+      // THE CHORDS AS THEY WILL SOUND. `_ambProgAppendPart` shifts a part in its
+      // own key so its FIRST chord lands on that root (displayed = stored + view
+      // shift, and the pick is stored unshifted, so the view shift cancels); a
+      // part in the area key goes in as written and is drawn through the shift.
+      // AS THEY WILL SOUND: rows are final stored chords, drawn through the view shift.
+      const preview = (ch) => {
+        try { return ch.filter(c => c && !_ambIsTransition(c)).map(c => _ambChordShort(vShift ? _ambChordShift(c, vShift) : c) || '?').join(' '); }
+        catch (e) { return ''; }
+      };
+      const curSrc = () => sources.find(s2 => s2.id === srcId) || sources[0];
+      const visible = () => {
+        const q = query.trim().toLowerCase();
+        return curSrc().list.map((t, i) => ({ t, i })).filter(({ t }) => {
+          if (!_lenOk(_nChords(t.chords))) return false;
+          if (!q) return true;
+          return (String(t.name).toLowerCase() + ' ' + preview(t.chords).toLowerCase()).indexOf(q) >= 0;
+        });
+      };
+      const updateNext = () => {
+        if (kind === 'open') { nextBtn.disabled = false; nextBtn.textContent = 'Add part'; return; }
+        const s0 = pick && sources.find(s2 => s2.id === pick.src);
+        const t = s0 && s0.list[pick.i];
+        nextBtn.disabled = !t;
+        if (!t) { nextBtn.textContent = 'Pick a progression'; return; }
+        const nm = (nameInp.value || '').trim();
+        nextBtn.textContent = 'Add ' + (nm ? ('“' + nm + '”') : 'part') + ' · ' + _AMB_CHROM[rootSel.value | 0] + ' ' + scaleSel.value;
+      };
+      const renderSrc = () => {
+        srcEl.innerHTML = sources.map(s2 => '<button type="button" class="ambient-seg' + (s2.id === srcId ? ' active' : '') + '" data-src="' + esc(s2.id) + '">' +
+          esc(s2.label) + ' <i>' + s2.list.length + '</i></button>').join('');
+      };
+      const renderList = () => {
+        const v = visible();
+        listEl.innerHTML = v.length ? v.map(({ t, i }) => {
+          const on = !!(pick && pick.src === srcId && pick.i === i);
+          const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(String(t.name));
+          const rn = m ? m[1] : t.name, tag = m ? m[2] : '';
+          return '<button type="button" class="ap2-opt' + (on ? ' on' : '') + '" role="option" aria-selected="' + on + '" data-i="' + i + '">' +
+            '<span class="ap2-t1"><span class="ap2-rn">' + esc(rn) + '</span>' + (tag ? '<span class="ap2-tag">' + esc(tag) + '</span>' : '') +
+            '<span class="ap2-cnt">' + _nChords(t.chords) + '</span></span>' +
+            '<span class="ap2-ch">' + esc(preview(t.chords)) + '</span></button>';
+        }).join('') : '<div class="ap2-empty">' + (curSrc().list.length ? 'Nothing matches — clear the search or pick another length.' : (srcId === 'Mine' ? 'No saved progressions yet — build one below.' : 'None fit this key.')) + '</div>';
+        updateNext();
+      };
+      const sync = () => {
+        buildSources(rootSel.value | 0, scaleSel.value);
+        try { renderSrc(); } catch (e) {}
+        const changed = keyChanged();
+        same.textContent = changed ? '· modulates' : (_inh ? '· same as ' + _inh.from : '· area');
+        same.classList.toggle('ap2-mod', changed);
+        note.textContent = changed && kind !== 'open'
+          ? ('This part moves to ' + _AMB_CHROM[rootSel.value | 0] + ' ' + scaleSel.value + ' while it plays; the others stay put. The chords below are shown in that key.')
+          : '';
+        renderList();
+      };
       const holdNote = ov.querySelector('.ap-holdnote');
-      const keyRow = ov.querySelector('.ambient-addpart-key') ? ov.querySelector('.ambient-addpart-key').closest('.ambient-step-row') : null;
       const setHold = (h) => {
         hold = h;
         ov.querySelectorAll('.ap-hold .ambient-seg').forEach(b => b.classList.toggle('active', (b.dataset.hold | 0) === h));
@@ -43259,43 +43563,50 @@
           : 'The changes keep moving underneath; this part just names a stretch of time.';
       };
       const openBox = ov.querySelector('.ap-open-only');
-      const nextBtn = ov.querySelector('.ap-next');
       const setKind = (k) => {
         kind = k;
         openBox.style.display = (k === 'open') ? '' : 'none';
-        // On a part with no changes the key is a SHIFT of the area key while it
-        // runs, so the scale picker does not apply — saying so beats leaving a
-        // control that silently does nothing.
-        if (keyRow) {
-          const sc0 = keyRow.querySelector('.ap-scale');
-          if (sc0) sc0.style.display = (k === 'open') ? 'none' : '';
-          const lb0 = keyRow.querySelector('label');
-          if (lb0) lb0.textContent = (k === 'open') ? 'Shift to' : 'Key';
-        }
         ov.querySelectorAll('.ap-changes-only').forEach(el => { el.style.display = (k === 'open') ? 'none' : ''; });
+        // On a part with no changes the key is a SHIFT of the area key while it
+        // runs, so the scale picker does not apply — say so rather than leave a
+        // control that silently does nothing.
+        scaleSel.style.display = (k === 'open') ? 'none' : '';
+        const kl = ov.querySelector('.ap-keylbl'); if (kl) kl.textContent = (k === 'open') ? 'Shift to' : 'Key';
+        nameInp.placeholder = (k === 'open') ? 'Bridge' : 'Chorus';
         ov.querySelectorAll('.ap-kind .ambient-seg').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
-        // The label states what the button DOES — a part with no changes has no
-        // progression to choose, so offering to choose one would be a lie.
-        nextBtn.textContent = (k === 'open') ? 'Add part' : 'Choose progression…';
+        sync(); updateNext();
       };
-      sync();
-      // Paint the DEFAULT state, don't wait for a click — the note explaining
-      // what "Holds" means was blank until you touched the other option, which
-      // left the default the one choice with no explanation.
-      setHold(1);
+      renderSrc(); sync(); setHold(1);
       rootSel.addEventListener('change', sync); scaleSel.addEventListener('change', sync);
+      nameInp.addEventListener('input', updateNext);
+      ov.querySelector('.ap2-find').addEventListener('input', (ev) => { query = ev.target.value || ''; renderList(); });
+      const partKeyNow = () => (((rootSel.value | 0) === areaR && scaleSel.value === areaS) ? null : { root: unshift(rootSel.value | 0), scale: scaleSel.value });
       ov.addEventListener('click', (ev) => {
-        if (ev.target === ov || (ev.target.closest && ev.target.closest('.ap-cancel'))) { close(); return; }
-        const kb = ev.target.closest && ev.target.closest('.ap-kind .ambient-seg');
+        const t = ev.target;
+        if (t === ov || (t.closest && t.closest('.ap-cancel'))) { close(); return; }
+        const kb = t.closest && t.closest('.ap-kind .ambient-seg');
         if (kb) { setKind(kb.dataset.kind); return; }
-        const hb = ev.target.closest && ev.target.closest('.ap-hold .ambient-seg');
-        if (hb) { setHold(hb.dataset.hold | 0); return; }
-        const ub = ev.target.closest && ev.target.closest('.ap-bunit .ambient-seg');
-        if (ub) {
-          ov.querySelectorAll('.ap-bunit .ambient-seg').forEach(b2 => b2.classList.toggle('active', b2 === ub));
+        const sb = t.closest && t.closest('.ap2-src .ambient-seg');
+        if (sb) { srcId = sb.dataset.src; renderSrc(); renderList(); return; }
+        const lb = t.closest && t.closest('.ap2-len .ambient-seg');
+        if (lb) { lenB = lb.dataset.len; ov.querySelectorAll('.ap2-len .ambient-seg').forEach(b => b.classList.toggle('active', b === lb)); renderList(); return; }
+        const op = t.closest && t.closest('.ap2-opt');
+        if (op) { pick = { src: srcId, i: op.dataset.i | 0 }; listEl.querySelectorAll('.ap2-opt').forEach(b => { const on2 = b === op; b.classList.toggle('on', on2); b.setAttribute('aria-selected', on2); }); updateNext(); return; }
+        const tl = t.closest && t.closest('.ap2-tool');
+        if (tl) {
+          // THE BUILDERS — the menu's same two routes, chained on as a part in
+          // the key this sheet asked for.
+          const aOpts = { append: true, partKey: partKeyNow() };
+          close();
+          setTimeout(() => { try { if (_ambProgActions) _ambProgActions[tl.dataset.tool](aOpts); } catch (e) {} }, 0);
           return;
         }
-        if (!(ev.target.closest && ev.target.closest('.ap-next'))) return;
+        const hb = t.closest && t.closest('.ap-hold .ambient-seg');
+        if (hb) { setHold(hb.dataset.hold | 0); return; }
+        const ub = t.closest && t.closest('.ap-bunit .ambient-seg');
+        if (ub) { ov.querySelectorAll('.ap-bunit .ambient-seg').forEach(b2 => b2.classList.toggle('active', b2 === ub)); return; }
+        if (!(t.closest && t.closest('.ap-next'))) return;
+        if (nextBtn.disabled) return;
         if (kind === 'open') {
           // An open part stores an OFFSET (keyOff = root - areaRoot), and a difference
           // is the same in either space — both ends of it are displayed here, so this
@@ -43304,7 +43615,7 @@
           const cfg0 = E.getCfg() || {};
           if (!cfg0.prog) cfg0.prog = { on: true, name: '', chords: [] };
           const _bu = ((ov.querySelector('.ap-bunit .ambient-seg.active') || {}).dataset || {}).bunit;
-          _ambProgAppendOpenPart(cfg0.prog, ov.querySelector('.ap-name').value,
+          _ambProgAppendOpenPart(cfg0.prog, nameInp.value,
             parseFloat(ov.querySelector('.ap-bars').value),
             (r0 === aRoot && sc0 === aScale) ? null : { root: r0, scale: sc0 }, hold, aRoot,
             _bu === 'chg' ? 'chg' : null);
@@ -43314,13 +43625,11 @@
           try { persistWorkspace(); } catch (e) {}
           return;
         }
-        const r = rootSel.value | 0, sc = scaleSel.value;
-        const unchanged = (r === aRoot && sc === aScale);
+        const s0 = sources.find(s2 => s2.id === pick.src), it = s0 && s0.list[pick.i];
+        if (!it) return;
+        const nm = (nameInp.value || '').trim() || it.name;
         close();
-        // Next tick, so this click doesn't reach the menu's own dismiss listener.
-        setTimeout(() => { try {
-          _ambOpenGlobalProgMenu(E, x || 40, y || 120, { append: true, partKey: unchanged ? null : { root: unshift(r), scale: sc } });
-        } catch (e) {} }, 0);
+        _ambProgApplyPick(E, nm, it.chords.map(_ambCloneChord), it.parts, { append: true, partKey: partKeyNow(), noShift: true });
       });
     }
     // Change (or clear) an existing part's key. Clearing returns it to the area
@@ -43397,7 +43706,10 @@
       parts.push(e);
       prog.parts = parts;
     }
-    function _ambProgAppendPart(prog, name, chords, partKey) {
+    // `noShift`: the chords are ALREADY in the part's key (the Add part sheet resolves
+    // them there), so the first-chord-onto-the-root shift below must not run — it
+    // would re-root a progression that does not start on its tonic.
+    function _ambProgAppendPart(prog, name, chords, partKey, noShift) {
       if (!Array.isArray(chords) || !chords.length) return;
       // Adding changes is what turns them on, now that no switch does.
       prog.on = true;
@@ -43408,7 +43720,7 @@
       // the key so everything key-dependent follows while the part plays —
       // roman numerals, quantize, and a transition's diatonic walk.
       // Transitions carry no root and are skipped, not shifted.
-      if (partKey && Number.isFinite(partKey.root)) {
+      if (!noShift && partKey && Number.isFinite(partKey.root)) {
         const c0 = add.find(c => c && !c.transition && Number.isFinite(c.root));
         const off = c0 ? ((((partKey.root | 0) - (c0.root | 0)) % 12) + 12) % 12 : 0;
         if (off) add = add.map(c => (c && !c.transition) ? _ambChordShift(c, off) : c);
@@ -43868,17 +44180,12 @@
       // mostly empty. Three affordances for one job, in one object.
       // The arrows are small TARGETS (13px), which is only acceptable because the
       // ⋯ menu carries the same two actions at full size and names them.
+      // ▤ PARTS V2 (2026-10-03): the rail's ▲▼ arrows are gone — Play earlier /
+      // later live in ⋯ at full size — and what is left is a NUMBER BADGE that is
+      // still the drag handle (`_ambWirePovDrag` finds `.ambient-pov-ord[data-povgrab]`).
       const _povOrdHtml = (card) => {
         if (!card.ord) return '<span class="ambient-pov-ord pov-ord-none" title="A section — it runs over the changes rather than taking a turn in the order"><b>·</b></span>';
-        const last = _povCards.filter(c => c.ord).length;
-        const up = card.ord > 1, dn = card.ord < last;
-        return '<span class="ambient-pov-ord" data-povgrab="' + card.k + '" title="Play step ' + card.ord + ' — drag to reorder">' +
-          '<span role="button" tabindex="0" class="pov-arw' + (up ? '' : ' is-dis') + '" data-pov="' +
-            (up ? ('stepmv:' + card.k + ':-1') : 'noop') + '" title="' + (up ? 'Play this earlier' : 'Already first') + '">▲</span>' +
-          '<b>' + card.ord + '</b>' +
-          '<span role="button" tabindex="0" class="pov-arw' + (dn ? '' : ' is-dis') + '" data-pov="' +
-            (dn ? ('stepmv:' + card.k + ':1') : 'noop') + '" title="' + (dn ? 'Play this later' : 'Already last') + '">▼</span>' +
-          '<i>⠿</i></span>';
+        return '<span class="ambient-pov-ord" data-povgrab="' + card.k + '" title="Play step ' + card.ord + ' — drag to reorder (or ⋯ → Play earlier / later)"><b>' + card.ord + '</b></span>';
       };
       const _povFirstOrd = (card) => {
         for (let i = 0; i < _povCards.length; i++) if (_povCards[i].oi === card.oi && _povCards[i].first) return _povCards[i].ord;
@@ -43941,83 +44248,37 @@
              '<span role="button" tabindex="0" data-pov="stepplays:' + card.k + ':1" title="One more">+</span></span>')
         : '');
       const namesFirst = _ambPovNamesOn(el);
-      let h = '<div class="ambient-pov-bar">' +
-        // ＋ PART LEADS THE BAR. It used to sit at the far end of the chain,
-        // after every chord chip — so on a long progression it was pushed off
-        // the first screenful and had to be hunted for, and it read as an
-        // afterthought rather than the way you build the arrangement. It is
-        // also now the ONLY place a part is created (the Scheduler's ＋ is
-        // gone — that lane navigates, it does not author).
-        '<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="addpart" ' +
-          'title="Add a part — a new set of changes, or a block with no changes at all">＋ Part</span>' +
-        // ↻ PLAY A PART AGAIN — the one thing the written order can never say, so
-        // it needs its own door beside ＋ Part rather than living in a popover.
-        // A feature is not done until its surface is reachable from where the
-        // user already is.
-        ((Array.isArray(prog.parts) && _ambOrderParts(cfg).length > 1)
-          ? ('<span role="button" tabindex="0" class="ambient-pov-addpart" data-pov="stepaddmenu" ' +
-             'title="Play one of these parts again later in the round — the same part, a second turn in the order">\u21bb Play again</span>')
-          : '') +
-        // SALT and ORDER open as popovers from here. They are things you do TO
-        // the progression on screen, so they belong on its own bar rather than
-        // as two more accordions below it — and as accordions they pushed the
-        // matrices further down every time they were opened.
-        // SALT IS THE LOUD ONE (2026-09-19, "Salt needs to be a larger/louder
-        // option since it's so crucial"): its own class, filled in Salt's hue,
-        // and it SAYS whether anything is on rather than only naming itself —
-        // a chip that looks identical at 0 and at full is a readout that does
-        // not read.
-        // ▤ ARRANGEMENT — the whole piece at a glance, and where the ORDER OF
-        // PLAY (the part chain) is edited. Its only other door is the ▤ in the
-        // Scheduler's pass row, which lives inside the Advanced block and
-        // measures 0x0 until you turn that on — so the chain editor was
-        // effectively unreachable. Parts are authored on this bar; the order
-        // they play in belongs next to them.
-        // NOT "Arrangement" — that is the name of the tab this button sits in, and
-        // a button repeating its own container's name says nothing about what it
-        // opens. It opens the whole piece laid out end to end: the song map.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="arrmap" ' +
-          'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤ Song map</span>' +
-        // CADENCE IS NOT HERE. It belongs to a PART — one cadence per part —
-        // and this row is the area's. It sat here for the no-parts case, which
-        // put it beside \u25a4 Song map on the commonest project shape and read as
-        // an area-wide setting (2026-09-19: "there should always be a Cadence
-        // button on the Part; when there's only one part it's next to Song map
-        // and it should not be"). Every part header carries its own now,
-        // INCLUDING the part-less header (`.ambient-pov-solohdr`), so there is
-        // no shape left for this to cover.
-        // WHICH ROUND. A round is one trip through all the parts; with an
-        // arrGrid the order differs from one to the next, so the strip shows one
-        // round at a time and this says which — exactly as the Scheduler is told
-        // which pass. Absent at one round, so nothing changes for a progression
-        // that plays the same way every round.
+      // ▤ PARTS V2 — ONE HEADER ROW (2026-10-03, user: "it feels cluttered"). It was
+      // three: ＋ Part / ▤ Song map / ♪ Names, then an always-on Versions strip, then
+      // a rule. Now: the VERSION as one chip (its menu switches, saves and deletes —
+      // always present, so the door nobody could find stays found), the label mode
+      // as a two-way switch instead of a button naming its own state, and Song map.
+      // ＋ Part moved to the FOOT of the list, where the part it adds appears;
+      // ↻ Play again moved into each part's ⋯ (it is something you do to a part).
+      const _vers = Array.isArray(prog.versions) ? prog.versions : [];
+      const _vCur = (Number.isFinite(prog.versionIdx) && _vers[prog.versionIdx]) ? _vers[prog.versionIdx].name : '';
+      let h = '<div class="ambient-pov-bar pov2-bar">' +
+        '<span role="button" tabindex="0" class="pov2-verchip" data-pov="vermenu" title="Versions — switch to a saved version of these changes, save the current one, or delete one">' +
+          esc(_vCur || (_vers.length ? 'Versions' : 'Versions')) + ' ▾</span>' +
+        '<span class="pov2-spacer"></span>' +
+        '<span class="pov2-seg" role="group" aria-label="Chord labels">' +
+          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? ' on' : '') + '" data-pov="' + (namesFirst ? 'noop' : 'names') + '" title="Show chord names">D G A</span>' +
+          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? '' : ' on') + '" data-pov="' + (namesFirst ? 'names' : 'noop') + '" title="Show Roman numerals">I IV V</span>' +
+        '</span>' +
+        '<span role="button" tabindex="0" class="pov2-iconbtn" data-pov="arrmap" aria-label="Song map" ' +
+          'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤</span>' +
+        // WHICH ROUND — unchanged; only present when rounds differ.
         ((function () {
           const _nr = Math.max(1, _ambPovRounds(cfg));
           if (_nr <= 1) return '';
           const _cur = Math.min(Math.max(0, el._povRound | 0), _nr - 1);
-          return '<span class="ambient-pov-round" title="A round is one trip through all the parts. With more than one, the order can differ each time — this is the one you are looking at and editing.">' +
-            '<span role="button" tabindex="0" data-pov="round:-1" title="Previous round">\u2039</span>' +
+          return '<span class="pov2-break"></span><span class="ambient-pov-round" title="A round is one trip through all the parts. With more than one, the order can differ each time — this is the one you are looking at and editing.">' +
+            '<span role="button" tabindex="0" data-pov="round:-1" title="Previous round">‹</span>' +
             '<b>round ' + (_cur + 1) + ' of ' + _nr + '</b>' +
-            '<span role="button" tabindex="0" data-pov="round:1" title="Next round">\u203a</span></span>' +
-            '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="roundsame" title="Play the same order every round \u2014 keeps the round you are looking at and drops the rest">\u21a9 same every round</span>';
+            '<span role="button" tabindex="0" data-pov="round:1" title="Next round">›</span></span>' +
+            '<span role="button" tabindex="0" class="ambient-pov-grpbtn" data-pov="roundsame" title="Play the same order every round — keeps the round you are looking at and drops the rest">↩ same every round</span>';
         })()) +
-        '<span role="button" tabindex="0" class="ambient-pov-namesbtn' + (namesFirst ? ' on' : '') + '" data-pov="names" title="' +
-          (namesFirst ? 'Showing chord NAMES first with the numeral after \u2014 click to lead with numerals' :
-                        'Showing ROMAN NUMERALS first with the name after \u2014 click to lead with chord names') + '">' +
-          (namesFirst ? '\u266a Names' : '\u2160 Numerals') + '</span>' +
-        '' + '</div>';
-      // ALWAYS THERE: a row that only appeared after the first capture was a door
-      // nobody could find (reported: "where is the Versions button").
-      {
-        h += '<div class="ambient-pov-vers">' +
-          '<span class="ambient-pov-verslbl">Versions</span>' +
-          (Array.isArray(prog.versions) ? prog.versions : []).map((v, vi) => '<span role="button" tabindex="0" class="ambient-pov-ver' + (vi === prog.versionIdx ? ' on' : '') + '" data-pov="ver:' + vi + '" title="Switch to “' + esc(v.name) + '”">' + esc(v.name) +
-            // ✕ its own `data-pov`, so the strip's closest() finds IT, not the switch
-            '<span role="button" tabindex="0" class="ambient-pov-verdel" data-pov="verdel:' + vi + '" title="Delete “' + esc(v.name) + '”" aria-label="Delete version">\u2715</span>' +
-            '</span>').join('') +
-          '<span role="button" tabindex="0" class="ambient-pov-ver ambient-pov-veradd" data-pov="veradd" title="Save the current progression as a new version">＋</span>' +
-          '</div>';
-      }
+        '</div>';
       // THE STRIP IS THE ORDER OF PLAY, NOT THE WRITTEN ORDER. `ranges` is still
       // the per-part chord window (a part is a contiguous run, and every chip
       // below indexes the written list) — but WHICH cards are drawn, and in what
@@ -44040,161 +44301,97 @@
         ranges.forEach(r => { if (!out.some(x => x.r === r)) out.push({ r, ord: 0, first: true, plays: 1, k: -1 }); });
         return out;
       })();
+      // ▤ PARTS V2 — A CARD PER PART: number · name over ONE quiet meta line ·
+      // ⋯ — then the chords, each chip as WIDE AS IT IS HELD (the cadence drawn,
+      // not just stated), then the two doors that matter most as full buttons:
+      // ✎ Edit changes (purple, the chords) and ⧖ Cadence (teal, the timing). An
+      // OPEN part has no chords, so it carries one full-width ⏸ Length instead.
+      // Everything else a part can do is in ⋯; non-default state (an own key,
+      // plays ×N, a hang) still shows on the card so it is never hidden.
+      const _povKeyMeta = (r) => {
+        if (r.pi < 0) return esc(cfg.keyOn ? _ambKeyLabel(kRoot, kScale) : 'Chromatic');
+        if (r.key) return '<span role="button" tabindex="0" class="pov2-keyown" data-pov="partkey:' + r.pi + '" title="This part plays in its own key — the area key is unchanged. Click to change or clear it.">' +
+          esc(_ambKeyLabel(_ambPartKeyShifted(r.key, vShift).root, r.key.scale)) + '</span>';
+        return '<span role="button" tabindex="0" class="pov2-keyarea" data-pov="partkey:' + r.pi + '" title="Follows the area key — click to give this part a key of its own">' +
+          esc(cfg.keyOn ? _ambKeyLabel(kRoot, kScale) : 'Chromatic') + '</span>';
+      };
+      const _povCadOf = (pi) => { try { return _ambCadence(cfg, pi < 0 ? 0 : pi) || []; } catch (e) { return []; } };
+      const _povDots = (card) => _povMenuHtml(card);
       _povCards.forEach(card => {
         const r = card.r;
-        // ONE CARD PER PLAY STEP. The header used to force a row break in a single
-        // flat strip (flex-basis 100%), so where one part ended and the next
-        // began was left to the reader to infer.
-        // A REVISIT is the same part again: compact, no chord line, and none of
-        // the part's own ops — cadence, key and rename belong to the part and are
-        // drawn once, on its first card.
+        // A REVISIT is the same part again: compact — number, name, "same as", ✕.
+        // (It used to call `_povMoveHtml`, deleted 2026-08-23, so any arrangement
+        // that played a part twice threw here and left the strip blank.)
         if (!card.first) {
-          h += '<div class="ambient-pov-part pov-part-revisit" data-povstep="' + card.k + '"' +
+          h += '<div class="ambient-pov-part pv2 pov-part-revisit" data-povstep="' + card.k + '"' +
             ' data-povpi="' + r.pi + '"' + _ambPartAttr(r.pi) + '>' +
-            _povOrdHtml(card) +
-            '<div class="ambient-pov-parthdr">' +
-              '<span class="ambient-pov-partname pov-revname">' + esc(r.name || _ambProgTitle(prog.name)) + '</span>' +
-              '<span class="ambient-pov-revtag" title="The same part again — one part, played more than once">↻ same as ' + (_povFirstOrd(card) || 1) + '</span>' +
-              '<span class="ambient-pov-partops">' + _povMoveHtml(card) +
-                '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partrm" data-pov="stepdel:' + card.k + '" title="Remove this play of ' + esc(r.name || 'the part') + ' — the part itself stays">✕</span>' +
-              '</span></div></div>';
+            '<div class="pov2-head">' + _povOrdHtml(card) +
+              '<div class="pov2-id"><span class="ambient-pov-partname pov-revname">' + esc(String(r.name || _ambProgTitle(prog.name)).replace(/^\s*\d+\s*\u00b7\s*/, '')) + '</span>' +
+                '<span class="pov2-meta">↻ same as ' + (_povFirstOrd(card) || 1) + '</span></div>' +
+              '<span role="button" tabindex="0" class="pov2-iconbtn ambient-pov-partrm" data-pov="stepdel:' + card.k + '" aria-label="Remove this play" title="Remove this play of ' + esc(r.name || 'the part') + ' — the part itself stays">✕</span>' +
+            '</div></div>';
           return;
         }
-        h += '<div class="ambient-pov-part' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' +
-          card.k + '" data-povpi="' + r.pi + '"' + _ambPartAttr(r.pi) + '>' + _povOrdHtml(card);
+        h += '<div class="ambient-pov-part pv2' + (r.open ? ' pov-part-open' : '') + '" data-povstep="' +
+          card.k + '" data-povpi="' + r.pi + '"' + _ambPartAttr(r.pi) + '>';
+        const nameHtml = (r.pi < 0)
+          ? '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="progren" title="Rename these changes">' + esc(_ambProgTitle(prog.name)) + '</span>'
+          // the badge already says the number — drop the label's own "N · " prefix
+          : '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(String(r.name || '').replace(/^\s*\d+\s*\u00b7\s*/, '')) + '</span>';
         if (r.open) {
-          // A part with no changes: name, length, and the same ops as any other
-          // part. It reads as a block of time because that is what it is — the
-          // harmony holds through it.
-          h += '<div class="ambient-pov-parthdr ambient-pov-openhdr">' +
-            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename this part">' + esc(r.name) + '</span>' +
-            '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) +
-              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="This part plays in ' + esc(_ambKeyLabel(_ambPartKeyShifted(r.key, vShift).root, r.key.scale)) + '. Click to change or clear it.">' + _ambPovKeyHtml(_ambPartKeyShifted(r.key, vShift), kRoot, kScale) + '</span>') : '') +
-              _povMenuHtml(card) +
-            '</span></div>' +
-            '<span role="button" tabindex="0" class="ambient-pov-open' + (r.hold ? ' pov-hold' : '') + '" data-pov="openlen:' + r.pi + '" title="No changes here — ' + (r.hold ? 'the harmony HOLDS' : 'the changes keep running underneath') + ' for ' + (r.bars || 4) + ' bars. Click to change the length.">' +
-              '<b>' + (r.hold ? 'holds' : 'no changes') + '</b><span class="ambient-pov-nm">' + esc(_ambBlockLenLabel(r.bars, r.bunit)) + '</span></span>';
-          h += '</div>';
+          const lenLbl = _ambBlockLenLabel(r.bars, r.bunit);
+          h += '<div class="pov2-head">' + _povOrdHtml(card) +
+              '<div class="pov2-id">' + nameHtml + '<span class="pov2-meta">' + _povKeyMeta(r) + ' · ' + esc(lenLbl) + '</span></div>' +
+              _povPlaysHtml(card) + _povHangHtml(card) + _povDots(card) +
+            '</div>' +
+            '<div class="pov2-openblk">' + (r.hold ? 'holds · the harmony holds through it' : 'no changes · the changes keep running underneath') + '</div>' +
+            '<div class="pov2-acts"><span role="button" tabindex="0" class="pov2-act pov2-time" data-pov="openlen:' + r.pi + '" title="How long this part runs">⏸ Length <i>' + esc(lenLbl) + '</i></span></div>' +
+            '</div>';
           return;
         }
-        if (r.pi >= 0) {
-          // CADENCE AT A GLANCE — how long each of these chords is held. Flat
-          // 1-1-1-1 says so plainly rather than hiding; anything else shows the
-          // shape. Only on a CHANGES part: an open part carries no chords.
-          const _cad = _ambCadence(cfg, r.pi);
-          const _cadFlat = _cad.length && _cad.every(v => Math.abs(v - _cad[0]) < 1e-6);
-          const _cadTot = _cad.reduce((a, v) => a + v, 0);
-          // ALWAYS SHOWN (2026-09-19). It was hidden on a FLAT cadence — "the
-          // count already says it" — which is true of the READOUT and false of
-          // the DOOR: with an even cadence there was no way in but the ⋯ menu,
-          // and that is the state you are most likely to want to change. Flat
-          // still reads quietly (no `on`), so a shaped cadence stands out.
-          const _cadHtml = (_cad.length)
-            ? ('<span role="button" tabindex="0" class="ambient-pov-cad' + (_cadFlat ? '' : ' on') + '" data-pov="cad:' + r.pi + '"'
-               + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_cad)) + ' = '
-               + esc(_ambFmtBpc(_cadTot)) + ' bars). Click to edit or generate a new shape.">'
-               + '<i>\u29d6</i>' + esc(_cadFlat ? ('even \u00d7' + _cad.length) : _ambCadStr(_cad)) + '</span>')
-            : '';
-          h += '<div class="ambient-pov-parthdr">' +
-            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="partren:' + r.pi + '" title="Rename these changes">' + esc(r.name) + ' <em>' + (r.to - r.from) + '</em></span>' +
-            '<span class="ambient-pov-partops">' + _povPlaysHtml(card) + _povHangHtml(card) + _cadHtml +
-              // ✎ THE WHOLE SET OF CHANGES. A chord chip below opens just that
-              // chord now, so the part needs its own door rather than being the
-              // thing you got by accident when you meant one chord.
-              '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partedit" data-pov="partedit:' + r.pi + '"' +
-                ' title="Edit these changes \u2014 every chord in ' + esc(r.name || 'this part') + ', their lengths and alternates">\u270e Part</span>' +
-              // A part's own key is a modulation, so it is named right on the part
-              // header rather than buried — you can see where the music changes key.
-              // A KEY CHIP ONLY WHEN THE PART MODULATES. Following the area key is
-              // the same fact on every card, so it read as repetition rather than
-              // information; ⋯ → Key… sets one. Same for the ROOT, which agrees
-              // with the key root under transpose and is otherwise readable off
-              // the first chord chip directly below — it earns the row only when
-              // the two genuinely differ, which is exactly what it is for.
-              (r.key ? ('<span role="button" tabindex="0" class="ambient-pov-partkey on" data-pov="partkey:' + r.pi + '" title="These changes play in ' + esc(_ambKeyLabel(_ambPartKeyShifted(r.key, vShift).root, r.key.scale)) + ' — the area key is unchanged. Click to change or clear it.">' + _ambPovKeyHtml(_ambPartKeyShifted(r.key, vShift), kRoot, kScale) + '</span>') : '') +
-              _povRootIfDiffers(r) +
-              _povMenuHtml(card) +
-            '</span></div>';
-        }
-        if (r.pi < 0) {
-          // NO CHAIN — one set of changes, which still HAS a name, and until now
-          // nothing on this strip said what it was or let you change it (the
-          // name and its ✎ live on a part header, and `_ambRepairParts`
-          // collapses a lone part covering the whole cycle, so the common
-          // project has no part to hang one on). Same header, same handle; the
-          // per-part ops (key, move, remove) are deliberately absent — there is
-          // no part to move, and the key here IS the area key.
-          // THE KEY THESE CHANGES PLAY IN, and what they are rooted on. A part
-          // header has carried its key since per-part keys landed; the part-LESS
-          // header carried nothing, so the one project shape most people have
-          // said nothing about key at all. Two different facts, both wanted:
-          //   ♪ <key>   the key/mode in force (the AREA key here — there is no
-          //             part to hold one of its own)
-          //   ⌂ <root>  what the changes are ROOTED on: the sounding root of the
-          //             first chord. Under transpose that lands on the key root
-          //             and the two agree; with Key off, or a progression that
-          //             does not start on its tonic, they differ — which is
-          //             exactly when you want to see both.
-          const _kl = esc(_ambKeyLabel(kRoot, kScale));
-          const _rootH = _ambPovRootHtml(chords, r.from, r.to, vShift);
-          h += '<div class="ambient-pov-parthdr ambient-pov-solohdr">' +
-            '<span class="ambient-pov-partname" role="button" tabindex="0" data-pov="progren" title="Rename these changes">' +
-              esc(_ambProgTitle(prog.name)) + ' <em>' + (r.to - r.from) + '</em></span>' +
-            '<span class="ambient-pov-partkey" title="' + (cfg.keyOn
-                ? ('These changes play in ' + _kl + ' (the area key).')
-                : ('No key is set \u2014 the area is chromatic.')) + '">' +
-              '<i>♪</i> ' + (cfg.keyOn ? _kl : 'Chromatic') +
-            '</span>' + _rootH +
-            // ✎ THE WHOLE SET OF CHANGES — the part-less header needs the door
-            // too, since its chord chips now open one chord each.
-            '<span role="button" tabindex="0" class="ambient-pov-partbtn ambient-pov-partedit" data-pov="partedit:0"' +
-              ' title="Edit these changes \u2014 every chord, their lengths and alternates">\u270e Part</span>' +
-            // …AND ITS CADENCE, the same chip every part header carries. With no
-            // chain these changes ARE the one part, so `cad:0` is its cadence —
-            // which is what the area row used to show from over here.
-            ((function () {
-              const _c0 = _ambCadence(cfg, 0);
-              if (!_c0.length) return '';
-              const _f0 = _c0.every(v => Math.abs(v - _c0[0]) < 1e-6);
-              const _t0 = _c0.reduce((a, v) => a + v, 0);
-              return '<span role="button" tabindex="0" class="ambient-pov-cad' + (_f0 ? '' : ' on') + '" data-pov="cad:0"'
-                + ' title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(_c0)) + ' = '
-                + esc(_ambFmtBpc(_t0)) + ' bars). Click to edit or generate a new shape.">'
-                + '<i>\u29d6</i>' + esc(_f0 ? ('even \u00d7' + _c0.length) : _ambCadStr(_c0)) + '</span>';
-            })()) +
-            '</div>';
-        }
-        h += '<div class="ambient-pov-chords">';
+        const cad = _povCadOf(r.pi);
+        const cadFlat = cad.length && cad.every(v => Math.abs(v - cad[0]) < 1e-6);
+        const cadTot = cad.reduce((a2, v) => a2 + v, 0);
+        const cadTxt = cad.length ? (cadFlat ? 'even' : _ambCadStr(cad)) : '';
+        const pAttr = (r.pi < 0) ? 0 : r.pi;
+        h += '<div class="pov2-head">' + (r.pi < 0 ? '' : _povOrdHtml(card)) +
+            '<div class="pov2-id">' + nameHtml + '<span class="pov2-meta">' + _povKeyMeta(r) +
+              (cadTot > 0 ? (' · ' + esc(_ambFmtBpc(cadTot)) + ' bar' + (Math.abs(cadTot - 1) < 1e-6 ? '' : 's')) : '') + '</span></div>' +
+            (r.pi < 0 ? '' : (_povPlaysHtml(card) + _povHangHtml(card) + _povDots(card))) +
+          '</div>';
+        h += '<div class="ambient-pov-chords pov2-chords">';
         for (let i = r.from; i < r.to; i++) {
           // The strip is the SCORE — written chords in written order, so the
           // playhead's identity lookup and the ×N alt badge still line up — but
           // rendered in the KEY YOU HEAR (_ambProgViewShift). Per-cycle
-          // resolution (alts / take-reroll / ↻ order) is deliberately NOT folded
-          // in here: it changes every pass, and the glowing chip (see
-          // _ambProgOverviewPlayheadCore) relabels itself to the sounding chord.
+          // resolution is NOT folded in; the glowing chip relabels itself.
           const c = _ambChordShift(chords[i], vShift);
-          // Roman numerals are relative to the key THIS chip plays in — a part
-          // with its own key modulates, so the chorus's I must read I and not IV.
+          // Roman numerals are relative to the key THIS chip plays in.
           const pk = _ambPartKeyShifted(_ambPartKeyForSlot(prog, i), vShift);
           const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + ' · click to edit">' +
-            // ONE READING AT A TIME. The chip used to print both — the name and
-            // the numeral in parentheses — which is the toggle failing to be a
-            // toggle: it only moved the emphasis, so the strip stayed twice as
-            // dense whichever mode you were in. The OTHER reading is on the
-            // tooltip, which already carries it. `.ambient-pov-nm` is still the
-            // NAME and `.ambient-pov-rn` the numeral, so the playhead can tell
-            // which one is on screen and relabel THAT one (see the playhead).
+          // AS WIDE AS IT IS HELD: grow ∝ bars (the 72px floor keeps a relabel
+          // from resizing it — see .ambient-pov-chord).
+          const held = cad[i - r.from];
+          const grow = (Number.isFinite(held) && held > 0) ? (Math.round(held * 1000) / 1000) : 1;
+          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" style="width:min(100%,' + Math.max(44, Math.round(grow * 64)) + 'px)" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (Number.isFinite(held) ? (' · ' + esc(_ambFmtBpc(held)) + ' bar' + (Math.abs(held - 1) < 1e-6 ? '' : 's')) : '') + ' · click to edit this chord">' +
             (namesFirst
               ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>')
               : ('<b class="ambient-pov-rn">' + esc(rn || nm) + '</b>')) +
             (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
             '</span>';
         }
-        h += '</div></div>';
+        h += '</div>';
+        h += '<div class="pov2-acts">' +
+            '<span role="button" tabindex="0" class="pov2-act pov2-edit" data-pov="partedit:' + pAttr + '" title="Edit these changes — every chord, their lengths and alternates">✎ Edit changes</span>' +
+            (cad.length ? ('<span role="button" tabindex="0" class="pov2-act pov2-time' + (cadFlat ? '' : ' pov2-shaped') + '" data-pov="cad:' + pAttr + '" title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(cad)) + ' = ' + esc(_ambFmtBpc(cadTot)) + ' bars). Click to edit or generate a new shape.">⧖ Cadence <i>' + esc(cadTxt) + '</i></span>') : '') +
+          '</div>';
+        h += '</div>';
       });
+      // ＋ ADD PART — at the FOOT of the list, where the part it adds will appear.
+      h += '<span role="button" tabindex="0" class="ambient-pov-addpart pov2-addpart" data-pov="addpart" ' +
+        'title="Add a part — a new set of changes, or a block with no changes at all">＋ Add part</span>';
       // (＋ Part now leads the bar at the top of this strip — see above.)
       el.innerHTML = h;
       try { _ambPovMarkSel(E); } catch (e) {}
@@ -44574,9 +44771,8 @@
               fn: () => go('stepplaysto:' + k + ':' + n2) });
             showCtxMenu(r0.left, r0.bottom, sub);
           }, 0) });
-          items.push({ label: '⧖ Cadence…' + (cadTxt ? ('  ' + cadTxt) : ''), fn: () => go('cad:' + pi) });
-        } else {
-          items.push({ label: '⏸ Length…  ' + _ambBlockLenLabel(P.bars, P.bunit), fn: () => go('openlen:' + pi) });
+          // ⧖ Cadence / ⏸ Length are full buttons ON THE CARD now (Parts V2) — a
+          // second copy here is how two surfaces drift.
         }
         items.push({ label: '♪ Key…  ' + keyTxt, fn: () => go('partkey:' + pi) });
         items.push({ label: '⌛ Hangs…  ' + hangTxt, fn: () => go('hang:' + pi) });
@@ -44588,6 +44784,8 @@
           // card.ord here was undefined and both move items silently vanished.
           const ord = ci + 1;
           items.push('hr');
+          // ↻ PLAY AGAIN — was a button on the bar; it is something you do to a part.
+          if (Number.isFinite(card.oi)) items.push({ label: '↻ Play again later in the round', fn: () => go('stepadd:' + card.oi) });
           items.push({ label: '▲ Play earlier', disabled: ord <= 1, fn: () => go('stepmv:' + k + ':-1') });
           items.push({ label: '▼ Play later', disabled: ord >= last, fn: () => go('stepmv:' + k + ':1') });
         }
@@ -44790,6 +44988,20 @@
       // Label mode is a VIEW preference on the strip element (the panel is built
       // once, so it survives), not a config field — nothing about the music changes.
       if (op === 'cad') { const pi = a[1] | 0; setTimeout(() => { try { _ambCadenceModal(E, pi); } catch (e) {} }, 0); return; }
+      if (op === 'vermenu') {
+        // ▤ PARTS V2: Versions is one chip; this is everything its strip did.
+        const r0 = t.getBoundingClientRect();
+        const go = (v) => _ambProgOverviewAct(E, { preventDefault() {},
+          target: { closest: () => ({ getAttribute: () => v, getBoundingClientRect: () => r0 }) } });
+        const vs = Array.isArray(prog.versions) ? prog.versions : [];
+        const items = [{ label: vs.length ? 'Versions of these changes' : 'No saved versions yet', disabled: true }];
+        vs.forEach((v, vi) => items.push({ label: (vi === prog.versionIdx ? '✓ ' : '   ') + v.name, fn: () => go('ver:' + vi) }));
+        items.push('hr');
+        items.push({ label: '＋ Save the current changes as a version', fn: () => go('veradd') });
+        if (vs.length) { items.push('hr'); vs.forEach((v, vi) => items.push({ label: '✕ Delete “' + v.name + '”', fn: () => go('verdel:' + vi) })); }
+        setTimeout(() => { try { showCtxMenu(r0.left, r0.bottom, items); } catch (e) {} }, 0);
+        return;
+      }
       if (op === 'names') { const ov = _ambGet(E, 'ambient-prog-overview'); if (ov) { ov._povNames = !_ambPovNamesOn(ov); ov._sig = ''; _ambRenderProgOverview(E); } return; }
       // Length of a part that carries NO changes. A menu of musical lengths
       // rather than a raw prompt — a free-text bar count is what made section
@@ -47765,6 +47977,9 @@
       // `_sig`-cached on layer identity and does nothing when only the harmony
       // moved.
       try { if (typeof window._v2RepaintViz === 'function') window._v2RepaintViz(E); } catch (e) {}
+      // ◆ Area unit row — BEFORE the group sweep, which hides ▤ Parts if its
+      // body has nothing visible left.
+      try { _ambSyncAreaUnitRow(E); } catch (e) {}
       // The renderers above are what flip those bodies, so the header visibility
       // is settled HERE rather than only at panel build.
       try { _ambProgGrpSync(E); } catch (e) {}
@@ -48940,7 +49155,9 @@
     function _ambSyncLevelUI(E, key, v) {
       const host = E && document.getElementById(E.hostId); if (!host || key == null) return;
       // Push Level to the live per-layer gain so a manual fader/slider sweeps held voices in real time.
-      try { const e = E && E.mod && E.mod[key]; if (e && e.levelGain) e.levelGain.gain.value = _ambLevelGain(v); } catch (x) {}
+      // Only when the viewed area IS the playing one: `key` names a chain of the
+      // PLAYING area, and per-area layer ids mean it can be another area's layer.
+      try { const e = E && E.mod && E.mod[key]; if (e && e.levelGain && _ambLiveApplyOK(E)) e.levelGain.gain.value = _ambLevelGain(v); } catch (x) {}
       const s = String(v);
       // Mixer channel fader + its % readout.
       let mx = null; try { mx = host.querySelector('.ambient-mix-slider[data-mixkey="' + key + '"]'); } catch (e) {}
@@ -54460,6 +54677,13 @@
     function _ambApplyRandomInstVoice(L, type) {
       if (!L) return;
       try {
+        // v2 reads `L.instrument.tone`, never the flat `L.tone` this writes for v1.
+        if (type === 'v2') {
+          if (!L.instrument || typeof L.instrument !== 'object') return;
+          const pool = _ambInstVoicePool();
+          if (pool.length) L.instrument.tone = pool[Math.floor(Math.random() * pool.length)];
+          return;
+        }
         if (type === 'beat') {
           const kits = (typeof _ambDrumKits === 'function') ? _ambDrumKits() : [];
           if (kits.length > 1) L.kit = kits[Math.floor(Math.random() * kits.length)].id;
@@ -54520,6 +54744,41 @@
     // the rhythm changes per take AND is reproducible (same take ID = same rhythm).
     // A RANDOM-gen Beat already re-rolls off cfg.seed, so there's nothing to do.
     // Additive/gated (absent flag → untouched), so the harness is unaffected.
+    // ── TAKE HISTORY ─────────────────────────────────────────────────────────
+    // A take IS the area seed, and 🎲 New take used to overwrite it with nothing
+    // kept — so a take you liked was gone one press later, while the label beside
+    // the button promised "the same ID replays it". `cfg.takes` remembers every
+    // roll: [{ seed, at }], oldest first, ADDITIVE and ABSENT by default (an area
+    // that has never rolled has no list). Tapping the Take label lists them.
+    // A function, not a `const`: normalize can run while this file is still loading.
+    function _ambTakesMax() { return 50; }
+    function _ambTakeRemember(cfg, seed) {
+      if (!cfg) return;
+      const s = (seed >>> 0) || 0; if (!s) return;
+      if (!Array.isArray(cfg.takes)) cfg.takes = [];
+      if (cfg.takes.some(t => t && (t.seed >>> 0) === s)) return;
+      cfg.takes.push({ seed: s, at: Date.now() });
+      if (cfg.takes.length > _ambTakesMax()) cfg.takes.splice(0, cfg.takes.length - _ambTakesMax());
+    }
+    // Before a seed changes: make sure the take being LEFT is on the list too, so
+    // the very first roll of an area can still be undone back to where it began.
+    function _ambTakeRoll(cfg, oldSeed, newSeed) {
+      if (!cfg) return;
+      if (!(Array.isArray(cfg.takes) && cfg.takes.length)) _ambTakeRemember(cfg, oldSeed);
+      _ambTakeRemember(cfg, newSeed);
+    }
+    function _ambTakeId(seed) { return ((seed >>> 0) || 0).toString(36).toUpperCase(); }
+    function _ambNormalizeTakes(cfg) {
+      if (cfg.takes == null) return;
+      const seen = new Set();
+      const out = (Array.isArray(cfg.takes) ? cfg.takes : []).filter(t => {
+        const s = t && (t.seed >>> 0);
+        if (!s || seen.has(s)) return false;
+        seen.add(s); return true;
+      }).map(t => ({ seed: t.seed >>> 0, at: Number.isFinite(t.at) ? t.at : 0 }));
+      if (out.length > _ambTakesMax()) out.splice(0, out.length - _ambTakesMax());
+      if (out.length) cfg.takes = out; else delete cfg.takes;
+    }
     function _ambApplyTakeReroll(L, seed) {
       if (!L || !L.takeReroll) return;
       const euclid = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid') || (L.type === 'arp' && L.euclid);
@@ -55018,6 +55277,17 @@
       if (typeof r.layerKey !== 'string' || !r.layerKey) {
         r.layerKey = (r.targets.length ? r.targets[0].slice(0, r.targets[0].indexOf('.')) : 'global');
       }
+      if (r.layerKey === 'global' && !r.targets.length) {
+        // A target-less AREA ramp was inert; the area block now has no picker, so
+        // aim it at BPM — but OFF and flat at the area tempo, so nothing that was
+        // silent starts moving on load. Turning it on is the user's move.
+        r.targets = ['global.bpm'];
+        r.on = false;
+        let bpm0 = 120;
+        try { bpm0 = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm(); } catch (e) {}
+        const pc = Math.max(0, Math.min(100, ((bpm0 - 40) / 260) * 100));
+        r.a = pc; r.b = pc;
+      }
       if (!Number.isFinite(r.a)) r.a = 0;
       if (!Number.isFinite(r.b)) r.b = 100;
       // Keep 2-decimal precision (not integer): over a wide range like BPM (40–300)
@@ -55050,6 +55320,24 @@
       if (['zero','hold'].indexOf(r.seqRest) < 0) r.seqRest = 'zero';
       return r;
     }
+    function _ambBusRampParams() {
+      const names = (typeof FX_NAMES !== 'undefined') ? FX_NAMES : [];
+      return [['level', 'Level', 0, 100]].concat(names.map(n => ['send.' + n, n + ' send', 0, 100]));
+    }
+    function _ambBusRampSet(cfg, id, key, v) {
+      if (typeof getBloomBus !== 'function') return;
+      try {
+        getBloomBus(id);
+        // Main reaches nothing until it is spliced in — a ramp on it must do that
+        // itself, since the editor may hold no setting that would.
+        if (id === 'a' && !_bloomMainSpliced) {
+          routeBloomBus('a', { entry: _ambBusCfg(cfg, 'a').entry });
+          _ambBloomMainResplice(true);
+        }
+        if (key === 'level') { if (typeof setBloomBusLevel === 'function') setBloomBusLevel(id, v); }
+        else if (key.indexOf('send.') === 0) setBloomBusSend(id, key.slice(5), v);
+      } catch (e) {}
+    }
     // Resolve a ramp target ("bed.level", "seq:3.intervalMs", "samp:1.chop")
     // to the { obj, key, min, max } it writes. null if the layer/param is gone.
     function _ambRampResolve(cfg, target) {
@@ -55058,6 +55346,17 @@
       if (dot < 0) return null;
       const head = target.slice(0, dot), key = target.slice(dot + 1);
       let obj = null, cat = head;
+      // ── BUS RAMPS (2026-10-02): a bus's Level and each FX send — "every layer on
+      // this bus at once" without writing any layer's own value (⇅ Mix and the
+      // layer's card ramps already write those). Drives the NODES only, never
+      // cfg.buses: the bus editor's values are the base, restored on stop.
+      if (head.indexOf('bus:') === 0) {
+        const bid = head.slice(4);
+        if (_AMB_BUS_IDS.indexOf(bid) < 0) return null;
+        const spec = _ambBusRampParams().find(p => p[0] === key);
+        if (!spec) return null;
+        return { min: spec[2], max: spec[3], set: (v) => _ambBusRampSet(cfg, bid, key, v) };
+      }
       if (head === 'global') {
         const spec = (_AMB_RAMP_PARAMS.global || []).find(p => p[0] === key);
         if (!spec) return null;
@@ -55296,6 +55595,11 @@
         if (!x) return;
         add(_ambLayerLabel(x, x.name || ('Layer ' + (i + 1))), 'v2:' + (x.id | 0), 'v2');
       });
+      // Mix buses — their ramps live in the bus editor (`bus:<id>` layerKey).
+      _AMB_BUS_IDS.forEach(id => {
+        const nm = _ambBusCfg(cfg, id).name;
+        g.push({ label: 'Bus — ' + nm, items: _ambBusRampParams().map(p => ({ value: 'bus:' + id + '.' + p[0], label: p[1], sec: _ambRampSection(p[0]) })) });
+      });
       // Global params (BPM) — always available.
       if (_AMB_RAMP_PARAMS.global) g.push({ label: 'Global', items: _AMB_RAMP_PARAMS.global.map(p => ({ value: 'global.' + p[0], label: p[1] })) });
       return g;
@@ -55496,9 +55800,15 @@
     // _ambRenderRamps into the [data-rampkey] list, the ＋ button is wired by a
     // delegated host listener (cards re-render, the listener survives).
     function _ambLayerRampsHtml(head) {
-      return '<div class="ambient-layer-ramps" data-rampkey="' + head + '">' +
-        '<div class="ambient-ramps-head-mini"><span class="ambient-mod-sub">Ramps</span>' +
-          '<button type="button" class="ambient-seg ambient-ramp-add" data-rampkey="' + head + '" title="Add a parameter ramp for this layer">＋ Ramp</button></div>' +
+      // THE AREA'S BLOCK IS A TEMPO RAMP (user, 2026-10-02: "misleading having it be
+      // the same component with just one target option"). BPM is the only area-wide
+      // target, so the block says so and the row has no target picker at all.
+      const tempo = head === 'global';
+      return '<div class="ambient-layer-ramps' + (tempo ? ' ambient-tempo-ramps' : '') + '" data-rampkey="' + head + '">' +
+        '<div class="ambient-ramps-head-mini"><span class="ambient-mod-sub">' + (tempo ? '♩ Tempo ramp' : 'Ramps') + '</span>' +
+          '<button type="button" class="ambient-seg ambient-ramp-add" data-rampkey="' + head + '" title="' +
+            (tempo ? 'Sweep this area’s tempo between two BPMs' : head.indexOf('bus:') === 0 ? 'Automate this bus’s level and sends — every layer on it at once' : 'Add a parameter ramp for this layer') + '">' +
+            (tempo ? '＋ Tempo ramp' : '＋ Ramp') + '</button></div>' +
         '<div class="ambient-layer-ramps-list"></div>' +
       '</div>';
     }
@@ -55519,7 +55829,9 @@
       return '<div class="ambient-ramp-row" data-ramp-id="' + id + '">' +
         '<div class="ambient-ramp-head">' +
           '<button type="button" class="ambient-toggle ambient-ramp-on" id="' + p + 'on">Ramp</button>' +
-          '<button type="button" class="ambient-select ambient-ramp-target" id="' + p + 'targets" title="Choose one or more layer parameters to drive">' + _ambRampTargetsLabel(r, cfg) + '</button>' +
+          (_ambRampIsTempo(r)
+            ? '<span class="ambient-ramp-fixed" title="This ramp drives the area’s tempo">♩ Tempo · BPM</span>'
+            : '<button type="button" class="ambient-select ambient-ramp-target" id="' + p + 'targets" title="Choose one or more layer parameters to drive">' + _ambRampTargetsLabel(r, cfg) + '</button>') +
           '<button type="button" class="ambient-seq-del" id="' + p + 'del" title="Delete ramp" aria-label="Delete ramp">✕</button>' +
         '</div>' +
         // Live sweep cue — the fill bar tracks the ramp's current position while
@@ -55545,13 +55857,21 @@
     // drive several params. But with a SINGLE target we show/enter the real unit
     // (BPM, ms, Level…) instead of a percent — far more intuitive. This returns
     // { min, max, name, unit } for the single-target case, else null.
+    // A ramp in the area's block that drives only BPM (or nothing yet). A legacy
+    // area ramp still carrying LAYER targets is not one — it keeps the picker so
+    // those targets can be seen and unticked.
+    function _ambRampIsTempo(r) {
+      if (!r || (r.layerKey || 'global') !== 'global') return false;
+      const ts = Array.isArray(r.targets) ? r.targets : [];
+      return ts.every(t => t === 'global.bpm');
+    }
     function _ambRampSingleUnit(r, cfg) {
       const ts = (r && Array.isArray(r.targets)) ? r.targets : [];
       if (ts.length !== 1) return null;
       const res = _ambRampResolve(cfg, ts[0]);
       if (!res || !(res.max > res.min)) return null;
-      const name = _ambRampTargetName(cfg, ts[0]);
-      const unit = /\.bpm$/i.test(ts[0]) ? 'BPM' : (/\(ms\)|ms$/i.test(name) ? 'ms' : '');
+      const name = (ts[0] === 'global.bpm') ? 'Tempo' : _ambRampTargetName(cfg, ts[0]);
+      const unit = /\.bpm$/i.test(ts[0]) ? 'BPM' : /^bus:/.test(ts[0]) ? '%' : (/\(ms\)|ms$/i.test(name) ? 'ms' : '');
       return { min: res.min, max: res.max, name: name, unit: unit };
     }
     const _ampPctToReal = (pct, u) => Math.round(u.min + (Math.max(0, Math.min(100, pct)) / 100) * (u.max - u.min));
@@ -55772,7 +56092,9 @@
       // changed nothing, and wiring a SECOND listener on the v2 host made one
       // press add TWO ramps. The only thing missing was the block itself, which
       // v2's card now appends (see `V2.render`).
-      const wraps = host.querySelectorAll('.ambient-layer-ramps[data-rampkey]');
+      // …plus the BUS EDITOR's block, which is a modal on <body>, outside the host.
+      const wraps = Array.from(host.querySelectorAll('.ambient-layer-ramps[data-rampkey]'))
+        .concat(Array.from(document.querySelectorAll('.amb-bus-modal .ambient-layer-ramps[data-rampkey]')));
       if (!wraps.length) return;
       const wired = [];
       wraps.forEach(w => {
@@ -55794,7 +56116,19 @@
       const newId = cfg.ramps.reduce((m, r) => Math.max(m, r.id | 0), 0) + 1;
       // Start with NO target so the picker's first selection IS the only target
       // (previously a default 'bed.level' lingered → "2 targets" after one pick).
-      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [], layerKey: layerKey || 'global', a: 0, b: 100, periodMs: 4000, wave: 'sine' }, newId, cfg));
+      const lk = layerKey || 'global';
+      if (lk === 'global') {
+        // ♩ TEMPO: already aimed at BPM, sweeping from the area's tempo up 20 and
+        // back over 16 bars — audible, musical, and a starting point to edit.
+        const bpm0 = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+        const u = { min: 40, max: 300 };
+        cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: ['global.bpm'], layerKey: 'global',
+          a: _ampRealToPct(bpm0, u), b: _ampRealToPct(bpm0 + 20, u), syncBars: true, periodBars: 16, periodMs: 4000, wave: 'sine' }, newId, cfg));
+      } else if (lk.indexOf('bus:') === 0) {
+        cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [lk + '.level'], layerKey: lk,
+          a: 100, b: 60, syncBars: true, periodBars: 8, periodMs: 4000, wave: 'sine' }, newId, cfg));
+      } else
+      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [], layerKey: lk, a: 0, b: 100, periodMs: 4000, wave: 'sine' }, newId, cfg));
       _ambRenderRamps(E);
       if (E.timer) { E._cfg = cfg; _ambStartRampClock(E); } // spin up the ramp clock if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -56479,7 +56813,15 @@
       const seedEl = document.getElementById(E.seedId);
       // Compact base-36 take ID (from cfg.seed) — reads as an id, not a scary
       // 10-digit number. Same seed → same id → same generated take.
-      if (seedEl) seedEl.textContent = 'Take ' + (cfg.seed >>> 0).toString(36).toUpperCase();
+      // ▾ once there is more than one take to go back to — the label is the door
+      // to the take history (`_takePicker`).
+      if (seedEl) {
+        const nT = Array.isArray(cfg.takes) ? cfg.takes.length : 0;
+        seedEl.textContent = 'Take ' + _ambTakeId(cfg.seed) + (nT > 1 ? ' ▾' : '');
+        seedEl.title = nT > 1
+          ? ('This area’s take ID. ' + nT + ' takes remembered — tap to go back to one.')
+          : 'This area’s take ID — the fingerprint of its random choices. Every 🎲 New take is remembered; tap to see them.';
+      }
       _ambRefreshPlayBtn(E);
       try { _ambRefreshCaptureBtn(E); } catch (e) {}
       // Mirror every slider's just-synced value into its numeric readout
@@ -56527,7 +56869,14 @@
         '</div>';
       let html =
         // Area tab strip (master Mix Bloom only) — switch / add / duplicate / delete.
-        ((E === _masterEng) ? _ambAreaStripHtml() : '') +
+        ((E === _masterEng) ? _ambAreaStripHtml(
+          '<div class="ambient-orch ambient-area-key" title="This area’s key: every layer in the area inherits it. A part can depart from it in ⇶ Arrangement, and a layer can follow its own.">' +
+            // no separate "♯ Key" label: the toggle IS the label (● Key / Chromatic)
+            '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn amb-keytoggle" id="ambient-key-toggle" ' +
+              'title="Chromatic \u27f7 Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
+            '<span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span>' +
+            keyRowHtml +
+          '</div>') : '') +
         // ⚙ Configure drawer DISSOLVED: generation actions + Now Playing are now
         // always-visible panel chrome (below); the area-level settings moved into
         // the Areas body; Start was deleted (it duplicated Groove → Humanize); the
@@ -56578,7 +56927,11 @@
             // drew the same parts again as a lane, so "which one owns parts?"
             // had no answer. See the merged pane below.
 
-            '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — faders + master fade + global FX">🎚️ Mixer</button>' +
+            // ✦ GLOBAL FX — its own tab, left of Mixer (user, 2026-10-02). It was a
+            // collapsed <details> at the BOTTOM of the Mixer pane, under the faders
+            // and fades: the master colour/dynamics/space were a scroll and a tap away.
+            '<button type="button" class="ambient-tabsec-tab" data-tab="globalfx" role="tab" title="Global FX — master Warmth, Width, Dynamics, Vinyl, Tape echo and Reverb">✦ Global FX</button>' +
+            '<button type="button" class="ambient-tabsec-tab" data-tab="mixer" role="tab" title="Mixer — layer faders, master volume and fade">🎚️ Mixer</button>' +
             // 🎧 MONITOR — one chip per layer, tap to play or silence it. The
             // Mixer answers "how loud"; this answers "what is playing", which
             // is a different question and was two presses per layer away (open
@@ -56597,16 +56950,7 @@
              // changes that inherit it. A move is a delete plus an add: every id below
              // is UNCHANGED, so `keyRowHtml`'s wiring, the Chromatic⟷Key toggle and the
              // key indicator all bind exactly as they did.
-             _ambProgGrpOpen('keysec', '\u266f Key', false) +
-             '<div class="ambient-keysec" id="ambient-keysec">' +
-            '<div class="ambient-progsec-topline"><span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></div>' +
-            '<div class="ambient-sched-body" id="ambient-keysec-body">' +
-            '<button type="button" class="ambient-mod-sub ambient-progsec-lbl ambient-seclbl-btn amb-keytoggle" id="ambient-key-toggle" ' +
-              'title="Chromatic \u27f7 Key — OFF (Chromatic): every layer plays freely, no key constraint. ON (Key): constrain all layers to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable.">Chromatic</button>' +
-            keyRowHtml +
-            '<div class="ambient-hint ambient-keysec-foot">This is the area key: the first set of changes inherits it, and any set without its own key follows it. A set can depart from it in the progression\u2019s Overview.</div>' +
-             '</div></div>' +
-             _ambProgGrpClose() +
+             // ♯ KEY MOVED to the Area block (2026-10-02) — see `_ambAreaStripHtml`.
             // NO CHANGES ON/OFF SWITCH. A part either carries changes or it does
             // not, so an area-wide toggle is the two-concept model showing
             // through: it asked a question the parts already answer. `prog.on`
@@ -56623,6 +56967,30 @@
               '<span class="ambient-hint" id="ambient-progsec-off" style="display:none">turn Changes on to build a chord sequence</span>' +
             '</div>' +
             _ambProgGrpOpen('overview', '\u25a4 Parts', false) +
+            // ◆ AREA UNIT lives here (moved from the area block, 2026-10-02): it is
+            // the unit every part length is measured in — "2 × Area unit" — so it
+            // sits beside the parts it sizes. Name kept: the part-length menus all
+            // say "Area unit", and one setting with two names reads as two.
+            // Bound by `_ambWireAreaStrip` (class `.ambient-orch-areaunit`), master only.
+            (E.isLane ? '' : (function () {
+              const au = _cfg0.areaUnit || {};
+              const v = Math.max(1, au.num | 0 || 1) + '/' + Math.max(1, au.den | 0 || 1);
+              const tip = 'AREA UNIT — the unit part lengths are measured in. A part sized “2 × Area unit” runs two of these; layers synced to the area follow it too.';
+              // label + its readout share the top line (the whitespace beside the
+              // label), the select runs full width underneath
+              // SHOWN ONLY WHEN IT MATTERS (user, 2026-10-02), with the reason as its
+              // readout — `_ambSyncAreaUnitRow` decides both; hidden until it runs.
+              return '<div class="ambient-row ambient-areaunit-row" id="ambient-areaunit-row" style="display:none">' +
+                '<div class="ambient-areaunit-head">' +
+                  '<span class="ambient-orch-lbl" title="' + tip + '">◆ Area unit</span>' +
+                  '<span class="ambient-hint ambient-areaunit-why" id="ambient-areaunit-why"></span>' +
+                '</div>' +
+                '<select class="ambient-select ambient-orch-areaunit" title="' + tip + '">' +
+                [['1/4', '¼ bar'], ['1/2', '½ bar'], ['1/1', '1 bar'], ['2/1', '2 bars'], ['4/1', '4 bars'], ['8/1', '8 bars']]
+                  .map(o => '<option value="' + o[0] + '"' + (o[0] === v ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+                '</select>' +
+              '</div>';
+            })()) +
             '<div class="ambient-pov-actions" id="ambient-pov-actions" style="display:none">' +
               // ＋ Add changes is GONE. Its seed list, Create and roman-numeral
               // routes all live in ＋ Part now, which chains them on instead of
@@ -56954,11 +57322,12 @@
               '<span class="ambient-hint">shape</span>' +
             '</div>' +
           '</div>' +
-          // Global FX — master Warmth / Width / Dynamics + Reverb, moved here below the
-          // faders (was in Configure). Ids unchanged so existing wiring still binds. Per-
-          // block lane guards preserved (lanes show only Reverb). Inside the mixer so it
-          // collapses with it.
-          '<details class="ambient-mod ambient-mixer-globalfx"><summary class="ambient-mod-head">Global FX</summary>' +
+        '</div>' +        // end mixer pane
+        // ✦ GLOBAL FX pane — master Warmth / Width / Dynamics / Vinyl / Tape echo +
+        // Reverb. Its own tab now (it was a <details> at the foot of the Mixer).
+        // Ids unchanged so every existing binding still finds its control; the
+        // per-block lane guards are kept (a lane shows only Reverb).
+        '<div class="ambient-tabsec-pane ambient-globalfx" data-pane="globalfx" id="ambient-globalfx">' +
             (E.isLane ? '' :
               '<div class="ambient-warmth">' +
                 '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Warmth</span>' +
@@ -57020,8 +57389,7 @@
               sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
               sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
             '</div>' +
-          '</details>' +
-        '</div>' +        // end mixer pane
+        '</div>' +        // end global fx pane
         // 🎧 MONITOR pane — built entirely by _ambRenderMonitor (the layer set
         // changes, so nothing here is static).
         '<div class="ambient-tabsec-pane ambient-monitor" data-pane="monitor" id="ambient-monitor">' +
@@ -60447,7 +60815,9 @@
         const missed = [];
         kept.forEach(k => { if (!_ambKeepLastUnit(E, k)) missed.push(k); });
         const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+        const seed0 = cfg.seed;
         cfg.seed = ((cfg.seed * 1664525 + 1013904223 + Math.floor(t * 1000)) >>> 0) || 1;
+        _ambTakeRoll(cfg, seed0, cfg.seed);
         // Layers flagged `takeReroll` re-roll their euclidean rhythm from the new seed
         // (reproducible per take). Random-gen layers already re-roll off cfg.seed.
         ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && !kept.has(k)) _ambApplyTakeReroll(cfg[k], cfg.seed); });
@@ -60490,6 +60860,49 @@
       };
       const regenBtn = G('ambient-regen-btn');
       if (regenBtn) regenBtn.addEventListener('click', _newTakePopover);
+      // ⟲ BACK TO A TAKE: the seed plus what a roll derives from it (each
+      // `takeReroll` layer's euclid rhythm, deterministic per seed), then the
+      // same tail a roll runs. Layers frozen by Keep stay frozen — a freeze is a
+      // lock on the material, not on the seed.
+      const _restoreTake = (seed) => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        seed = seed >>> 0; if (!seed || seed === (cfg.seed >>> 0)) return;
+        cfg.seed = seed;
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) _ambApplyTakeReroll(cfg[k], seed); });
+        (cfg.extras || []).forEach(L => { if (L) _ambApplyTakeReroll(L, seed); });
+        if (E.timer) { _ambResetClocks(E); _ambSeed(cfg.seed); }
+        try { _ambFreezeSyncAll(E); } catch (e) {}
+        _ambSyncControls(E);
+        persist();
+      };
+      const _takePicker = () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        const cur = cfg.seed >>> 0;
+        const list = (Array.isArray(cfg.takes) ? cfg.takes.slice() : []);
+        if (!list.some(t => (t.seed >>> 0) === cur)) list.push({ seed: cur, at: 0 });
+        const ago = (at) => {
+          if (!(at > 0)) return '';
+          const m = Math.round((Date.now() - at) / 60000);
+          return m < 1 ? ' · just now' : m < 60 ? (' · ' + m + ' min ago') : m < 1440 ? (' · ' + Math.round(m / 60) + ' h ago') : (' · ' + Math.round(m / 1440) + ' d ago');
+        };
+        const n = list.length;
+        const acts = [{ disabled: true, label: n > 1
+          ? 'Tap a take to hear it again. Layers you froze with Keep stay as they are.'
+          : 'Only this take so far — every 🎲 New take is remembered here.' }];
+        list.slice().reverse().forEach((t, i) => {
+          const s = t.seed >>> 0, isCur = s === cur;
+          acts.push({ label: (isCur ? '▶ ' : '') + 'Take ' + _ambTakeId(s) + ' · #' + (n - i) + ago(t.at) + (isCur ? ' (current)' : ''),
+            fn: isCur ? null : () => _restoreTake(s) });
+        });
+        _ambActionsPopover('Takes — ' + n, acts);
+      };
+      const seedBtn = G('ambient-seed-val');
+      if (seedBtn) {
+        seedBtn.setAttribute('role', 'button'); seedBtn.tabIndex = 0;
+        seedBtn.classList.add('ambient-take-pick');
+        seedBtn.addEventListener('click', _takePicker);
+        seedBtn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); _takePicker(); } });
+      }
       // (↺ Reset removed — use the Areas 🧹 Clear-layers / ✕ Clear-all instead.
       //  _ambResetInstance is retained for any programmatic caller.)
       if (E.isLane) {

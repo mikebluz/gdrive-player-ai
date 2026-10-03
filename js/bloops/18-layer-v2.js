@@ -285,6 +285,7 @@
     }
     if (p.made === 'take') return 'a take you froze';
     if (p.made === 'compose') return n ? 'notes you drew' : 'empty — ready to draw into';
+    if (p.made === 'sung') return 'notes you sang in';
     return '';
   }
   // The per-pass draws, in ONE reader — a new die on this axis cannot be added
@@ -2226,7 +2227,7 @@
       // WHERE THESE NOTES CAME FROM. Only 'take' (a locked roll of the layer's
       // own rules) may be replaced without asking — everything else is work
       // somebody did by hand. Absent = unknown, which takes the SAFE side.
-      if (p.made !== 'take' && p.made !== 'compose' && p.made !== 'phrase') delete p.made;
+      if (p.made !== 'take' && p.made !== 'compose' && p.made !== 'phrase' && p.made !== 'sung') delete p.made;
       // WHICH MATERIAL IS IN FORCE, and what each one was left holding. Both
       // absent until a material button is pressed, so an untouched project
       // carries neither (and the gates stay byte-identical by construction).
@@ -8226,6 +8227,27 @@
     try { E.getCfg(); } catch (e) {}
     return true;
   }
+  // 🎤 SUNG IN (2026-10-03) — a transcribed take written down as the part, with
+  // the same stamps a drawn part gets (register baseline, written key, follows
+  // the changes), so it behaves exactly like notes drawn in the roll. `notes`
+  // are {t, midi, dur} with t/dur as FRACTIONS of the part; `bars` may grow the
+  // part to fit a take that ran over several cycles. ENGINE-side for the same
+  // two-IIFE reason as clearPartFn.
+  function writeSungFn(E, L, notes, bars) {
+    if (!L || !L.part || !Array.isArray(notes)) return false;
+    const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return false;
+    const p = L.part;
+    p.kind = 'recorded';
+    p.made = 'sung';
+    p.notes = notes.map(n => ({ t: n.t, midi: clamp(n.midi | 0, 0, 127), dur: n.dur })).sort((a, b) => a.t - b.t);
+    if (Number.isFinite(bars) && bars > 0) p.bars = bars;
+    delete p.tf; delete p.takeb; delete p.ruleb; delete p.from;
+    p.reg = clamp((L.instrument.register | 0) || 4, 1, 8);
+    stampPartKey(L, cfg);
+    stampFollowsChanges(L, cfg);
+    try { E.getCfg(); } catch (e) {}
+    return true;
+  }
   // MIXED — chords AND single notes from one part, which none of the other
   // three doors can express: Sustained is always a chord, Arpeggio and Roll
   // always one note at a time. A euclid rhythm so the placement is musical,
@@ -8933,6 +8955,7 @@
     makeMelody: makeMelodyFn,
     matShapeOk: matShapeOk,
     clearPart: clearPartFn,        // ⌫ Start empty — an empty written part to draw into
+    writeSung: writeSungFn,        // 🎤 Sing — a transcribed take written down as the part
     makeArp: makeArpFn,
     makeSimple: makeSimpleFn,       // the table-driven doors
     matSimple: MAT_SIMPLE,          // …and the table, so the recipe has ONE source
@@ -10643,6 +10666,7 @@
     if (rec && !notes.length) return lead('Empty — nothing has made any notes yet.');
     if (rec && p.made === 'compose') return lead('✎ Composed by hand in the grid — no rule placed these.');
     if (rec && p.made === 'phrase') return lead('↓ Adopted whole from the bank — no rule placed these.');
+    if (rec && p.made === 'sung') return lead('🎤 Sung in and written down — no rule placed these.');
     if (rec && !p.made) return lead('✎ Drawn by hand — no rule placed these.');
 
     let ns = notes;
@@ -11057,6 +11081,10 @@
         // answer for whichever comes first (the documented duplicate-class trap).
         '<button type="button" class="ambient-seg v2-gridbtn" ' +
           'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes FROZEN and plays exactly what you put there.">\u25a6 Compose</button>' +
+        // 🎤 SING — the fourth way to author a part: hum, sing or whistle it and it is
+        // written down as notes (2026-10-03). Beside ▦ Compose, its sibling door.
+        '<button type="button" class="ambient-seg v2-singbtn" ' +
+          'title="Sing it in \u2014 hum, sing or whistle the part (in time with the music, or a free take) and it is written down as notes. You review it before it replaces anything.">\ud83c\udfa4 Sing</button>' +
         // ↻ BACK TO THE GENERATED PATTERN. The roll's take bar (🎲/✎/💾) is
         // deliberately NOT here — those write a take down as NOTES, which is
         // the other form's material, and ✎ Write it down would fight the form
@@ -11470,6 +11498,10 @@
         // answer for whichever comes first (the documented duplicate-class trap).
         '<button type="button" class="ambient-seg v2-gridbtn" ' +
           'title="Compose in the grid \u2014 steps, chords and the keyboard. The part becomes FROZEN and plays exactly what you put there.">\u25a6 Compose</button>' +
+        // 🎤 SING — the fourth way to author a part: hum, sing or whistle it and it is
+        // written down as notes (2026-10-03). Beside ▦ Compose, its sibling door.
+        '<button type="button" class="ambient-seg v2-singbtn" ' +
+          'title="Sing it in \u2014 hum, sing or whistle the part (in time with the music, or a free take) and it is written down as notes. You review it before it replaces anything.">\ud83c\udfa4 Sing</button>' +
         // ONE CONTROL FOR ONE AXIS. Two buttons stated two switches for what
         // is really four states of the same question — and three of the four
         // combinations they offered meant the same thing, since drawing and
@@ -14688,6 +14720,239 @@
     // the edge of a panned window would claim a position it is not at.
     if (onScreen) { g.beginPath(); g.moveTo(x, TOP); g.lineTo(x, h); g.stroke(); }
     return true;
+  }
+  // ── 🎤 SING IT IN (2026-10-03) ─────────────────────────────────────────────
+  // user: "a new button in layers … that records the user, then translates what the
+  // user recorded into written layer content". One sheet, three steps:
+  //   SETUP   — In time with the music (the take lands in the layer's own bars;
+  //             the transport starts if it was stopped) or a Free take (no backing
+  //             needed; the take is stretched onto the part's length).
+  //   RECORD  — the mic, pitch-tracked by v1's own `_ambAcfPitch` every 35 ms; in
+  //             time, the layer is FADED OUT on its live gain (ramped both ways,
+  //             never persisted) so you are not singing over its old notes.
+  //   REVIEW  — `_ambHumSegment` turns the frames into notes, snapped to the area's
+  //             Rec quantize grid; you see them, ▶ hear them, ↺ redo or ✓ keep.
+  // Nothing replaces the layer until ✓ Keep, which writes through `V2.writeSung`.
+  function openSingTake(E, ctx) {
+    const L0 = ctx && ctx.L; if (!L0 || !L0.part) return;
+    const lid = L0.id | 0, key = 'v2:' + lid;
+    const layer = () => { try { return (E.getCfg().layers || []).find(x => x && (x.id | 0) === lid) || null; } catch (e) { return null; } };
+    const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+    const NN = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+    const st = { mode: E.timer ? 'time' : 'free', phase: 'setup', rec: null, notes: null, bars: 0, why: '', err: '', hear: [], ducked: false };
+    const ov = document.createElement('div'); ov.className = 'sm-overlay v2-sing-ov';
+    ov.innerHTML = '<div class="sm-modal v2-sing"></div>';
+    const box = ov.firstChild;
+    document.body.appendChild(ov);
+    ov.style.setProperty('display', 'flex', 'important');
+    const clockNow = () => {
+      if (st.mode === 'time') { try { if (typeof _ambAudibleNow === 'function') return _ambAudibleNow(); } catch (e) {} try { return Tone.now(); } catch (e) {} }
+      return performance.now() / 1000;          // free take: the transport may be stopped
+    };
+    // fade the layer on its live gain while it would sing against you (in time)
+    const duck = (on) => {
+      try {
+        const e = E.mod && E.mod[key]; if (!e || !e.levelGain || !e.levelGain.gain) return;
+        const g = e.levelGain.gain, L = layer();
+        const t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const to = on ? 0 : ((typeof _ambLevelGain === 'function') ? _ambLevelGain(L ? (L.level | 0) : 70) : 1);
+        try { g.cancelScheduledValues(t0); } catch (x) {}
+        try { g.setValueAtTime(on ? (Number.isFinite(g.value) ? g.value : 1) : 0, t0); } catch (x) {}
+        try { g.linearRampToValueAtTime(to, t0 + 0.05); } catch (x) { try { g.value = to; } catch (x2) {} }
+        st.ducked = on;
+      } catch (e) {}
+    };
+    const stopMic = () => {
+      const r = st.rec; if (!r) return;
+      try { clearInterval(r.poll); } catch (e) {}
+      try { r.stream.getTracks().forEach(tr => tr.stop()); } catch (e) {}
+      try { r.ac.close(); } catch (e) {}
+    };
+    const stopHear = () => { st.hear.forEach(t => { try { clearTimeout(t); } catch (e) {} }); st.hear = []; };
+    const close = () => { stopMic(); stopHear(); if (st.ducked) duck(false); try { ov.remove(); } catch (e) {} };
+    // ---- frames → notes {t, midi, dur} as fractions of the part ----
+    const transcribe = (frames) => {
+      const raw = (typeof _ambHumSegment === 'function') ? _ambHumSegment(frames || []) : [];
+      if (!raw.length) {
+        const peak = (frames || []).reduce((m, f) => Math.max(m, f.rms || 0), 0);
+        const pitched = (frames || []).filter(f => f.f > 0).length;
+        st.why = !frames || !frames.length ? 'nothing was captured — is the mic blocked?'
+          : peak < 0.01 ? 'the mic was silent — check the input device and its level'
+          : !pitched ? 'sound came in but no steady pitch — hum a sustained note rather than speaking'
+          : 'pitch was found in only ' + Math.round(100 * pitched / frames.length) + '% of the take — hold each note a little longer';
+        return { notes: [], bars: 0 };
+      }
+      const cfg = E.getCfg(), L = layer() || L0;
+      const partBars = Math.max(0.25, +L.part.bars || 1);
+      const bpm = (cfg && cfg.bpm > 0) ? cfg.bpm : ((typeof _ambBpm === 'function') ? _ambBpm() : 120);
+      const barSec = 240 / Math.max(20, bpm);
+      const q = (cfg && Number.isFinite(cfg.recQuant)) ? (cfg.recQuant | 0) : 16;
+      const last = raw[raw.length - 1], end = last.at + last.durMs / 1000;
+      let t0 = raw[0].at, span = Math.max(0.2, end - t0), bars = partBars;
+      if (st.mode === 'time' && E.timer) {
+        // IN TIME: on the layer's own grid — the cycle the first note fell in, and
+        // as many whole cycles as the take ran over (the part grows to fit them).
+        let w = null;
+        try { w = V2.cycleWindowAt(L, E, cfg, raw[0].at, (E._v2Phase && E._v2Phase[key]) || null); } catch (e) {}
+        if (w && w.cyc > 0) {
+          const n = Math.max(1, Math.min(8, Math.ceil((end - w.cs - 0.02) / w.cyc)));
+          bars = Math.min(32, partBars * n);
+          t0 = w.cs; span = w.cyc * (bars / partBars);
+        }
+      }
+      const steps = Math.max(1, Math.round(bars * (q > 0 ? q : 64)));
+      const step = 1 / steps, seen = new Set();
+      const notes = [];
+      raw.forEach(n => {
+        let t = (n.at - t0) / span, d = (n.durMs / 1000) / span;
+        t = Math.round(t / step) * step; d = Math.max(step, Math.round(d / step) * step);
+        if (t < 0 || t >= 1) return;
+        t = Math.round(t * 1e6) / 1e6; if (seen.has(t)) return; seen.add(t);
+        d = Math.min(d, 1 - t);
+        notes.push({ t, midi: Math.max(0, Math.min(127, Math.round(69 + 12 * Math.log2(n.f / 440)))), dur: Math.round(d * 1e6) / 1e6 });
+      });
+      return { notes, bars };
+    };
+    const startRec = () => {
+      st.err = '';
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { st.err = 'Microphone unavailable in this browser.'; paint(); return; }
+      if (st.mode === 'time' && !E.timer) { try { if (typeof _ambPlayPress === 'function') _ambPlayPress(E); } catch (e) {} }
+      st.phase = 'asking'; paint();
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true } }).then((stream) => {
+        if (!ov.isConnected) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e) {} return; }
+        let ac; try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { try { stream.getTracks().forEach(tr => tr.stop()); } catch (e2) {} st.err = 'Could not open audio for the mic.'; st.phase = 'setup'; paint(); return; }
+        // CREATED OUTSIDE THE TAP (after the permission prompt resolves), so the browser
+        // may start it SUSPENDED — and a suspended context's analyser reads zeros, which
+        // looks exactly like a silent mic. Resume it explicitly.
+        try { if (ac.state !== 'running' && ac.resume) ac.resume(); } catch (e) {}
+        const an = ac.createAnalyser(); an.fftSize = 2048;
+        ac.createMediaStreamSource(stream).connect(an);      // analysis only — never to a destination
+        const buf = new Float32Array(an.fftSize);
+        const r = st.rec = { stream, ac, frames: [], poll: 0, t0: clockNow() };
+        r.poll = setInterval(() => {
+          try {
+            an.getFloatTimeDomainData(buf);
+            const pr = (typeof _ambAcfPitch === 'function') ? _ambAcfPitch(buf, ac.sampleRate) : { f: 0, rms: 0 };
+            r.frames.push({ t: clockNow(), f: pr.f, rms: pr.rms });
+            if (r.frames.length > 4000) r.frames.shift();        // ~2.3 min cap
+            const lv = box.querySelector('.v2-sing-lvl > i'); if (lv) lv.style.width = Math.min(100, Math.round(pr.rms * 400)) + '%';
+            const nt = box.querySelector('.v2-sing-now');
+            if (nt) nt.textContent = pr.f > 0 ? (NN[((Math.round(69 + 12 * Math.log2(pr.f / 440)) % 12) + 12) % 12]) : '—';
+            const el = box.querySelector('.v2-sing-el'); if (el) el.textContent = (clockNow() - r.t0).toFixed(1) + ' s';
+          } catch (e) {}
+        }, 35);
+        if (st.mode === 'time') { duck(true); setTimeout(() => { if (st.phase === 'rec' && !st.ducked) duck(true); }, 500); }
+        st.phase = 'rec'; paint();
+      }).catch((err) => {
+        const n = (err && err.name) || '';
+        st.err = 'Microphone ' + ((n === 'NotAllowedError' || n === 'SecurityError') ? 'permission denied — allow the mic for this site'
+          : (n === 'NotFoundError' || n === 'OverconstrainedError') ? 'not found — check the input device'
+          : (n === 'NotReadableError') ? 'is in use by another app' : ('could not be opened' + (n ? ' (' + n + ')' : ''))) + '.';
+        st.phase = 'setup'; paint();
+      });
+    };
+    const stopRec = () => {
+      const frames = st.rec ? st.rec.frames.slice() : [];
+      stopMic(); st.rec = null;
+      if (st.ducked) duck(false);
+      st.why = '';
+      const r = transcribe(frames);
+      st.notes = r.notes; st.bars = r.bars;
+      st.phase = 'review'; paint();
+    };
+    const hear = () => {
+      stopHear();
+      if (!st.notes || !st.notes.length || typeof playNote !== 'function') return;
+      try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+      const cfg = E.getCfg();
+      const bpm = (cfg && cfg.bpm > 0) ? cfg.bpm : ((typeof _ambBpm === 'function') ? _ambBpm() : 120);
+      const cycMs = st.bars * (240 / Math.max(20, bpm)) * 1000;
+      const P = { type: 'triangle', attack: 12, decay: 80, sustain: 70, release: 200, volume: 40 };
+      st.notes.forEach(n => {
+        st.hear.push(setTimeout(() => {
+          if (!ov.isConnected) return;
+          const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.08;
+          try { playNote(440 * Math.pow(2, (n.midi - 69) / 12), P, Math.max(90, n.dur * cycMs * 0.92), at); } catch (e) {}
+        }, n.t * cycMs));
+      });
+    };
+    const keep = () => {
+      const L = layer(); if (!L || !st.notes || !st.notes.length) return;
+      stopHear();
+      if (!(V2.writeSung && V2.writeSung(E, L, st.notes, st.bars))) return;
+      // re-anchor so the new notes play from the next cycle, not after the runway
+      try {
+        if (E.timer && (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E))) {
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, Tone.now());
+          if (E._v2Phase) delete E._v2Phase[key];
+        }
+      } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      close();
+      try { const h = document.getElementById('bloom-v2-layers'); if (h) h._sig = ''; V2.render(E); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('🎤 Sung in — ' + (layer() ? layer().part.notes.length : st.notes.length) + ' notes over ' + st.bars + ' bar' + (st.bars === 1 ? '' : 's') + '. Edit them in the roll.'); } catch (e) {}
+    };
+    // the review drawing: one rect per note on a pitch × time field
+    const rollSvg = () => {
+      const ns = st.notes || [];
+      const lo = Math.min.apply(null, ns.map(n => n.midi)) - 1, hi = Math.max.apply(null, ns.map(n => n.midi)) + 1;
+      const rows = Math.max(4, hi - lo + 1), H = 120;
+      let g = '';
+      const bars = Math.max(1, Math.round(st.bars));
+      for (let b = 1; b < bars; b++) g += '<line x1="' + (b / bars * 1000) + '" y1="0" x2="' + (b / bars * 1000) + '" y2="' + H + '" class="v2-sing-bar"/>';
+      ns.forEach(n => {
+        const y = (hi - n.midi) / rows * H, h = Math.max(4, H / rows - 1);
+        g += '<rect x="' + (n.t * 1000).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + Math.max(6, n.dur * 1000 - 3).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3"/>';
+      });
+      return '<svg class="v2-sing-roll" viewBox="0 0 1000 ' + H + '" preserveAspectRatio="none" role="img" aria-label="' + ns.length + ' sung notes">' + g + '</svg>';
+    };
+    const paint = () => {
+      const L = layer() || L0;
+      const nm = esc(L.name || ('Layer ' + lid));
+      let h = '<div class="v2-sing-title"><span class="sm-title">🎤 Sing it in <small>' + nm + '</small></span>' +
+        '<button type="button" class="v2-sing-x" data-s="close" aria-label="Close">✕</button></div>';
+      if (st.phase === 'setup' || st.phase === 'asking') {
+        h += '<div class="v2-sing-seg" role="group" aria-label="Timing">' +
+            '<button type="button" class="ambient-seg' + (st.mode === 'time' ? ' active' : '') + '" data-s="mode:time">In time with the music</button>' +
+            '<button type="button" class="ambient-seg' + (st.mode === 'free' ? ' active' : '') + '" data-s="mode:free">Free take</button></div>' +
+          '<div class="v2-sing-hint">' + (st.mode === 'time'
+            ? 'The area plays (it starts if stopped) and this layer goes quiet. Hum, sing or whistle along — the take lands in the layer’s own bars, snapped to Rec quantize. Sing over more than one cycle and the part grows to fit.'
+            : 'No backing needed. Sing the phrase at your own pace — it is stretched onto the part’s ' + (+L.part.bars || 1) + ' bar' + ((+L.part.bars || 1) === 1 ? '' : 's') + ' afterwards.') + '</div>' +
+          '<div class="v2-sing-note">Headphones help — the mic also hears the speakers. One note at a time.</div>' +
+          (st.err ? '<div class="v2-sing-err">' + esc(st.err) + '</div>' : '') +
+          '<div class="sm-footer"><button type="button" class="sm-cancel" data-s="close">Cancel</button>' +
+            '<button type="button" class="sm-apply v2-sing-go" data-s="start"' + (st.phase === 'asking' ? ' disabled' : '') + '>' + (st.phase === 'asking' ? 'Asking for the mic…' : '● Start') + '</button></div>';
+      } else if (st.phase === 'rec') {
+        h += '<div class="v2-sing-live"><span class="v2-sing-dot"></span><b>Recording</b><span class="v2-sing-el">0.0 s</span></div>' +
+          '<div class="v2-sing-now" aria-live="polite">—</div>' +
+          '<div class="v2-sing-lvl"><i></i></div>' +
+          '<div class="v2-sing-hint">' + (st.mode === 'time' ? 'Sing along with the area. ' : '') + 'Press Stop when the phrase is done.</div>' +
+          '<div class="sm-footer"><button type="button" class="sm-cancel" data-s="close">Cancel</button>' +
+            '<button type="button" class="sm-apply v2-sing-stop" data-s="stop">■ Stop</button></div>';
+      } else {
+        const ok = !!(st.notes && st.notes.length);
+        h += ok ? (rollSvg() + '<div class="v2-sing-sum">' + st.notes.length + ' note' + (st.notes.length === 1 ? '' : 's') + ' · ' + st.bars + ' bar' + (st.bars === 1 ? '' : 's') + ' · ' + (st.mode === 'time' ? 'in time' : 'fitted to the part') + '</div>')
+                : ('<div class="v2-sing-err">No melody found — ' + esc(st.why) + '</div>');
+        h += '<div class="sm-footer v2-sing-foot"><button type="button" class="sm-cancel" data-s="close">Cancel</button>' +
+            '<button type="button" class="ambient-seg" data-s="redo">↺ Redo</button>' +
+            (ok ? '<button type="button" class="ambient-seg" data-s="hear">▶ Hear it</button>' +
+                  '<button type="button" class="sm-apply" data-s="keep">✓ Keep</button>' : '') + '</div>';
+      }
+      box.innerHTML = h;
+    };
+    ov.addEventListener('click', (ev) => {
+      if (ev.target === ov && st.phase !== 'rec') { close(); return; }
+      const b = ev.target.closest && ev.target.closest('[data-s]'); if (!b) return;
+      const a = b.getAttribute('data-s');
+      if (a === 'close') { close(); return; }
+      if (a.indexOf('mode:') === 0) { st.mode = a.slice(5); paint(); return; }
+      if (a === 'start') { startRec(); return; }
+      if (a === 'stop') { stopRec(); return; }
+      if (a === 'redo') { stopHear(); st.notes = null; st.phase = 'setup'; paint(); return; }
+      if (a === 'hear') { hear(); return; }
+      if (a === 'keep') { keep(); return; }
+    });
+    paint();
   }
   // AREAS. Layer ids are PER-AREA, so `_v2Phase['v2:<id>']` belongs to whichever area
   // the ENGINE is on, not to the card on screen. Two answers, the same two v1's
@@ -25491,6 +25756,12 @@
         if (gbt) {
           const ctx = layerOf(gbt); if (!ctx) return;
           openComposeGrid(ctx);
+          return;
+        }
+        const sgb = t.closest('.v2-singbtn');
+        if (sgb) {
+          const ctx = layerOf(sgb); if (!ctx) return;
+          try { openSingTake(E, ctx); } catch (e) { console.warn('sing failed', e); }
           return;
         }
         // ⌫ CLEAR — an empty WRITTEN part, which is what a new layer is. The

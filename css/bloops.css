@@ -18047,3 +18047,33 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .pe2-strip > .pe-chord:not(.pe-add):not(.pe-allchords), .pov2-chords .ambient-pov-chord { flex: 0 0 auto; }
 
     .pe2-strip > .pe-chord.pe-allchords { justify-content: center; align-items: center; }
+
+    /* ===== 🎤 SING IT IN (2026-10-03) — the v2 card's record-and-transcribe sheet
+       (openSingTake, 18-layer-v2). In the dialog band: it opens from a card. */
+    .sm-overlay.v2-sing-ov { z-index: 10310; }
+    .sm-modal.v2-sing { width: min(460px, 94vw); display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
+    .v2-sing-title { display: flex; align-items: center; gap: 8px; }
+    .v2-sing-title .sm-title { flex: 1 1 auto; margin: 0; overflow-wrap: anywhere; }
+    .v2-sing-title small { font-weight: 400; color: #8d8ab0; margin-left: 6px; font-size: 0.8em; }
+    .v2-sing-x { width: 44px; height: 44px; border: 0; background: transparent; color: #a9a6c7; font-size: 1.1rem; cursor: pointer; flex: none; }
+    .v2-sing-seg { display: flex; border: 1px solid #2d2d3f; border-radius: 12px; overflow: hidden; }
+    .v2-sing-seg > .ambient-seg { flex: 1 1 0; min-height: 44px; border: 0; border-radius: 0; white-space: normal; }
+    .v2-sing-hint { font-size: 0.82rem; line-height: 1.45; color: #b8b4d8; overflow-wrap: anywhere; }
+    .v2-sing-note { font-size: 0.75rem; color: #7a77a0; }
+    .v2-sing-err { padding: 10px 12px; border-radius: 10px; background: #2a1414; border: 1px solid #6b2a2a; color: #ffb4b4; font-size: 0.82rem; overflow-wrap: anywhere; }
+    .v2-sing-live { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; }
+    .v2-sing-live > .v2-sing-el { margin-left: auto; color: #8d8ab0; font-variant-numeric: tabular-nums; }
+    .v2-sing-dot { width: 12px; height: 12px; border-radius: 6px; background: #ff5c5c; box-shadow: 0 0 10px #ff5c5c; animation: v2SingPulse 1s ease-in-out infinite; }
+    @keyframes v2SingPulse { 50% { opacity: 0.35; } }
+    .v2-sing-now { text-align: center; font: 800 2.4rem 'Segoe UI', sans-serif; color: #c4b5fd; min-height: 3rem; }
+    .v2-sing-lvl { height: 10px; border-radius: 5px; background: #1b1b33; overflow: hidden; }
+    .v2-sing-lvl > i { display: block; height: 100%; width: 0; background: #7ef0dc; transition: width 60ms linear; }
+    .v2-sing-roll { width: 100%; height: 120px; border-radius: 10px; background: #0b0b18; border: 1px solid #23233a; }
+    .v2-sing-roll rect { fill: #a78bfa; }
+    .v2-sing-roll .v2-sing-bar { stroke: #2d2d4a; stroke-width: 2; }
+    .v2-sing-sum { font-size: 0.82rem; color: #b8b4d8; text-align: center; }
+    .v2-sing-foot { flex-wrap: wrap; gap: 8px; }
+    .v2-sing-foot > .ambient-seg { min-height: 44px; }
+    .v2-sing-go[disabled] { opacity: 0.6; }
+    .v2-sing .sm-footer > .sm-cancel { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid #3a3a5c;
+      background: transparent; color: #c9c4ee; font: 600 0.9rem 'Segoe UI', sans-serif; cursor: pointer; }

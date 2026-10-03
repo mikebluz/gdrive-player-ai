@@ -219,3 +219,10 @@
   `change` on a `<select>` reaches nothing and reads as "the handler was never wired" — the writer is
   never called and the config never moves. A real pick fires `input` THEN `change`; dispatch both.
   Before concluding a control is dead, WRAP ITS WRITER and check whether it was called at all.
+- **A mic feature can be driven headless with Chrome's FAKE DEVICE** (`--use-fake-ui-for-media-stream
+  --use-fake-device-for-media-stream`): it beeps at ~988 Hz (B5), which the pitch tracker reads. The
+  `--use-file-for-fake-audio-capture=<wav>` variant delivered SILENCE (peak 0) under `headless: 'new'` —
+  a silent take there is the rig, not the recorder (`test` the default device first). See the 🎤 Sing probe.
+- **An AudioContext created after `getUserMedia` resolves is outside the tap and may start SUSPENDED** —
+  its analyser then reads zeros, indistinguishable from a silent mic. `ac.resume()` it explicitly.
+

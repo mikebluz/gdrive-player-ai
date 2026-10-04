@@ -4478,7 +4478,18 @@
     }
     return out;
   }
+  // ONE NORMALIZE PER NOTE RESOLUTION. Resolving a cycle asks the key and
+  // progression helpers once per note, and each asks `getCfg()` — the whole
+  // normalizer over every layer. Measured: 1,352 normalizes for one Roll ⇄
+  // Pattern press on a 6-layer project. This only READS, so it holds one
+  // normalized result for its synchronous run (`_ambWithCfgHold`, the
+  // established idiom; a no-op for lane engines and when a hold is open).
+  let NF_HELD = false;
   function notesFor(L, ctx) {
+    if (!NF_HELD && ctx && ctx.E && typeof _ambWithCfgHold === 'function') {
+      NF_HELD = true;
+      try { return _ambWithCfgHold(ctx.E, () => notesFor(L, ctx)); } finally { NF_HELD = false; }
+    }
     // ◐ A LOOP'S NOTES ARE ITS PIECES — drawn one row per SOURCE piece, so the cut
     // reads at a glance (in order climbs, back to front falls, shuffled scatters).
     // They are a picture of the pass: the emitter plays the recording itself and
@@ -11881,7 +11892,18 @@
     const i = pg.ks.length - 1 - pgRow(pg, m);
     return pg.ks[clamp(i + k, 0, pg.ks.length - 1)];
   };
+  // ONE NORMALIZE PER DRAW. A drawing only READS, but every note it resolves
+  // asks the key / progression helpers, and each of those calls `getCfg()` —
+  // which runs the whole normalizer over every layer. Measured on a 6-layer
+  // project: 3,821 normalizes for ONE expand (~300 ms desktop, ~1.4 s at phone
+  // speed — "UI lag expanding/collapsing layers"). `_ambWithCfgHold` pins one
+  // normalized result for this synchronous block (the established idiom — see
+  // its own comment in 17-ambient); nested draws reuse the open hold.
   function drawPartViz(card, L, E) {
+    if (E && typeof _ambWithCfgHold === 'function') return _ambWithCfgHold(E, () => drawPartVizRaw(card, L, E));
+    return drawPartVizRaw(card, L, E);
+  }
+  function drawPartVizRaw(card, L, E) {
     // THE CARD'S DRAWING IS THE LAYER'S. A handler inside ✨ Quick / ⚙ Deep
     // repaints with the STAGED copy; that belongs on the panel's own drawing.
     if (V2.isStaged && V2.isStaged(L)) { try { stageVizDraw(card, L); } catch (e) {} return; }
@@ -14247,9 +14269,15 @@
           // ENGINE half and this is the UI half — the two share only
           // `window._v2`, so a bare name would throw into the catch above and
           // this whole warning would be a silent no-op.
-          const ns0 = V2.withEdit(() => V2.notesFor(L, { E: _masterEng, cfg: _cfgOf(),
-            key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: 6 })) || [];
-          empty = L.part.kind === 'live' && ns0.length === 0;
+          // ONLY A LIVE PART CAN ROLL SILENT — a written one never asks (this
+          // resolved every note of a 65-note record on each card sync: ~1,000
+          // normalizes per expand), and the ask holds ONE normalize.
+          if (L.part.kind === 'live') {
+            const ask0 = () => V2.withEdit(() => V2.notesFor(L, { E: _masterEng, cfg: _cfgOf(),
+              key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: 6 })) || [];
+            const ns0 = (typeof _ambWithCfgHold === 'function') ? _ambWithCfgHold(_masterEng, ask0) : ask0();
+            empty = ns0.length === 0;
+          }
         } catch (e) {}
         if (empty) {
           const txt2 = '⚠ These rules come out SILENT on this take — the roll landed ' +
@@ -15388,14 +15416,22 @@
   // A REFUSED TOUCH SAYS WHY, in the readout — a drawing that silently ignores
   // a finger is indistinguishable from a broken one.
   function fullSay(msg) {
+    flog('say ' + String(msg).slice(0, 80));
     const rd = document.querySelector('.v2-full .v2-fullread');
     if (rd) rd.textContent = msg;
+  }
+  // one step of a vertical scroll: pulling DOWN brings HIGHER rows in
+  function fullVScroll(vs, y, cvd, card, L) {
+    const fr = cvd._fullRows; if (!fr || !FULL) return;
+    FULL.topM = fr.U[clamp(vs.i0 - Math.round((y - vs.sy) / vs.rowH), 0, Math.max(0, fr.U.length - fr.n))];
+    try { drawPartViz(card, L, FULL.E); } catch (e) {}
   }
   // DRAG THE KEYS TO SCROLL PITCH. A tap still reaches the click handler (it
   // moves the selected note to that key); a drag past 6px scrolls instead and
   // stamps `_dragged` so the release is not also a tap.
   function fullKeyDrag(ev, E, card, L, cvd) {
-    const fr = cvd._fullRows, pg = cvd._pitchGeo; if (!fr || !pg) return;
+    const fr = cvd._fullRows, pg = cvd._pitchGeo; if (!fr || !pg) { flog('keydrag: no geometry'); return; }
+    flog('keydrag start i0=' + fr.i0);
     const sy = ev.clientY, i0 = fr.i0, rowH = Math.max(8, pg.rowH || 40);
     let armed = false;
     DRAG = { id: L.id | 0, pan: 1, moved: 0 };
@@ -15418,6 +15454,63 @@
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
+  }
+  // ── ⤢ ON-DEVICE TRACE ── `window._bloopsLog` exists only in the native shell
+  // (the harvestable flight log), so on the web every line here is a no-op. It
+  // answers "did the touch reach the drawing, and why did it stop" from a
+  // harvest — every desktop engine draws fine, so only the device can say.
+  const flog = (m) => { try { if (typeof window._bloopsLog === 'function') window._bloopsLog('FULL ' + m); } catch (e) {} };
+  const tdesc = (el) => { try { return el ? ((el.id ? '#' + el.id : '') + '.' + String(el.className || el.tagName).trim().split(/\s+/).slice(0, 2).join('.')).slice(0, 48) : 'null'; } catch (e) { return '?'; } };
+  function fullTraceWire() {
+    if (window.__v2FullTrace) return; window.__v2FullTrace = true;
+    let moves = 0;
+    const on = (ty) => document.addEventListener(ty, (e) => {
+      if (!FULL) return;
+      if (ty === 'pointermove' || ty === 'touchmove') { moves++; return; }
+      const pt = e.touches && e.touches[0] ? e.touches[0] : (e.changedTouches && e.changedTouches[0]) || e;
+      const x = Math.round(pt.clientX || 0), y = Math.round(pt.clientY || 0);
+      let top = null; try { top = document.elementFromPoint(x, y); } catch (e2) {}
+      flog(ty + ' ' + (e.pointerType || ('n=' + ((e.touches && e.touches.length) | 0))) + ' @' + x + ',' + y +
+        ' tgt=' + tdesc(e.target) + ' top=' + tdesc(top) + (ty.endsWith('up') || ty.endsWith('end') || ty.endsWith('cancel') ? ' moves=' + moves : '') +
+        (e.defaultPrevented ? ' PREVENTED' : '') + (e.cancelable === false ? ' uncancelable' : ''));
+      if (ty.endsWith('up') || ty.endsWith('end') || ty.endsWith('cancel')) moves = 0;
+    }, { capture: true, passive: true });
+    ['pointerdown', 'pointerup', 'pointercancel', 'pointermove', 'touchstart', 'touchend', 'touchcancel', 'touchmove'].forEach(on);
+    window.addEventListener('error', (e) => { flog('ERROR ' + (e && e.message) + ' @' + (e && e.lineno)); });
+    window.addEventListener('unhandledrejection', (e) => { flog('REJECT ' + String(e && e.reason).slice(0, 120)); });
+  }
+  // ⤢ FREE THE VIEW FROM ITS ANCESTORS. On iOS a `position: fixed` element
+  // inside a clipping / scrolling / transformed ancestor is confined to it — the
+  // view landed UNDER the app's 300-z header with its footer cut off, on the
+  // phone only (every desktop engine pinned it to the screen). While open, each
+  // ancestor is tagged and stripped of what confines it; their scroll positions
+  // are kept and handed back on close.
+  let FULL_ANC = [];
+  function fullFreeAncestors(host) {
+    fullRestoreAncestors();
+    for (let e = host.parentElement; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+      try {
+        const cs = getComputedStyle(e);
+        flog('anc ' + tdesc(e) + ' pos=' + cs.position + ' ov=' + cs.overflowX + '/' + cs.overflowY + ' z=' + cs.zIndex +
+          (cs.transform !== 'none' ? ' tf=' + cs.transform : '') + (cs.webkitOverflowScrolling ? ' wos=' + cs.webkitOverflowScrolling : ''));
+      } catch (x) {}
+      FULL_ANC.push({ el: e, st: e.scrollTop, sl: e.scrollLeft });
+      e.classList.add('v2-fullanc');
+    }
+  }
+  function fullRestoreAncestors() {
+    const list = FULL_ANC; FULL_ANC = [];
+    list.forEach((a) => { try { a.el.classList.remove('v2-fullanc'); } catch (e) {} });
+    list.forEach((a) => { try { a.el.scrollTop = a.st; a.el.scrollLeft = a.sl; } catch (e) {} });
+  }
+  // after a draw: the canvas must hold pixels (iOS fails a too-big backing store SILENTLY)
+  function fullTraceCanvas(cv, tag) {
+    try {
+      const g = cv.getContext('2d'); const d = g ? g.getImageData(Math.floor(cv.width / 2), Math.floor(cv.height - 4), 1, 1).data : null;
+      flog(tag + ' vp=' + innerWidth + 'x' + innerHeight + ' dpr=' + (window.devicePixelRatio || 1) + ' css=' + Math.round(cv.clientWidth) + 'x' + Math.round(cv.clientHeight) +
+        ' back=' + cv.width + 'x' + cv.height + ' ctx=' + (!!g) + ' px=' + (d ? Array.from(d).join(',') : 'none') +
+        ' rect=' + JSON.stringify((() => { const r = cv.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round); })()));
+    } catch (e) { flog(tag + ' canvas check threw ' + e.message); }
   }
   // TWO FINGERS PAN BOTH AXES AND PINCH TO ZOOM (each axis by its own spread);
   // the wheel scrolls (⇧ for time) and ⌘/Ctrl + wheel zooms time (+⇧ pitch).
@@ -15446,6 +15539,7 @@
       DRAG = null; try { dragTipHide(); } catch (e2) {}
       cv._dragged = Date.now();
       const m = mid(e.touches), vb = FULL.vb || 1;
+      flog('two-finger start');
       FULL.two = { m: m, i0: cv._fullRows.i0, b0: vnavOf(L).bar0 || 0, vb: vb, rowPx: FULL.rowPx || 42,
                    perBar: Math.max(1, cv._barsGeo.w / vb), rowH: Math.max(8, cv._pitchGeo.rowH || 40) };
     }, { passive: false });
@@ -15656,9 +15750,12 @@
           '<button type="button" class="v2-fullib v2-fullz" data-z="y-" aria-label="Zoom out \u2014 more rows"' + ((FULL.rowPx || 42) <= 16 ? ' disabled' : '') + '>\u2212</button>' +
           '<button type="button" class="v2-fullib v2-fullz" data-z="y+" aria-label="Zoom in \u2014 taller rows"' + ((FULL.rowPx || 42) >= 80 ? ' disabled' : '') + '>+</button></span>' +
       '</div>';
-    FULL.chrome = (hd.offsetHeight || 96) + (ft.offsetHeight || 100) + 10;
+    let safe = 0;
+    try { const hs = getComputedStyle(host); safe = (parseFloat(hs.paddingTop) || 0) + (parseFloat(hs.paddingBottom) || 0); } catch (e) {}
+    FULL.chrome = (hd.offsetHeight || 96) + (ft.offsetHeight || 100) + 10 + safe;   // + the notch and home-indicator padding
   }
   function fullPin(host, L, E) {
+    if (!host.classList.contains('v2-full') || !FULL_ANC.length || !FULL_ANC[0].el.contains(host)) fullFreeAncestors(host);
     host.classList.add('v2-full'); document.body.classList.add('v2-fullon');
     fullChrome(host, L, E);
   }
@@ -15679,7 +15776,8 @@
     try { setMode(L, 'draw'); } catch (e) {}
     try { vnavSet(L, { bar0: 0 }); } catch (e) {}
     fullPin(host, L, E);
-    try { drawPartViz(card, L, E); } catch (e) {}
+    try { drawPartViz(card, L, E); } catch (e) { flog('draw threw ' + e.message); }
+    try { fullTraceWire(); const cvT = card.querySelector('.v2-full .v2-vizcv'); if (cvT) fullTraceCanvas(cvT, 'open'); } catch (e) {}
     if (!window.__v2FullWired) {
       window.__v2FullWired = true;
       window.addEventListener('resize', () => { if (FULL) refreshFull(FULL.E); });
@@ -15725,6 +15823,7 @@
   }
   function closeFullDraw(E) {
     if (!FULL) return;
+    try { fullRestoreAncestors(); } catch (e) {}
     try { const cdS = _fullCard(); if (cdS) previewStopFor(cdS, 'full'); } catch (e) {}   // a preview started here ends with it
     try { document.querySelectorAll('.v2-fulllegend').forEach((x) => x.remove()); } catch (e) {}
     const F = FULL, L = _fullLayer(E), card = _fullCard();
@@ -25140,8 +25239,15 @@
         // whatever the first finger started.
         const inFull = !!(FULL && FULL.id === (L.id | 0) && cvd.closest('.v2-full'));
         if (inFull) {
+          flog('handler pd mode=' + modeOf(L) + (FULL.chord ? '+chord' : '') + ' primary=' + ev.isPrimary + ' two=' + !!FULL.two);
           if (ev.isPrimary === false || FULL.two) return;
           FULL.snap = JSON.stringify(L.part.notes || []); FULL.snapKind = L.part.kind;
+        }
+        if (inFull && L.instrument && L.instrument.voice === 'loop') {
+          let ln = ''; try { ln = String(L.instrument.loopId || '').split('/').pop().replace(/_/g, ' '); } catch (e) {}
+          fullSay('This layer plays an audio loop' + (ln ? ' (' + ln + ')' : '') + ' \u2014 notes don\u2019t apply to it. Pick a pitched sound in Instrument to draw notes.');
+          cvd._dragged = Date.now();                   // …and the click that follows must not draw either
+          return;
         }
         if (vmRefuse(cvd)) { if (inFull) fullSay('Read-only \u2014 this drawing follows playback onto another part.'); return; }
 
@@ -25248,6 +25354,7 @@
           const made = penAdd(E, L, cvd, px, py);
           if (!made || made.idx < 0) { if (inFull) fullSay('Could not place a note there.'); return; }
           mode = 'pen'; pen = 1; locked = made.locked; idx = made.idx;
+          if (inFull) flog('pen placed idx=' + made.idx + ' notes=' + L.part.notes.length);
           if (inFull && FULL.chord) {
             const ch = fullChordAdd(E, L, cvd, made);
             if (ch) { chordG = ch.group; idx = ch.idx; mode = 'len'; }   // a drag right sizes the whole chord
@@ -25372,6 +25479,24 @@
           const dx = e2.clientX - DRAG.sx, dy = e2.clientY - DRAG.sy;
           DRAG.moved = Math.max(DRAG.moved, Math.hypot(dx, dy));
           if (DRAG.moved < 5) return;                  // still a tap
+          // ⤢ A VERTICAL SWIPE FROM EMPTY SPACE SCROLLS PITCH. The pen sizes
+          // sideways, so a mostly-vertical first move is a scroll: the note it
+          // just placed is taken back and the rows follow the finger.
+          if (DRAG.vs) { fullVScroll(DRAG.vs, e2.clientY, cvd, card, L); return; }
+          if (DRAG.pen && !DRAG.axisSeen && FULL && cvd.closest('.v2-full')) {
+            DRAG.axisSeen = true;
+            const frV = cvd._fullRows, pgV = cvd._pitchGeo;
+            if (frV && pgV && Math.abs(dy) > Math.abs(dx) * 1.5) {
+              try { if (FULL.snap != null) { L.part.notes = JSON.parse(FULL.snap); L.part.kind = FULL.snapKind; } } catch (e) {}
+              NE = null; mselSet(L, null);
+              try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+              try { dragTipHide(); } catch (e) {}
+              DRAG.vs = { i0: frV.i0, rowH: Math.max(8, pgV.rowH || 40), sy: DRAG.sy };
+              flog('vertical swipe → scroll');
+              fullVScroll(DRAG.vs, e2.clientY, cvd, card, L);
+              return;
+            }
+          }
           if (e2.cancelable) e2.preventDefault();
           const n = L.part.notes[DRAG.idx]; if (!n) return;
           // ONE GESTURE, ONE AXIS. A move is horizontal OR vertical — decided
@@ -25507,6 +25632,7 @@
           document.removeEventListener('pointermove', mv);
           dragTipHide();
           const d = DRAG; DRAG = null;
+          if (d && d.vs) { cvd._dragged = Date.now(); try { drawPartViz(card, L, E); } catch (e) {} return; }   // a scroll, nothing to commit
           if (d && d.group && FULL && FULL.chord && FULL.lastChord) fullSay(FULL.lastChord);
           // the lock's card rebuild, deferred out of the press so the
           // touch stream (and the finger's view of the page) survived it.

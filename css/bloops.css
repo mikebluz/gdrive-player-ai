@@ -18247,3 +18247,11 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-fullmapw { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     .v2-fullmaplab { color: #a9a6c7; font: 600 0.78rem 'Segoe UI', sans-serif; overflow-wrap: anywhere; }
     .v2-fullmap { display: block; width: 100%; height: 46px; border-radius: 8px; border: 1px solid #2d2d4a; touch-action: none; cursor: pointer; }
+    /* ⤢ while the full view is open its ANCESTORS confine nothing (iOS pins a
+       fixed element inside a clipping/scrolling/transformed ancestor to that
+       ancestor) — tagged by fullFreeAncestors, untagged on close */
+    .v2-fullanc { overflow: visible !important; transform: none !important; filter: none !important; contain: none !important;
+      will-change: auto !important; -webkit-overflow-scrolling: auto !important; z-index: auto !important; isolation: auto !important;
+      backdrop-filter: none !important; -webkit-backdrop-filter: none !important; clip-path: none !important; mask: none !important; }
+    /* …and it clears the notch and the home indicator */
+    .v2-partviz.v2-full { padding-top: env(safe-area-inset-top, 0px) !important; padding-bottom: env(safe-area-inset-bottom, 0px) !important; box-sizing: border-box; }

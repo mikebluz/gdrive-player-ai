@@ -253,7 +253,7 @@
   containers where a container-specific property is needed; check by reading the computed value of
   ALL THREE and counting distinct results.
 
-- **A drawing surface on iOS needs `touch-action: none`, not `manipulation`.** `manipulation` still lets WebKit claim a one-finger stroke as a pan (→ `pointercancel`), which desktop Chrome's touch emulation never reproduces — the ⤢ full view "drew nothing on the phone" while every headless probe drew (cause SUSPECTED, unconfirmed on device 2026-10-04). Own the scroll/zoom instead (keys/ruler drag, two-finger touch handlers, wheel), and make a refused touch say why (`fullSay`).
+- **"Draws nothing on the phone" was a LOOP layer, not touch (2026-10-04).** The flight-log trace (`FULL …` lines via `window._bloopsLog`) showed every tap reaching the handler and adding a note; the layer's voice was `loop`, whose `notesFor` returns its pieces, never `part.notes`. Harvest the trace — and the device's `bloops-backup.json` to replay the user's own project headless — before theorising about WebKit. Real iOS-only fault in the same report: a `position: fixed` view inside a clipping/scrolling ancestor is CONFINED to it on iOS (sat under a z-300 header); `fullFreeAncestors` strips the ancestors while the view is open.
 
 ### Controls, wiring and reachability
 

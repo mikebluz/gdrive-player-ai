@@ -18107,7 +18107,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-partviz.v2-full { position: fixed !important; inset: 0 !important; z-index: 10200; margin: 0 !important;
       padding: 0 !important; border-radius: 0 !important; background: #0b0b18; display: flex !important; flex-direction: column;
       overflow: hidden; width: auto !important; max-width: none !important; }
-    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph):not(.v2-fullvthumb):not(.v2-fullhthumb) { display: none !important; }
+    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph):not(.v2-fullvthumb):not(.v2-fullhthumb):not(.v2-fulllegend) { display: none !important; }
     .v2-partviz.v2-full > .v2-vizcv { display: block !important; flex: 0 0 auto; width: 100% !important; }
     .v2-fullhead { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: #14142a;
       border-bottom: 1px solid #2d2d3f; padding-top: max(8px, env(safe-area-inset-top)); }
@@ -18189,3 +18189,61 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-fullzoom > b { color: #7ef0dc; font: 700 0.95rem 'Segoe UI', sans-serif; }
     .v2-fullzoom > i { font-style: normal; min-width: 0; color: #a9a6c7; font: 600 0.75rem 'Segoe UI', sans-serif; white-space: nowrap; }
     .v2-partviz:not(.v2-full) > .v2-fullvthumb, .v2-partviz:not(.v2-full) > .v2-fullhthumb { display: none !important; }
+    .v2-fullpv { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid #1f5a52; background: #0b1f1d;
+      color: #7ef0dc; font: 700 0.85rem 'Segoe UI', sans-serif; cursor: pointer; flex: none; white-space: nowrap; }
+    .v2-fullpv.playing { background: #2a1430; border-color: #8a3a6a; color: #ffb3d9; }
+    .v2-fullsize { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+    .v2-fullsize .v2-fullib { width: 36px; height: 34px; }
+    .v2-fullsize > i { font-style: normal; color: #cfc7ff; font: 600 0.8rem 'Segoe UI', sans-serif; white-space: nowrap; }
+    .v2-fullcof { min-width: 0; max-width: 100%; flex: 1 1 140px; }
+    /* ONE SEGMENTED CONTROL, however many segments (Draw | Chord | Select, and
+       ♩ | ⇅): only the outer corners round, and each inner seam is one line. */
+    .v2-fullmode > .v2-fullchip { border-radius: 0; margin: 0; }
+    .v2-fullmode > .v2-fullchip + .v2-fullchip { border-left-width: 0; }
+    .v2-fullmode > .v2-fullchip:first-child { border-radius: 17px 0 0 17px; }
+    .v2-fullmode > .v2-fullchip:last-child { border-radius: 0 17px 17px 0; }
+    .v2-fullmode > .v2-fullchip.on + .v2-fullchip { border-left-width: 0; }
+    .v2-fullgridw { display: inline-flex; align-items: center; gap: 4px; flex: none; color: #a9a6c7; font: 600 0.85rem 'Segoe UI', sans-serif; }
+    .v2-fullgridw > .ambient-select { min-height: 34px; width: auto; min-width: 0; }
+    .v2-fullslip { display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 34px; padding: 0 12px; border-radius: 17px;
+      border: 1px solid #2d2d3f; color: #a9a6c7; font: 600 0.85rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .v2-fullslip.on { background: #2a2350; border-color: #8b6be0; color: #e9e3ff; }
+    .v2-fullslip > input { margin: 0; width: 16px; height: 16px; accent-color: #8b6be0; }
+    .v2-fullbreak { min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--ch, #3a3a5c); background: transparent;
+      color: var(--ch, #c9c4ee); font: 700 0.85rem 'Segoe UI', sans-serif; cursor: pointer; flex: none; white-space: nowrap; }
+    .v2-fullbreak[disabled] { opacity: 0.35; cursor: default; }
+    /* SEGMENTED CONTROL, DONE ONCE: the GROUP owns the outline and the rounding;
+       segments are borderless with a hairline seam, and the chosen one is a fill
+       (no box of its own, so nothing doubles or squares off mid-group). */
+    .v2-fullmode { border: 1px solid #2d2d3f; border-radius: 17px; overflow: hidden; }
+    .v2-fullmode > .v2-fullchip, .v2-fullmode > .v2-fullchip:first-child, .v2-fullmode > .v2-fullchip:last-child {
+      border: 0; border-radius: 0; min-height: 32px; }
+    .v2-fullmode > .v2-fullchip + .v2-fullchip { box-shadow: inset 1px 0 0 #2d2d3f; }
+    .v2-fullmode > .v2-fullchip.on { background: #17463f; color: #e6fffa; box-shadow: none; }
+    .v2-fullmode:has(> .v2-fullchip.on) { border-color: #2d2d3f; }
+    .v2-fullname { display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
+    .v2-fullname > b { font-weight: 700; overflow-wrap: anywhere; }
+    .v2-fullkeyrd { font: 700 0.75rem 'Segoe UI', sans-serif; color: #7ef0dc; overflow-wrap: anywhere; }
+    .v2-fullkeyrd.none { color: #8d8ab0; font-weight: 600; }
+    /* ◐ THE CHORD LEGEND — a sheet over the drawing, inside the full view */
+    .v2-partviz:not(.v2-full) > .v2-fulllegend { display: none !important; }
+    .v2-fulllegend { position: absolute; left: 10px; right: 10px; top: 64px; bottom: 74px; z-index: 5; overflow-y: auto;
+      padding: 12px 14px; border-radius: 14px; border: 1px solid #3a3a5c; background: #17172b; box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+      color: #d9d5ee; font: 0.85rem/1.4 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 10px; }
+    .v2-fulllegend p { margin: 0; overflow-wrap: anywhere; }
+    .v2-lghead { display: flex; align-items: center; gap: 10px; }
+    .v2-lghead > b { font-size: 1rem; color: #fff; }
+    .v2-lghead > span { flex: 1 1 auto; min-width: 0; color: #7ef0dc; font-weight: 700; overflow-wrap: anywhere; }
+    .v2-lglist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .v2-lglist li { display: flex; align-items: flex-start; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+    .v2-lglist li i { color: #8d8ab0; font-style: normal; }
+    .v2-lgmarks { border-top: 1px solid #2d2d4a; padding-top: 10px; }
+    .v2-lgsw { flex: none; width: 26px; height: 14px; margin-top: 3px; border-radius: 3px; }
+    .v2-lgring { border: 2.5px solid #f5b04a; background: #9f7aea; box-sizing: border-box; }
+    .v2-lgbar { width: 4px; margin: 3px 11px 0; height: 16px; background: #3fc7b4; }
+    .v2-lgsel { border: 2px solid #fff; background: rgba(214,188,250,0.95); box-sizing: border-box; }
+    .v2-lglist li > .v2-lgtx { flex: 1 1 auto; min-width: 0; }
+    /* ⤢ THE MINI-MAP */
+    .v2-fullmapw { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .v2-fullmaplab { color: #a9a6c7; font: 600 0.78rem 'Segoe UI', sans-serif; overflow-wrap: anywhere; }
+    .v2-fullmap { display: block; width: 100%; height: 46px; border-radius: 8px; border: 1px solid #2d2d4a; touch-action: none; cursor: pointer; }

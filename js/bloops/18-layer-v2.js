@@ -2141,6 +2141,13 @@
         // pitch would not sound (or sit) where it was dropped. Absent by
         // default like every per-note field.
         if (n.hx) o.hx = 1;
+        // `ch` — ONE CHORD. Notes placed together by ⤢ ♫ Chord share a number,
+        // so they draw in one colour and move, select and delete as a unit
+        // until ✂ Break chord drops it. Absent by default like the rest.
+        if (Number.isFinite(n.ch) && n.ch > 0) o.ch = clamp(n.ch | 0, 1, 1e6);
+        // `cr` — that chord's ROOT pitch class (an inversion's bass is not its
+        // root), so it can be coloured and named by its degree in the key
+        if (o.ch && Number.isFinite(n.cr)) o.cr = (((n.cr | 0) % 12) + 12) % 12;
         return o;
       }).sort((a, b) => a.t - b.t);
       // A recorded part is fixed pitch material, but it still has to answer to a
@@ -2549,6 +2556,36 @@
       if (set && Array.isArray(set.ivs) && set.ivs.length) return set.ivs.length;
     } catch (e) {}
     return 0;
+  }
+  // ── ♫ CHORD DRAWING (⤢ full view) ──────────────────────────────────────
+  // The KEY as an ORDERED scale (root + intervals), at a moment — what "the
+  // chord built on this note" stacks thirds through. The area key only (with
+  // its part/section offsets via `withKeyTime`); null with no key or 12 tones.
+  function keyScaleAt(E, cfg, at) {
+    if (!(cfg && cfg.keyOn)) return null;
+    try {
+      const k = withKeyTime(at, () => keySetOf(cfg));
+      if (!k || !Array.isArray(k.ivs) || k.ivs.length < 5 || k.ivs.length >= 12) return null;
+      return { root: ((k.root % 12) + 12) % 12, ivs: k.ivs.map((x) => (((x | 0) % 12) + 12) % 12) };
+    } catch (e) { return null; }
+  }
+  // THE CHORD SOUNDING at a moment, ordered as stacked (root, 3rd, 5th, …) —
+  // null when nothing names one (no progression / no chord source).
+  // THE KEY, SPELLED OUT, at a moment ("D Major") — part/section keys via
+  // `withKeyTime`; null with no key
+  function keyLabelAt(E, cfg, at) {
+    if (!(cfg && cfg.keyOn)) return null;
+    try {
+      return withKeyTime(at, () => (typeof _ambKeyLabel === 'function')
+        ? _ambKeyLabel(_ambKeyRootPc(cfg), _ambKeyScaleName(cfg)) : null);
+    } catch (e) { return null; }
+  }
+  function chordSetAt(E, cfg, at, L) {
+    try {
+      const set = withKeyTime(chgTime(at), () => toneSetAt(E, cfg, chgTime(at), L));
+      if (!set || !set.pool || !Number.isFinite(set.root) || !Array.isArray(set.ivs) || !set.ivs.length || set.ivs.length >= 12) return null;
+      return { root: ((set.root % 12) + 12) % 12, ivs: set.ivs.map((x) => x | 0) };
+    } catch (e) { return null; }
   }
   function scaleAt(E, cfg, at, L) {
     const mk = (root, ivs) => {
@@ -9362,6 +9399,8 @@
     fixed: fixedOf,                // \u23fb the mode, for the UI half (two IIFEs)
     frozeWhy,                      // \u2744 …and why a part is written down
     scaleAt,                       // which pitch classes the keyboard should light
+    keyScaleAt, chordSetAt,        // ♫ chord drawing: the ordered key, the sounding chord
+    keyLabelAt,                    // ⤢ the key readout
     toneCount: toneCountAt,        // …and how MANY there are, for the controls that index them
     chordAt,                       // …and which the SOUNDING CHORD holds, at one moment
     notesFor,                      // the interface, callable directly
@@ -12387,7 +12426,9 @@
     // callers all swallow it — the drawing simply stopped, with `cv._cs = 0`
     // and no hit boxes as the only tell.
     cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: h, cyc: cyc, playing: playing,
-                    vsc: VSC, f0: F0, barsF: barsF, vbars: VB, bar0: B0 };
+                    vsc: VSC, f0: F0, barsF: barsF, vbars: VB, bar0: B0, cs: cs };
+    // ⤢ the header's live faces — here, which EVERY draw reaches (the tail has early returns)
+    if (FV) { try { fullBreakSync(L); } catch (e) {} try { fullKeySync(E, L, cv); } catch (e) {} try { fullMap(L, cv); } catch (e) {} }
     // the keys, and their lines across the plot — the black rows are what make
     // a piano roll readable at a glance
     // WHITE KEYS ARE THE GROUND and the black ones sit ON them, narrower —
@@ -12483,6 +12524,25 @@
         g.fillText(NOTE_NAMES[pc] + (Math.floor(m / 12) - 1), blk ? 3 : 6, yOf(m) + rowH / 2);
       }
       g.restore();
+    }
+    // ⇅ INVERSION: the chord's notes are LIT (a teal key edge and row) and the
+    // rest dimmed — the rows a tap will accept, so nothing is a guess. Read at
+    // the window's left edge; under a progression the readout names the chord
+    // actually used where you tap.
+    if (FV && FV.chord && CHORDM.sub === 'inv') {
+      let pcsL = null;
+      try { pcsL = fullInvPcs(E, L, (cs || 0) + F0 * cyc); } catch (e) { pcsL = null; }
+      if (pcsL) {
+        for (const m of (_rowList || Array.from({ length: hiM - loM + 1 }, (_, i) => loM + i))) {
+          const y = yOf(m), lit = pcsL.indexOf(((m % 12) + 12) % 12) >= 0;
+          if (lit) {
+            g.fillStyle = 'rgba(126,240,220,0.10)'; g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+            g.fillStyle = '#7ef0dc'; g.fillRect(GUT - 6, y + 2, 6, Math.max(1, rowH - 4));
+          } else {
+            g.fillStyle = 'rgba(6,6,12,0.45)'; g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+          }
+        }
+      }
     }
     g.strokeStyle = 'rgba(159,122,234,0.30)'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(GUT + 0.5, TOP); g.lineTo(GUT + 0.5, h); g.stroke();
@@ -12879,6 +12939,13 @@
     // below that a block reads as an outline, and an outline already means
     // something else here (the takes to come).
     const loudA = (n2) => 0.42 + 0.58 * Math.max(0, Math.min(1, ampOf(n2) / ampMax));
+    CH_INFO = new Map();
+    // ♫ THE SELECTED CHORD is drawn selected WHOLE — a chord is one thing
+    let selChK = 0; try { selChK = selChord(L); } catch (e) {}
+    try {
+      if (L.part && Array.isArray(L.part.notes))
+        new Set(L.part.notes.map((n) => (n && n.ch) | 0).filter(Boolean)).forEach((k) => CH_INFO.set(k, chInfo(E, L, cfg, k, cs, cyc)));
+    } catch (e) {}
     for (let i = 0; i < played.length; i++) {
       const n = played[i];
       const x = xF(n.at / cyc);
@@ -12893,9 +12960,13 @@
       if (mrow < loM || mrow > hiM) { hidden++; continue; }
       const y = yOf(mrow) + (rowH - nh) / 2;
       g.fillStyle = NOTE_FILL;
-      // ⤢ with in-key rows OFF, an out-of-key note is allowed and marked amber
-      if (FV && SPC && !SPC[((mrow % 12) + 12) % 12]) g.fillStyle = '#f5b04a';
+      // ♫ A CHORD wears its own colour (out-of-key amber still outranks it)
+      const chK = Number.isFinite(n.nidx) ? chOfNote(L, n.nidx) : 0;
+      if (chK) g.fillStyle = chColor(chK);
+      // ⤢ OUTSIDE THE KEY = an AMBER OUTLINE (never a fill, so a chord keeps one colour)
+      const ook = !!(FV && SPC && !SPC[((mrow % 12) + 12) % 12]);
       g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
+      if (ook) { g.strokeStyle = '#f5b04a'; g.lineWidth = 2.5; }
       // CLIPPED TO THE VIEWPORT. With only part of the cycle on screen a note
       // can start before the left edge or run past the right one — it is drawn
       // as the part of itself that is visible, and one entirely outside is
@@ -12947,12 +13018,14 @@
         g.fillStyle = 'rgba(214,188,250,0.95)';
         g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       }
+      const inSelCh = !!(selChK && chK === selChK);
+      if (inSelCh) { g.fillStyle = chColor(chK); g.strokeStyle = '#fff'; g.lineWidth = 2.5; }
       // RIGHT-ANGLE CORNERS, deliberately (2026-09-09, user: "so it's easier
       // to see visually how they line up on the grid"): a rounded end pulls
       // the visible edge inboard of the note's true start, so a note ON a
       // grid line read as slightly off it — the corner IS the onset.
       if (isGrp && !isSel) {
-        g.fillStyle = _hexA(NOTE_EDGE, 0.85) || 'rgba(214,188,250,0.85)';
+        g.fillStyle = chK ? chColor(chK) : (_hexA(NOTE_EDGE, 0.85) || 'rgba(214,188,250,0.85)');
         g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       }
       g.beginPath();
@@ -12972,8 +13045,8 @@
       // ~0.3 reads as an outline. The selected and gathered notes keep their
       // own full-strength treatment: those say "this is what you are working
       // on", which outranks both.
-      const la = (isSel || isGrp) ? 1 : loudA(n);
-      const ta = (stab && !playing && !fromPv && !isSel && !isGrp) ? (0.5 + 0.5 * stab[i]) : 1;
+      const la = (isSel || isGrp || inSelCh) ? 1 : loudA(n);
+      const ta = (stab && !playing && !fromPv && !isSel && !isGrp && !inSelCh) ? (0.5 + 0.5 * stab[i]) : 1;
       if (la < 1 || ta < 1) g.globalAlpha = Math.max(0.4, la * ta);   // …and a previewed cycle is a sounding one
       g.fill(); g.stroke();
       g.globalAlpha = 1;
@@ -13224,6 +13297,25 @@
                 (fromPv ? ' · as previewed' : '')) + thawTxt + xfTxt + ghostTxt + sameTxt + overTxt + otherTxt;
       liveBadge(lab);
     }
+    // ♫ A CHORD IS ONE THING — a bar in its colour joins its notes at the onset
+    try {
+      const byCh = {};
+      (cv._hits || []).forEach((hb) => { const k = chOfNote(L, hb.i); if (!k) return;
+        const b = byCh[k] || (byCh[k] = { x: hb.x, y0: hb.y, y1: hb.y + hb.h, n: 0 });
+        b.x = Math.min(b.x, hb.x); b.y0 = Math.min(b.y0, hb.y); b.y1 = Math.max(b.y1, hb.y + hb.h); b.n++; });
+      Object.keys(byCh).forEach((k) => { const b = byCh[k]; if (b.n < 2) return;
+        g.fillStyle = chColor(k | 0); g.fillRect(Math.round(b.x) - 1, b.y0, 3, b.y1 - b.y0);
+        // …and NAMED there: its numeral in the key (or its name outside it), /bass when inverted
+        const ci = CH_INFO && CH_INFO.get(k | 0);
+        if (ci && ci.label && FV) {
+          g.save(); g.font = '700 11px -apple-system, Segoe UI, sans-serif'; g.textBaseline = 'bottom';
+          const ty = (b.y0 - 3 > TOP + 11) ? b.y0 - 3 : b.y1 + 13;
+          const tw = g.measureText(ci.label).width;
+          g.fillStyle = 'rgba(10,10,20,0.85)'; g.fillRect(Math.round(b.x) - 1, ty - 12, tw + 6, 13);
+          g.fillStyle = ci.col; g.fillText(ci.label, Math.round(b.x) + 2, ty);
+          g.restore();
+        } });
+    } catch (e) {}
     try { vizChrome(card, L, E); } catch (e) {}
   }
   // The viz block's live chrome — the note editor, and what the lock button
@@ -14937,10 +15029,13 @@
     const pos = Math.max(0, n.t) * bars;                    // in bars
     const bar = Math.floor(pos + 1e-6) + 1, inBar = pos - (bar - 1);
     const beat = Math.floor(inBar * 4 + 1e-6) + 1, six = Math.floor(inBar * 16 + 1e-6) % 4 + 1;
+    // OFF THE 16th (⇢ Slip, triplets): how far past it, in ticks of 120 per 16th
+    const tk = Math.round(((inBar * 16 + 1e-6) % 1) * 120);
+    const atTxt = bar + '.' + beat + '.' + six + (tk > 0 && tk < 120 ? ' +' + tk + '/120' : '');
     const size = _dtFrac(Math.max(0, n.dur) * bars * 16);
     const lvl = Number.isFinite(n.vel) ? (n.vel | 0) : 100;
     if (FULL && FULL.id === (L.id | 0)) {
-      fullReadout(ev, '<b>' + name + '</b> <span><i>at</i> ' + bar + '.' + beat + '.' + six + '</span> <span><i>size</i> ' + size + '</span> <span><i>level</i> ' + lvl + '%</span>');
+      fullReadout(ev, '<b>' + name + '</b> <span><i>at</i> ' + atTxt + '</span> <span><i>size</i> ' + size + '</span> <span><i>level</i> ' + lvl + '%</span>');
       return;
     }
     if (!DTIP) {
@@ -14951,7 +15046,7 @@
       DTIP.style.setProperty('display', 'flex', 'important');
     }
     DTIP.innerHTML = '<b>' + name + '</b>' +
-      '<span><i>at</i> ' + bar + '.' + beat + '.' + six + '</span>' +
+      '<span><i>at</i> ' + atTxt + '</span>' +
       '<span><i>size</i> ' + size + '</span>' +
       '<span><i>level</i> ' + lvl + '%</span>';
     const touch = ev && ev.pointerType === 'touch';
@@ -15008,10 +15103,287 @@
     vt.hidden = fr.n >= N;
     vt.style.top = Math.round(ct + H * (fr.i0 / N)) + 'px';
     vt.style.height = Math.max(18, Math.round(H * (fr.n / N))) + 'px';
-    ht.hidden = vb >= bars - 1e-6;
+    ht.hidden = true;                                     // the mini-map shows time now
     ht.style.top = Math.round(cv.offsetTop + top + H - 6) + 'px';
     ht.style.left = Math.round(gut + W * (b0 / bars)) + 'px';
     ht.style.width = Math.max(18, Math.round(W * (vb / bars))) + 'px';
+  }
+  // ── ♫ CHORD MODE ── a tap places a whole chord. `sub`: 'root' = the chord the
+  // KEY builds on the tapped note (stacked thirds); 'inv' = a chosen chord with
+  // the tapped note as its BASS (an inversion — in C major, G gives C/G).
+  // `size` = how many notes (2 … 7: triad, 7th, 9th, 11th, 13th). `of` = which
+  // chord an inversion is of: 'beat' (the one sounding there; the key's I
+  // without a progression) or a scale degree '0'…'6'. Transient, like the mode.
+  const CHORDM = { sub: 'root', size: 3, of: 'beat' };
+  // ONE COLOUR PER CHORD (by its `ch` number), distinct from the plain note
+  // purple and from the out-of-key amber, so neighbouring chords differ
+  // A CHORD'S COLOUR IS ITS DEGREE IN THE KEY (I…vii°), so every V is the same
+  // colour wherever it sits; a chord whose root is outside the key is grey.
+  // Never amber — amber means "outside the key" and is drawn as an OUTLINE.
+  const DEG_COLORS = ['#3fc7b4', '#5aa9ff', '#c9a0ff', '#8bd450', '#f07ab8', '#8c8cff', '#ff7a6b'];
+  const DEG_FAMILY = ['home', 'away', 'home', 'away', 'tension', 'home', 'tension'];
+  const CH_OUT = '#9aa0b0';
+  const RN7 = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  // per-draw cache of each chord's { col, label } (`chInfo`)
+  let CH_INFO = null;
+  const chColor = (k) => { const ci = CH_INFO && CH_INFO.get(k | 0); return ci ? ci.col : CH_OUT; };
+  // a chord's root when it was not stored: the tone with a 3rd AND a 5th above it
+  function chRootOf(pcs, bassPc) {
+    const set = new Set(pcs);
+    for (const r of pcs) {
+      const has = (iv) => set.has((r + iv) % 12);
+      if ((has(3) || has(4)) && (has(6) || has(7) || has(8))) return r;
+    }
+    return bassPc;
+  }
+  // { col, label, deg } for chord `k` — its degree in the key at its onset
+  function chInfo(E, L, cfg, k, cs0, cyc0) {
+    const ix = chIdxs(L, k); if (!ix.length) return { col: CH_OUT, label: '', deg: -1 };
+    const ns = ix.map((i) => L.part.notes[i]);
+    const bass = ns.reduce((a, n) => (n.midi < a.midi ? n : a), ns[0]);
+    const pcsU = []; ns.slice().sort((a, b) => a.midi - b.midi).forEach((n) => { const c = _pc(n.midi); if (pcsU.indexOf(c) < 0) pcsU.push(c); });
+    const root = Number.isFinite(ns[0].cr) ? ns[0].cr : chRootOf(pcsU, _pc(bass.midi));
+    let key = null; try { key = V2.keyScaleAt(E, cfg, (cs0 || 0) + (ns[0].t || 0) * (cyc0 || 0)); } catch (e) {}
+    const deg = key ? key.ivs.findIndex((iv) => _pc(key.root + iv) === root) : -1;
+    const has = (iv) => pcsU.indexOf((root + iv) % 12) >= 0;
+    const minor = has(3) && !has(4), dim = minor && has(6) && !has(7), aug = has(4) && has(8) && !has(7);
+    let label;
+    if (deg >= 0) label = (minor ? RN7[deg].toLowerCase() : RN7[deg]) + (dim ? '\u00b0' : aug ? '+' : '');
+    else label = NOTE_NAMES[root] + (dim ? '\u00b0' : minor ? 'm' : aug ? '+' : '');
+    if (_pc(bass.midi) !== root) label += '/' + NOTE_NAMES[_pc(bass.midi)];
+    return { col: deg >= 0 ? DEG_COLORS[deg] : CH_OUT, label: label, deg: deg };
+  }
+  const chOfNote = (L, i) => { const n = L && L.part && Array.isArray(L.part.notes) ? L.part.notes[i] : null; return (n && n.ch) | 0; };
+  // every note of chord `k`, as indices
+  const chIdxs = (L, k) => (L.part.notes || []).reduce((a, n, i) => { if (k && n && (n.ch | 0) === k) a.push(i); return a; }, []);
+  // ⇢ SLIP (⤢ only): off-grid placement. One tick = 1/1920 of a bar (480 PPQ),
+  // as a fraction of the PART — what `t`/`dur` are measured in.
+  const FULL_SLIP = { on: false };
+  const slipCell = (L) => 1 / (1920 * Math.max(0.0625, (L && L.part && L.part.bars) || 1));
+  const CH_SIZE = { 2: 'two notes', 3: 'triad', 4: '7th', 5: '9th', 6: '11th', 7: '13th' };
+  const _pc = (m) => (((m | 0) % 12) + 12) % 12;
+  // a chord's NAME from its stacked pitch classes (root first)
+  function chordName(pcs) {
+    if (!pcs || !pcs.length) return '';
+    const r = pcs[0], iv = (k) => (pcs[k] == null ? null : (pcs[k] - r + 12) % 12);
+    const t3 = iv(1), t5 = iv(2), t7 = iv(3);
+    let q = t3 === 3 ? 'm' : '';
+    if (t3 === 3 && t5 === 6) q = (t7 === 10) ? '\u00f8' : '\u00b0';
+    if (t3 === 4 && t5 === 8) q = '+';
+    let ext = '';
+    if (t7 != null) {
+      const e = pcs.length >= 7 ? '13' : pcs.length === 6 ? '11' : pcs.length === 5 ? '9' : '7';
+      ext = t7 === 11 ? ('maj' + e) : (t7 === 9 && q !== '\u00b0') ? '6' : e;
+    }
+    return NOTE_NAMES[r] + q + ext + (pcs.length === 2 ? ' (2 notes)' : '');
+  }
+  // close voicing: the bass, then each next tone the first one above the last
+  function chordVoice(bass, pcs) {
+    const out = [bass]; let cur = bass;
+    for (let k = 1; k < pcs.length; k++) { let m = cur + 1; while (_pc(m) !== pcs[k] && m < cur + 13) m++; out.push(m); cur = m; }
+    return out;
+  }
+  // { tones: [midi…] bass first, text } for a press on SOUNDING pitch `p` at part fraction `t`
+  function chordFor(E, L, cvd, p, t) {
+    const cfg = E.getCfg(), pl = cvd._plotGeo || {};
+    const at = (pl.cs || 0) + t * (pl.cyc || 0);
+    const key = V2.keyScaleAt ? V2.keyScaleAt(E, cfg, at) : null;
+    const N = clamp(CHORDM.size | 0, 2, 7);
+    const stackKey = (d) => Array.from({ length: N }, (_, k) => _pc(key.root + key.ivs[(d + 2 * k) % key.ivs.length]));
+    const IONIAN = [0, 2, 4, 5, 7, 9, 11];
+    const stackMaj = (r) => Array.from({ length: N }, (_, k) => _pc(r + IONIAN[(2 * k) % 7]));
+    const degOf = (pc) => key ? key.ivs.findIndex((iv) => _pc(key.root + iv) === pc) : -1;
+    if (CHORDM.sub !== 'inv') {
+      const d = degOf(_pc(p));
+      const pcs = d >= 0 ? stackKey(d) : stackMaj(_pc(p));
+      return { tones: chordVoice(p, pcs), pcs: pcs,
+        text: chordName(pcs) + (d < 0 ? (key ? ' \u2014 not in the key, built major' : ' \u2014 no key set, built major') : '') };
+    }
+    // ⇅ INVERSION — which chord, then the tapped tone as its bass. The press
+    // was already checked against the chord (`fullInvPcs`), so it IS a chord tone.
+    const pcs = fullInvPcs(E, L, at);
+    if (!pcs || pcs.indexOf(_pc(p)) < 0) return null;
+    const bass = p;
+    const bi = pcs.indexOf(_pc(bass));
+    const rot = pcs.slice(bi).concat(pcs.slice(0, bi));
+    const INV = ['root position', '1st inversion', '2nd inversion', '3rd inversion', '4th inversion', '5th inversion', '6th inversion'];
+    return { tones: chordVoice(bass, rot), pcs: pcs,
+      text: chordName(pcs) + ' \u00b7 ' + INV[bi] };
+  }
+  // what to tap, said when Inversion (or its chord) is chosen
+  function fullInvSay(E) {
+    const L = _fullLayer(E), cv = document.querySelector('.v2-full .v2-vizcv'); if (!L || !cv || !cv._plotGeo) return;
+    const pl = cv._plotGeo, pcs = fullInvPcs(E, L, (pl.cs || 0) + (pl.f0 || 0) * pl.cyc);
+    if (pcs) fullSay('\u21c5 ' + chordName(pcs) + ' \u2014 tap a lit row (' + pcs.map((c) => NOTE_NAMES[c]).join(', ') +
+      '); the note you tap goes at the bottom.');
+  }
+  // ⇅ THE CHORD AN INVERSION IS OF, at absolute time `at`, as stacked pitch
+  // classes (root first) — the ONE answer the tap check, the lit rows and the
+  // placement all read, so what is lit is exactly what a tap will accept.
+  function fullInvPcs(E, L, at) {
+    const cfg = E.getCfg();
+    const key = V2.keyScaleAt ? V2.keyScaleAt(E, cfg, at) : null;
+    const N = clamp(CHORDM.size | 0, 2, 7);
+    const IONIAN = [0, 2, 4, 5, 7, 9, 11];
+    const stackKey = (d) => Array.from({ length: N }, (_, k) => _pc(key.root + key.ivs[(d + 2 * k) % key.ivs.length]));
+    const stackMaj = (r) => Array.from({ length: N }, (_, k) => _pc(r + IONIAN[(2 * k) % 7]));
+    if (CHORDM.of === 'beat') {
+      const cs = V2.chordSetAt ? V2.chordSetAt(E, cfg, at, L) : null;
+      if (cs) {
+        const own = []; cs.ivs.forEach((iv) => { const c = _pc(cs.root + iv); if (own.indexOf(c) < 0) own.push(c); });
+        const d = key ? key.ivs.findIndex((iv) => _pc(key.root + iv) === cs.root) : -1;
+        const ext = d >= 0 ? stackKey(d) : stackMaj(cs.root);
+        const pcs = own.slice(0, N); for (let k = pcs.length; k < N; k++) if (pcs.indexOf(ext[k]) < 0) pcs.push(ext[k]);
+        return pcs;
+      }
+    }
+    const d = CHORDM.of === 'beat' ? 0 : clamp(CHORDM.of | 0, 0, 6);
+    return key ? stackKey(Math.min(d, key.ivs.length - 1)) : stackMaj(0);
+  }
+  // the pressed note (from `penAdd`) becomes the chord's bass; the rest are
+  // added beside it and the whole chord is GATHERED, so a drag sizes all of it
+  // and 🗑 Delete removes all of it.
+  function fullChordAdd(E, L, cvd, made) {
+    let n0 = L.part.notes[made.idx]; if (!n0) return null;
+    const hb = (cvd._hits || []).find((x) => x.i === made.idx);
+    const sound = hb ? Math.round(hb.midi) : (n0.midi | 0);
+    const off = (n0.midi | 0) - sound;
+    const t0 = n0.t, d0 = n0.dur;
+    const built = chordFor(E, L, cvd, sound, t0);
+    if (!built || built.tones.length < 2) return null;
+    // `chordFor` reads `getCfg`, which REPLACES every note object — the press's
+    // note is re-found by index or `n0` is an orphan (its `ch` was lost that way)
+    n0 = L.part.notes[made.idx]; if (!n0) return null;
+    const k = (L.part.notes || []).reduce((mx, n) => Math.max(mx, (n && n.ch) | 0), 0) + 1;
+    n0.midi = clamp(built.tones[0] + off, 0, 127);
+    const cr = (built.pcs && built.pcs.length) ? _pc(built.pcs[0]) : _pc(built.tones[0]);
+    n0.ch = k; n0.cr = cr;
+    built.tones.slice(1).forEach((m) => {
+      const nn = { t: t0, midi: clamp(m + off, 0, 127), dur: d0, ch: k, cr: cr };
+      if (n0.hx) nn.hx = 1; if (n0.vel != null) nn.vel = n0.vel;
+      L.part.notes.push(nn);
+    });
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}                    // re-sort — indices re-found below
+    const idxs = built.tones.map((m) => nearestNote(L.part.notes, t0, clamp(m + off, 0, 127))).filter((i) => i >= 0);
+    mselSet(L, new Set(idxs));
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+    FULL.lastChord = '\u266b ' + built.text + ' \u00b7 ' + built.tones.map((m) => noteName(m)).join(' ');
+    fullSay(FULL.lastChord);
+    return { idx: idxs[0], group: idxs.map((i) => ({ i: i, t0: L.part.notes[i].t, m0: L.part.notes[i].midi | 0, d0: L.part.notes[i].dur })) };
+  }
+  // WHICH CHORD IS SELECTED — the open note's, or a gathering that is exactly one chord
+  function selChord(L) {
+    if (!L || !L.part) return 0;
+    // the GATHERING first — the press sets it (a chord note gathers its chord, a
+    // lone note clears it), so it is always the most recent touch; the open
+    // note (`NE`) can still be one tapped earlier
+    const ms = mselOf(L);
+    if (ms && ms.size) { const ks = new Set([...ms].map((i) => chOfNote(L, i))); return ks.size === 1 ? ([...ks][0] | 0) : 0; }
+    if (NE && NE.id === (L.id | 0)) { const k = chOfNote(L, NE.idx); if (k) return k; }
+    return 0;
+  }
+  // ── THE MINI-MAP, redrawn with the drawing (its second writer) ──────────
+  function fullMap(L, cv) {
+    const mc = document.querySelector('.v2-full .v2-fullmap'); if (!mc || !L || !L.part) return;
+    const pl = cv && cv._plotGeo; if (!pl) return;
+    const dpr = window.devicePixelRatio || 1, W = Math.max(40, mc.clientWidth), H = Math.max(20, mc.clientHeight);
+    if (mc.width !== Math.round(W * dpr) || mc.height !== Math.round(H * dpr)) { mc.width = Math.round(W * dpr); mc.height = Math.round(H * dpr); }
+    const g = mc.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const bars = Math.max(0.25, +L.part.bars || 1), xb = (b) => (b / bars) * W;
+    g.fillStyle = '#0e0e1c'; g.fillRect(0, 0, W, H);
+    g.font = '600 9px -apple-system, Segoe UI, sans-serif'; g.textBaseline = 'top';
+    for (let b = 0; b < Math.ceil(bars - 1e-6); b++) {
+      const x = Math.round(xb(b)) + 0.5;
+      g.strokeStyle = 'rgba(159,122,234,0.28)'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+      g.fillStyle = '#8d8ab0'; g.fillText(String(b + 1), x + 3, 2);
+    }
+    const ns = Array.isArray(L.part.notes) ? L.part.notes : [];
+    if (ns.length) {
+      let lo = 127, hi = 0; ns.forEach((n) => { lo = Math.min(lo, n.midi | 0); hi = Math.max(hi, n.midi | 0); });
+      const top = 13, span = Math.max(1, H - top - 3), rng = Math.max(6, hi - lo);
+      ns.forEach((n) => {
+        const y = top + span * (1 - ((n.midi | 0) - lo) / rng);
+        g.fillStyle = n.ch ? chColor(n.ch) : '#9f7aea';
+        g.fillRect(xb((n.t || 0) * bars), Math.round(y) - 1, Math.max(1.5, xb((n.dur || 0) * bars)), 2);
+      });
+    }
+    const b0 = pl.bar0 || 0, vb = Math.max(0.0625, pl.vbars || bars);
+    g.fillStyle = 'rgba(126,240,220,0.14)'; g.fillRect(xb(b0), 0, Math.max(3, xb(vb)), H);
+    g.strokeStyle = '#7ef0dc'; g.lineWidth = 1.5; g.strokeRect(xb(b0) + 0.75, 0.75, Math.max(3, xb(vb)) - 1.5, H - 1.5);
+    mc._map = { bars: bars, vb: vb, W: W };
+    const lab = document.querySelector('.v2-full .v2-fullmaplab');
+    if (lab) {
+      const n = Math.ceil(bars - 1e-6), a = Math.floor(b0 + 1e-6) + 1, z = Math.min(n, Math.ceil(b0 + vb - 1e-6));
+      const txt = vb >= bars - 1e-6 ? ('All ' + n + ' bar' + (n === 1 ? '' : 's') + ' on screen')
+        : (a >= z ? ('Bar ' + a + ' of ' + n) : ('Bars ' + a + '\u2013' + z + ' of ' + n)) + ' \u2014 tap or drag the map to move';
+      if (lab.textContent !== txt) lab.textContent = txt;
+    }
+  }
+  // the key at the window's left edge — the second writer for `.v2-fullkeyrd`
+  function fullKeySync(E, L, cv) {
+    const el = document.querySelector('.v2-full .v2-fullkeyrd'); if (!el) return;
+    const pl = cv && cv._plotGeo; let lab = null;
+    try { lab = V2.keyLabelAt(E, E.getCfg(), ((pl && pl.cs) || 0) + ((pl && pl.f0) || 0) * ((pl && pl.cyc) || 0)); } catch (e) {}
+    const txt = lab ? ('Key: ' + lab) : 'No key \u2014 chromatic';
+    if (el.textContent !== txt) el.textContent = txt;
+    el.classList.toggle('none', !lab);
+  }
+  // ◐ THE LEGEND — every colour and mark on the drawing, in THIS key's chords
+  function fullLegend(E) {
+    const L = _fullLayer(E), card = _fullCard(); if (!L || !card) return;
+    const host = card.querySelector('.v2-partviz.v2-full'); if (!host) return;
+    const old = host.querySelector(':scope > .v2-fulllegend'); if (old) { old.remove(); return; }
+    const cv = host.querySelector('.v2-vizcv'), pl = (cv && cv._plotGeo) || {};
+    const at = (pl.cs || 0) + (pl.f0 || 0) * (pl.cyc || 0);
+    let key = null, lab = null;
+    try { key = V2.keyScaleAt(E, E.getCfg(), at); lab = V2.keyLabelAt(E, E.getCfg(), at); } catch (e) {}
+    const sw = (col, txt) => '<span class="v2-lgsw" style="background:' + col + '"></span><span class="v2-lgtx">' + txt + '</span>';
+    let rows = '';
+    if (key) {
+      key.ivs.slice(0, 7).forEach((_, d) => {
+        const pcs = [0, 1, 2].map((k) => _pc(key.root + key.ivs[(d + 2 * k) % key.ivs.length]));
+        const t3 = (pcs[1] - pcs[0] + 12) % 12, t5 = (pcs[2] - pcs[0] + 12) % 12;
+        const rn = (t3 === 3 ? RN7[d].toLowerCase() : RN7[d]) + (t5 === 6 ? '\u00b0' : t5 === 8 ? '+' : '');
+        const fam = DEG_FAMILY[d] === 'home' ? 'rest / home' : DEG_FAMILY[d] === 'away' ? 'moves away' : 'tension \u2014 wants home';
+        rows += '<li>' + sw(DEG_COLORS[d], '<b>' + rn + '</b> ' + chordName(pcs) + ' <i>' + fam + '</i>') + '</li>';
+      });
+    }
+    const p2 = document.createElement('div');
+    p2.className = 'v2-fulllegend'; p2.setAttribute('role', 'dialog'); p2.setAttribute('aria-label', 'Chord legend');
+    p2.innerHTML =
+      '<div class="v2-lghead"><b>Chord legend</b><span>' + (lab ? ('Key: ' + lab) : 'No key set') + '</span>' +
+        '<button type="button" class="v2-fullib v2-lgclose" aria-label="Close">\u2715</button></div>' +
+      '<p>A chord\u2019s colour is <b>which chord of the key</b> it is \u2014 every V is the same colour wherever it sits. The label at its left edge names it: the numeral is its step in the key (capital = major, small = minor, \u00b0 = diminished), and <b>/G</b> means the chord is inverted with G at the bottom.</p>' +
+      (rows ? '<ul class="v2-lglist">' + rows + '</ul>' : '<p><i>Set a key on the area to colour chords by degree.</i></p>') +
+      '<ul class="v2-lglist v2-lgmarks">' +
+        '<li>' + sw(CH_OUT, 'a chord whose root is <b>outside the key</b> \u2014 labelled by its name (e.g. B\u266d)') + '</li>' +
+        '<li>' + sw('rgba(159,122,234,0.92)', 'a single note (not part of a chord) \u2014 the layer\u2019s own colour') + '</li>' +
+        '<li><span class="v2-lgsw v2-lgring"></span><span class="v2-lgtx">amber outline \u2014 that note is <b>outside the key</b></span></li>' +
+        '<li>' + sw('rgba(245,176,74,0.35)', 'amber row \u2014 a pitch outside the key that some note uses') + '</li>' +
+        '<li><span class="v2-lgsw v2-lgbar"></span><span class="v2-lgtx">the line down a chord\u2019s left edge joins its notes \u2014 they move, select and delete together (\u2702 Break chord splits them)</span></li>' +
+        '<li><span class="v2-lgsw v2-lgsel"></span><span class="v2-lgtx">white edge \u2014 the selected note</span></li>' +
+        '<li>' + sw('#7ef0dc', 'teal key edge (\u21c5 Inversion) \u2014 the notes you can tap') + '</li>' +
+      '</ul>';
+    host.appendChild(p2);
+  }
+  // ✂ is live only while a chord is selected (re-lit on every draw — the second writer)
+  function fullBreakSync(L) {
+    const b = document.querySelector('.v2-full .v2-fullbreak'); if (!b) return;
+    const k = selChord(L);
+    b.disabled = !k;
+    b.style.setProperty('--ch', k ? chColor(k) : '');
+  }
+  function fullBreak(E) {
+    const L = _fullLayer(E); if (!L) return;
+    const k = selChord(L); if (!k) { fullSay('Tap a chord to select it, then \u2702 Break chord.'); return; }
+    const ix = chIdxs(L, k);
+    ix.forEach((i) => { delete L.part.notes[i].ch; });
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    mselSet(L, null); NE = null;
+    fullSay('\u2702 Broke the chord into ' + ix.length + ' separate notes.');
+    refreshFull(E);
   }
   // A REFUSED TOUCH SAYS WHY, in the readout — a drawing that silently ignores
   // a finger is indistinguishable from a broken one.
@@ -15096,6 +15468,43 @@
       try { refreshFull(FULL.E); } catch (e2) {}         // the zoom labels and tiles follow
     };
     document.addEventListener('touchend', end); document.addEventListener('touchcancel', end);
+    // TAP OR DRAG THE MINI-MAP — the view's box centres on the finger
+    document.addEventListener('pointerdown', (e) => {
+      const mc = e.target && e.target.closest && e.target.closest('.v2-full .v2-fullmap');
+      if (!mc || !FULL) return;
+      e.preventDefault();
+      const go = (ev2) => {
+        const L = _fullLayer(FULL.E), card = _fullCard(), m = mc._map; if (!L || !card || !m) return;
+        const r = mc.getBoundingClientRect();
+        const b = ((ev2.clientX - r.left) / Math.max(1, r.width)) * m.bars;
+        vnavSet(L, { bar0: clamp(b - m.vb / 2, 0, Math.max(0, m.bars - m.vb)) });
+        try { drawPartViz(card, L, FULL.E); } catch (e2) {}
+      };
+      go(e);
+      const mv = (e2) => go(e2);
+      const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    });
+    document.addEventListener('change', (e) => {
+      const sel = e.target && e.target.closest && e.target.closest('.v2-full .v2-fullcof');
+      if (sel && FULL) { CHORDM.of = sel.value === 'beat' ? 'beat' : String(sel.value | 0); refreshFull(FULL.E); fullInvSay(FULL.E); }
+      const gs = e.target && e.target.closest && e.target.closest('.v2-full .v2-fullgridsel');
+      if (gs && FULL) {
+        const L = _fullLayer(FULL.E); if (!L) return;
+        const v = gs.value | 0;
+        if (v === 16) delete L.part.grid; else L.part.grid = v;   // 16 is the default (absent)
+        FULL.userGrid = true;
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e2) {}
+        refreshFull(FULL.E);
+      }
+      const sl = e.target && e.target.closest && e.target.closest('.v2-full .v2-fullslipcb');
+      if (sl && FULL) {
+        FULL_SLIP.on = !!sl.checked;
+        refreshFull(FULL.E);
+        fullSay(FULL_SLIP.on ? '\u21e2 Slip on \u2014 notes move, land and size off the grid, by the finest step.'
+                             : 'Slip off \u2014 everything snaps to the grid.');
+      }
+    });
     let wy = 0, chromeT = 0;
     document.addEventListener('wheel', (e) => {
       if (!FULL) return;
@@ -15146,8 +15555,38 @@
     if (op.chrome) refreshFull(E);
     else { try { drawPartViz(card, L, E); } catch (e) {} }
   }
+  // ♫ the chord row: what a tap builds, which chord an inversion is of, how many notes
+  function fullChordRow(E, L) {
+    const inv = CHORDM.sub === 'inv';
+    let opts = '';
+    if (inv) {
+      let key = null; try { key = V2.keyScaleAt(E, E.getCfg(), 0); } catch (e) {}
+      const RN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+      opts += '<option value="beat"' + (CHORDM.of === 'beat' ? ' selected' : '') + '>the chord at that beat</option>';
+      if (key) key.ivs.slice(0, 7).forEach((_, d) => {
+        const pcs = [0, 1, 2].map((k) => _pc(key.root + key.ivs[(d + 2 * k) % key.ivs.length]));
+        const t3 = (pcs[1] - pcs[0] + 12) % 12, t5 = (pcs[2] - pcs[0] + 12) % 12;
+        const rn = (t3 === 3 ? RN[d].toLowerCase() : RN[d]) + (t5 === 6 ? '\u00b0' : t5 === 8 ? '+' : '');
+        opts += '<option value="' + d + '"' + (String(CHORDM.of) === String(d) ? ' selected' : '') + '>' + rn + ' \u00b7 ' + chordName(pcs) + '</option>';
+      });
+    }
+    const N = clamp(CHORDM.size | 0, 2, 7);
+    return '<div class="v2-fullbar2 v2-fullbar3">' +
+      '<span class="v2-fullmode" role="group" aria-label="What a tap builds">' +
+        '<button type="button" class="v2-fullchip v2-fullcs' + (inv ? '' : ' on') + '" data-cs="root" title="The chord the key builds on the note you tap (stacked thirds)">\u2669 On the note</button>' +
+        '<button type="button" class="v2-fullchip v2-fullcs' + (inv ? ' on' : '') + '" data-cs="inv" title="A chord with the note you tap as its bass \u2014 in C major, tapping G gives C over G (2nd inversion)">\u21c5 Inversion</button>' +
+      '</span>' +
+      (inv ? '<select class="ambient-select v2-fullcof" aria-label="Inversion of which chord">' + opts + '</select>' : '') +
+      '<span class="v2-fullsize" role="group" aria-label="How many notes">' +
+        '<button type="button" class="v2-fullib v2-fullcn" data-d="-1" aria-label="Fewer notes"' + (N <= 2 ? ' disabled' : '') + '>\u2212</button>' +
+        '<i>' + N + ' \u00b7 ' + CH_SIZE[N] + '</i>' +
+        '<button type="button" class="v2-fullib v2-fullcn" data-d="1" aria-label="More notes"' + (N >= 7 ? ' disabled' : '') + '>+</button>' +
+      '</span>' +
+    '</div>';
+  }
   function fullChrome(host, L, E) {
     if (!FULL || !host || !L) return;
+    const fm0 = FULL.chord ? 'chord' : (modeOf(L) === 'multi' ? 'multi' : 'draw');
     let hd = host.querySelector(':scope > .v2-fullhead'), ft = host.querySelector(':scope > .v2-fullfoot');
     if (!hd) { hd = document.createElement('div'); hd.className = 'v2-fullhead'; host.insertBefore(hd, host.firstChild); }
     if (!ft) { ft = document.createElement('div'); ft.className = 'v2-fullfoot'; host.appendChild(ft); }
@@ -15157,35 +15596,58 @@
     hd.innerHTML =
       '<div class="v2-fullbar1">' +
         '<button type="button" class="v2-fulldone">Done</button>' +
-        '<span class="v2-fullname">' + esc(L.name || ('Layer ' + L.id)) + '</span>' +
+        // THE NAME, AND THE KEY UNDER IT — re-read on every draw (`fullKeySync`),
+        // so a part or section with its own key is named as you scroll onto it
+        '<span class="v2-fullname"><b>' + esc(L.name || ('Layer ' + L.id)) + '</b>' +
+          '<small class="v2-fullkeyrd" title="The key these rows and chords use">\u2026</small></span>' +
         '<button type="button" class="v2-fulldel" title="Delete the selected note \u2014 or every note gathered with \u2b1a Select (Delete / Backspace)">\ud83d\uddd1 Delete</button>' +
-        '<button type="button" class="v2-fullib v2-fullplay" aria-label="Preview" title="Hear this layer">\u25b6</button>' +
+        // ▶ PREVIEW — the card's own Preview (same handler, same ■ Stop face),
+        // under its OWN class so `querySelector('.v2-pop-preview')` still finds
+        // the card's
+        '<button type="button" class="v2-fullpv" title="Hear one cycle of this layer \u2014 press again to stop">' +
+          ((typeof V2.previewing === 'function' && V2.previewing(L)) ? '\u25a0 Stop' : '\u25b6 Preview') + '</button>' +
       '</div>' +
       '<div class="v2-fullbar2">' +
         // WHAT A TOUCH DOES here — the card's ✎/⬚ gestures, the two that mean
         // anything at this size (👁 View is the card's job; ✎ Edit's panel lives
         // on the card). Draw also selects: a tap on a note picks it for 🗑.
         '<span class="v2-fullmode" role="group" aria-label="What a touch does">' +
-          '<button type="button" class="v2-fullchip v2-fullm' + (modeOf(L) === 'multi' ? '' : ' on') + '" data-m="draw" title="Draw new notes, drag to move or stretch, tap a note to select it">\u270e Draw</button>' +
-          '<button type="button" class="v2-fullchip v2-fullm' + (modeOf(L) === 'multi' ? ' on' : '') + '" data-m="multi" title="Tap notes to gather several \u2014 drag one to move them all, or \ud83d\uddd1 Delete them">\u2b1a Select</button>' +
+          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'draw' ? ' on' : '') + '" data-m="draw" title="Draw new notes, drag to move or stretch, tap a note to select it, double-tap it to delete it">\u270e Draw</button>' +
+          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'chord' ? ' on' : '') + '" data-m="chord" title="Tap to place a whole chord, built from the key \u2014 drag right to size it">\u266b Chord</button>' +
+          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'multi' ? ' on' : '') + '" data-m="multi" title="Tap notes to gather several \u2014 drag one to move them all, or \ud83d\uddd1 Delete them">\u2b1a Select</button>' +
         '</span>' +
         (hasKey ? '<button type="button" class="v2-fullchip v2-fullkey' + (FULL.keyRows ? ' on' : '') + '" title="Only the key\u2019s notes get a row \u2014 bigger rows, and what you draw lands in key. A pitch outside the key that a note already plays keeps its row, in amber.">\u25c8 in-key rows</button>' : '') +
-        '<button type="button" class="v2-fullchip v2-fullgrid" title="The grid notes snap to \u2014 tap for ' + (gp === 8 ? '1/16' : '1/8') + '">\u229e ' + (gp === 8 ? '1/8' : gp === 16 ? '1/16' : ('1/' + gp)) + '</button>' +
+        // ⊞ THE GRID notes snap to — every value the part can hold, triplets too
+        '<label class="v2-fullgridw" title="The grid notes snap to">\u229e <select class="ambient-select v2-fullgridsel" aria-label="Grid">' +
+          (V2.GRIDS || []).map((gv) => '<option value="' + gv[0] + '"' + (gv[0] === gp ? ' selected' : '') + '>' + gv[1] + '</option>').join('') +
+        '</select></label>' +
+        // ⇢ SLIP — off the grid: onsets and lengths move by the finest step there
+        // is (a 1/1920-bar tick), for the push/pull a grid cannot place
+        '<label class="v2-fullslip' + (FULL_SLIP.on ? ' on' : '') + '" title="Slip \u2014 move, place and size notes off the grid, by the smallest step (an arbitrary onset). Off = everything snaps to the grid.">' +
+          '<input type="checkbox" class="v2-fullslipcb"' + (FULL_SLIP.on ? ' checked' : '') + '> Slip</label>' +
+        '<button type="button" class="v2-fullchip v2-fulllegbtn" aria-haspopup="dialog" title="What the colours, outlines and labels on this drawing mean">\u25d0 Chord legend</button>' +
+        // ✂ live only while a chord is selected (`fullBreakSync`, every draw)
+        '<button type="button" class="v2-fullbreak" disabled title="Break the selected chord into separate notes \u2014 each goes back to its own colour and moves on its own">\u2702 Break chord</button>' +
+
         '<span class="v2-fullread">' + (prevRd || 'draw a note \u2014 its pitch, start, size and level show here') + '</span>' +
-      '</div>';
+      '</div>' + (fm0 === 'chord' ? fullChordRow(E, L) : '');
     const barsF = Math.max(0.25, +L.part.bars || 1), bars = Math.max(1, Math.ceil(barsF));
     const VB = clamp(_fullVB(), Math.min(0.25, barsF), barsF);
     const b0 = clamp(vnavOf(L).bar0 || 0, 0, Math.max(0, barsF - VB));
-    let tiles = '';
-    for (let b = 0; b < bars; b++) tiles += '<button type="button" class="v2-fulltile' + (b + 1 > b0 + 1e-6 && b < b0 + VB - 1e-6 ? ' on' : '') + '" data-b="' + b + '">' + (b + 1) + '</button>';
     const vbTxt = VB >= barsF - 1e-6 ? 'all bars' : Math.abs(VB - 0.5) < 1e-6 ? '\u00bd bar' : Math.abs(VB - 0.25) < 1e-6 ? '\u00bc bar'
       : (Math.round(VB * 10) / 10) + ' bar' + (Math.abs(VB - 1) < 1e-6 ? '' : 's');
-    ft.innerHTML = '<div class="v2-fulltiles">' + tiles + '</div>' +
-      // ‹ › page by a screen · ↔ how many bars are across · ↕ how tall a row is.
-      // Also: drag the keys to scroll pitch, drag the bar ruler to scroll time,
-      // two fingers to pan both and pinch to zoom.
+    void bars;
+    // THE MINI-MAP — the whole part in one strip (bars, every note, a box for
+    // what is on screen); tap or drag it to go there. It replaced the bar tiles,
+    // ‹ › and the bottom position bar: one control that SHOWS where you are.
+    ft.innerHTML = '<div class="v2-fullmapw">' +
+        '<span class="v2-fullmaplab" aria-live="polite"></span>' +
+        '<canvas class="v2-fullmap" role="slider" aria-label="The whole part \u2014 tap or drag to move the view"></canvas>' +
+      '</div>' +
+      // ↔ how many bars are across · ↕ how tall a row is. (Also: drag the keys
+      // to scroll pitch, drag the bar ruler to scroll time, two fingers to pan
+      // both and pinch to zoom.)
       '<div class="v2-fullpager">' +
-        '<button type="button" class="v2-fullib v2-fullprev" aria-label="Earlier bars"' + (b0 <= 1e-6 ? ' disabled' : '') + '>\u2039</button>' +
         '<span class="v2-fullzoom" role="group" aria-label="Zoom time"><b>\u2194</b>' +
           '<button type="button" class="v2-fullib v2-fullz" data-z="x-" aria-label="Zoom out \u2014 more bars"' + (VB >= barsF - 1e-6 ? ' disabled' : '') + '>\u2212</button>' +
           '<i>' + vbTxt + '</i>' +
@@ -15193,7 +15655,6 @@
         '<span class="v2-fullzoom" role="group" aria-label="Zoom pitch"><b>\u2195</b>' +
           '<button type="button" class="v2-fullib v2-fullz" data-z="y-" aria-label="Zoom out \u2014 more rows"' + ((FULL.rowPx || 42) <= 16 ? ' disabled' : '') + '>\u2212</button>' +
           '<button type="button" class="v2-fullib v2-fullz" data-z="y+" aria-label="Zoom in \u2014 taller rows"' + ((FULL.rowPx || 42) >= 80 ? ' disabled' : '') + '>+</button></span>' +
-        '<button type="button" class="v2-fullib v2-fullnext" aria-label="Later bars"' + (b0 + VB >= barsF - 1e-6 ? ' disabled' : '') + '>\u203a</button>' +
       '</div>';
     FULL.chrome = (hd.offsetHeight || 96) + (ft.offsetHeight || 100) + 10;
   }
@@ -15234,12 +15695,16 @@
   // 🗑 DELETE — the ⬚ Multi gathering when there is one, else the one selected note
   // (`NE`, what a tap or the pencil last picked). Same commit as ✕ Remove note:
   // persist, normalize, and re-anchor a playing layer so the deletion is heard now.
-  function fullDelete(E) {
+  function fullDelete(E, only) {
     const L = _fullLayer(E); if (!L || !L.part || !Array.isArray(L.part.notes)) return;
     let idxs = [];
     const ms = mselOf(L);
-    if (ms && ms.size) idxs = [...ms];
+    if (Array.isArray(only)) idxs = only.slice();
+    else if (ms && ms.size) idxs = [...ms];
     else if (NE && NE.id === (L.id | 0) && Number.isFinite(NE.idx)) idxs = [NE.idx];
+    // ♫ a chord goes whole (✂ Break chord first to remove one of its notes)
+    const ks = new Set(idxs.map((i) => chOfNote(L, i)).filter(Boolean));
+    ks.forEach((k) => chIdxs(L, k).forEach((i) => { if (idxs.indexOf(i) < 0) idxs.push(i); }));
     idxs = idxs.filter(i => L.part.notes[i]).sort((a, b) => b - a);
     if (!idxs.length) {
       try { if (typeof showToast === 'function') showToast('Tap a note to select it (or gather several with \u2b1a Select), then Delete.', { ms: 3500 }); } catch (e) {}
@@ -15260,6 +15725,8 @@
   }
   function closeFullDraw(E) {
     if (!FULL) return;
+    try { const cdS = _fullCard(); if (cdS) previewStopFor(cdS, 'full'); } catch (e) {}   // a preview started here ends with it
+    try { document.querySelectorAll('.v2-fulllegend').forEach((x) => x.remove()); } catch (e) {}
     const F = FULL, L = _fullLayer(E), card = _fullCard();
     FULL = null;
     dragTipHide();
@@ -21551,7 +22018,7 @@
     try { if (E) V2.previewKill(E, { id }); } catch (e) {}
     const hh = card.parentElement;
     if (hh && hh._pv) { clearTimeout(hh._pv.t); hh._pv = null; }
-    document.querySelectorAll('.v2-pop-preview, .v2-genprev, .v2-secprev').forEach((b3) => {
+    document.querySelectorAll('.v2-pop-preview, .v2-genprev, .v2-secprev, .v2-fullpv').forEach((b3) => {
       b3.classList.remove('playing'); b3.textContent = '\u25b6 Preview';
     });
   }
@@ -24511,6 +24978,9 @@
           locked = true;
         }
         const g2 = neGrid(L), cell = 1 / Math.max(1, g2.gridN);
+        // ⇢ SLIP: the onset is WHERE YOU PRESS (to the tick); the length is still a grid cell
+        const slip = !!(FULL && FULL_SLIP.on && cvz.closest && cvz.closest('.v2-full'));
+        const sc = slip ? slipCell(L) : cell;
         // FLOOR, not round: the pencil fills the cell UNDER the hand
         // THROUGH THE VIEWPORT — `px` is where the finger is, and with only
         // part of the cycle on screen that is not the same fraction of the
@@ -24518,7 +24988,7 @@
         // start of the part).
         const vsc = (pl.vsc > 0) ? pl.vsc : 1, f0 = pl.f0 || 0;
         const fr = f0 + ((px - pl.x0) / Math.max(1, pl.w)) * vsc;
-        const t = clamp(Math.floor(fr / cell + 1e-6) * cell, 0, 1 - cell);
+        const t = clamp(Math.floor(fr / sc + 1e-6) * sc, 0, 1 - cell);
         const row = pgMAt(pg, py);
         const nn = { t: t, midi: row, dur: cell };
         if (harmFollows(L)) nn.hx = 1;
@@ -24566,6 +25036,7 @@
       // SHIFT+WHEEL TOO, which is the same gesture on a mouse.
       h.addEventListener('wheel', (ev) => {
         const cvw = ev.target.closest && ev.target.closest('.v2-vizcv'); if (!cvw) return;
+        if (cvw.closest('.v2-full')) return;          // ⤢ has its own wheel (`fullWireGestures`)
         const dx = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX
                  : (ev.shiftKey ? ev.deltaY : 0);
         if (!dx) return;
@@ -24692,7 +25163,18 @@
           if (px >= b2.x - 4 && px <= b2.x + b2.w + 4 &&
               py >= b2.y - 7 && py <= b2.y + b2.h + 7) { hit = b2; break; }
         }
-        let mode, locked = false, idx = -1, pen = 0;
+        let mode, locked = false, idx = -1, pen = 0, chordG = null;
+        // ⤢ DOUBLE-TAP A NOTE DELETES IT (two presses on the same note within
+        // 400 ms and 24 px). The first tap has already selected it, harmlessly.
+        if (inFull && hit && Number.isFinite(hit.i) && L.part.kind === 'recorded') {
+          const now = Date.now(), lt = FULL.lastTap;
+          if (lt && lt.i === hit.i && now - lt.t < 400 && Math.hypot(ev.clientX - lt.x, ev.clientY - lt.y) < 24) {
+            FULL.lastTap = null; cvd._dragged = now;
+            fullDelete(E, [hit.i]);
+            return;
+          }
+          FULL.lastTap = { i: hit.i, t: now, x: ev.clientX, y: ev.clientY };
+        }
         if (!hit) {
           // ✎ THE PENCIL. In draw mode, a press on empty plot space PLACES a
           // note exactly on the clicked row and cell, dragging right SIZES
@@ -24750,9 +25232,28 @@
             window.addEventListener('pointercancel', upP);
             return;
           }
+          // ⇅ AN INVERSION ACCEPTS ONLY THE CHORD'S OWN NOTES (the lit rows) — a
+          // press elsewhere places nothing and names the notes that would work
+          if (inFull && FULL.chord && CHORDM.sub === 'inv') {
+            const fr0 = (geo0.f0 || 0) + ((px - geo0.x0) / Math.max(1, geo0.w)) * ((geo0.vsc > 0) ? geo0.vsc : 1);
+            const pcsI = fullInvPcs(E, L, (geo0.cs || 0) + clamp(fr0, 0, 1) * geo0.cyc);
+            const mP = pgMAt(pg0, py);
+            if (pcsI && pcsI.indexOf(_pc(mP)) < 0) {
+              fullSay(NOTE_NAMES[_pc(mP)] + ' isn\u2019t in ' + chordName(pcsI) + ' \u2014 tap a lit row: ' +
+                pcsI.map((c) => NOTE_NAMES[c]).join(', ') + '.');
+              cvd._dragged = Date.now();
+              return;
+            }
+          }
           const made = penAdd(E, L, cvd, px, py);
           if (!made || made.idx < 0) { if (inFull) fullSay('Could not place a note there.'); return; }
           mode = 'pen'; pen = 1; locked = made.locked; idx = made.idx;
+          if (inFull && FULL.chord) {
+            const ch = fullChordAdd(E, L, cvd, made);
+            if (ch) { chordG = ch.group; idx = ch.idx; mode = 'len'; }   // a drag right sizes the whole chord
+          } else if (inFull && modeOf(L) !== 'multi') {
+            mselSet(L, null);                          // a new single note is the selection now
+          }
         } else {
           // THE RESIZE ZONE IS RELATIVE TO THE NOTE, never a fixed width: a
           // 10px grip on a 12px note is the whole note (the lane-handle
@@ -24830,8 +25331,21 @@
         // independently would let the leading one stop while the rest carried
         // on, which is the opposite of uniform. A drag that starts on a note
         // that is NOT gathered is an ordinary single-note drag.
-        let group = null;
-        if (modeOf(L) === 'multi' && !pen) {
+        // ⤢ THE PRESS IS THE SELECTION (outside ⬚ Select, which gathers): a chord
+        // note selects its chord, a lone note drops any older gathering — so ✂ and
+        // 🗑 act on what you just touched, never on a chord left gathered earlier
+        if (inFull && !pen && modeOf(L) !== 'multi') {
+          const k0 = chOfNote(L, idx);
+          mselSet(L, k0 ? new Set(chIdxs(L, k0)) : null);
+          try { drawPartViz(card, L, E); } catch (e) {}   // the selection shows on the press
+        }
+        let group = chordG;
+        // ♫ A CHORD MOVES AND SIZES AS ONE — grab any of its notes
+        if (!group && !pen && chOfNote(L, idx)) {
+          const ci = chIdxs(L, chOfNote(L, idx));
+          if (ci.length > 1) group = ci.map((i) => ({ i: i, t0: L.part.notes[i].t, m0: L.part.notes[i].midi | 0, d0: L.part.notes[i].dur }));
+        }
+        if (!group && modeOf(L) === 'multi' && !pen) {
           const sel = mselOf(L);
           if (sel && sel.has(idx) && sel.size > 1) {
             group = [...sel].filter((i) => L.part.notes[i]).map((i) => ({
@@ -24847,8 +25361,11 @@
                  win: { loM: pgA.loM, hiM: pgA.hiM } };
         cvd._dragGain = gain;                          // probes read the resolution here
         try { dragTip(ev, L, n0, off); } catch (e) {}  // the readout, from the first touch
+        if (chordG && FULL && FULL.lastChord) fullSay(FULL.lastChord);   // …but a chord names the chord
 
-        const g = neGrid(L), cell = 1 / Math.max(1, g.gridN);
+        const g = neGrid(L);
+        // ⇢ SLIP: in ⤢, moves and resizes go by the tick instead of the grid cell
+        const cell = (inFull && FULL_SLIP.on) ? slipCell(L) : 1 / Math.max(1, g.gridN);
         const geo = cvd._plotGeo || geo0;
         const mv = (e2) => {
           if (!DRAG) return;
@@ -24990,6 +25507,7 @@
           document.removeEventListener('pointermove', mv);
           dragTipHide();
           const d = DRAG; DRAG = null;
+          if (d && d.group && FULL && FULL.chord && FULL.lastChord) fullSay(FULL.lastChord);
           // the lock's card rebuild, deferred out of the press so the
           // touch stream (and the finger's view of the page) survived it.
           const rerender = function () {
@@ -25504,7 +26022,7 @@
         // every sheet measures its Preview as missing (that trap, twice in one
         // change).
         const pv = t.closest && (t.closest('.v2-pop-preview') || t.closest('.v2-genprev') ||
-                                 t.closest('.v2-secprev'));
+                                 t.closest('.v2-secprev') || t.closest('.v2-fullpv'));
         if (pv) {
           const ctx = layerOf(pv); if (!ctx) return;
           // While the transport runs the layer is already sounding and every
@@ -25526,7 +26044,7 @@
           // believes it is in.
           const stopPv = () => {
             if (h._pv) { clearTimeout(h._pv.t); h._pv = null; }
-            document.querySelectorAll('.v2-pop-preview, .v2-genprev, .v2-secprev').forEach(b3 => {
+            document.querySelectorAll('.v2-pop-preview, .v2-genprev, .v2-secprev, .v2-fullpv').forEach(b3 => {
               b3.classList.remove('playing'); b3.textContent = '\u25b6 Preview';
             });
           };
@@ -25545,7 +26063,7 @@
           stopPv();                                      // another layer's → replace
           const played = V2.preview(E, ctx.L);
           PV_SRC = { id: ctx.L.id | 0,
-            kind: pv.closest('.v2-genwrap') ? 'gen' : pv.closest('.v2-autowrap') ? 'auto'
+            kind: pv.closest('.v2-full') ? 'full' : pv.closest('.v2-genwrap') ? 'gen' : pv.closest('.v2-autowrap') ? 'auto'
               : pv.closest('.v2-secpop-wrap') ? 'sec' : 'pop' };
           // THE PICTURE FOLLOWS THE SOUND — repaint with the cycle that just
           // played, or the drawing keeps showing a different take from the one
@@ -26337,7 +26855,23 @@
         if (FULL) {
           const LF = _fullLayer(E);
           const fm = t.closest('.v2-fullm');
-          if (fm && LF) { setMode(LF, fm.getAttribute('data-m') === 'multi' ? 'multi' : 'draw'); NE = null; refreshFull(E); return; }
+          if (fm && LF) {
+            const m = fm.getAttribute('data-m');
+            FULL.chord = (m === 'chord');
+            setMode(LF, m === 'multi' ? 'multi' : 'draw'); NE = null;
+            refreshFull(E);
+            if (m === 'chord') fullSay('\u266b Tap to place a chord \u2014 drag right to size it. Double-tap a note to delete it.');
+            return;
+          }
+          const fcs = t.closest('.v2-fullcs');
+          if (fcs && LF) {
+            CHORDM.sub = fcs.getAttribute('data-cs') === 'inv' ? 'inv' : 'root'; refreshFull(E);
+            if (CHORDM.sub === 'inv') fullInvSay(E);
+            else fullSay('\u2669 Tap any note \u2014 the key builds its chord on it.');
+            return;
+          }
+          const fcn = t.closest('.v2-fullcn');
+          if (fcn && LF && !fcn.disabled) { CHORDM.size = clamp((CHORDM.size | 0) + (fcn.getAttribute('data-d') | 0), 2, 7); refreshFull(E); return; }
           if (t.closest('.v2-fullkey')) { FULL.keyRows = !FULL.keyRows; refreshFull(E); return; }
           if (t.closest('.v2-fullgrid') && LF) {
             LF.part.grid = (V2.gridPerBar(LF) === 8) ? 16 : 8; FULL.userGrid = true;
@@ -26355,7 +26889,8 @@
             return;
           }
           if (t.closest('.v2-fulldel')) { fullDelete(E); return; }
-          if (t.closest('.v2-fullplay')) { const cd = _fullCard(); const pb = cd && cd.querySelector('.v2-pop-preview'); if (pb) pb.click(); return; }
+          if (t.closest('.v2-fullbreak')) { fullBreak(E); return; }
+          if (t.closest('.v2-fulllegbtn') || t.closest('.v2-lgclose')) { fullLegend(E); return; }
         }
         const wrb = t.closest('.v2-writebtn');
         if (wrb) {
@@ -26945,7 +27480,9 @@
           // the drum-solo bug).
           if (modeOf(L2) === 'multi') {
             const cur = new Set(mselOf(L2) || []);
-            if (cur.has(idx)) cur.delete(idx); else cur.add(idx);
+            // ♫ a chord is gathered (or let go) whole
+            const unit = chOfNote(L2, idx) ? chIdxs(L2, chOfNote(L2, idx)) : [idx];
+            if (cur.has(idx)) unit.forEach((i) => cur.delete(i)); else unit.forEach((i) => cur.add(i));
             mselSet(L2, cur);
             NE = null;                        // the editor is a single-note surface
             try { drawPartViz(c3, L2, E); } catch (e) {}

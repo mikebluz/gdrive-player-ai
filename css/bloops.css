@@ -11478,8 +11478,8 @@
        navigating would move the group body and the dock is inside it — and a
        press says so. Dim the CHILDREN, never the strip (the documented
        opacity-composites rule: a dimmed wrapper takes its own banner with it). */
-    .v2-layer.v2-composing .v2-pop .v2-partviz, .v2-layer.v2-composing .v2-pop .v2-pop-foot, .v2-layer.v2-composing .v2-pop .v2-secpop-foot { display: none; }
-.v2-layer.v2-composing .v2-pop-tabs > *, .v2-layer.v2-composing .v2-notesrow .v2-matgrp, .v2-layer.v2-composing .v2-pop-head .v2-pop-title > *, .v2-layer.v2-composing .v2-secpop-head .v2-pop-title > * { opacity: 0.42; }
+    .v2-layer.v2-composing .v2-pop .v2-partviz > :not(.v2-vizhead), .v2-layer.v2-composing .v2-pop .v2-pop-foot, .v2-layer.v2-composing .v2-pop .v2-secpop-foot { display: none; }
+/* (the tabs are no longer dimmed while composing — the grid saves as you go, so a tab is a way out, not a refusal) */
     /* …but ✎ Composed stays lit and live: it is the mode you are IN, and it is
        how you opened this. */
     .v2-layer.v2-composing .v2-notesrow .v2-matgrp .v2-compose { opacity: 1; }
@@ -18077,3 +18077,97 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-sing-go[disabled] { opacity: 0.6; }
     .v2-sing .sm-footer > .sm-cancel { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid #3a3a5c;
       background: transparent; color: #c9c4ee; font: 600 0.9rem 'Segoe UI', sans-serif; cursor: pointer; }
+
+    /* ===== ✍ WRITE ▾ (2026-10-04) — ▦ Compose, 🎤 Sing and ⌫ Clear in one door on the
+       v2 drawing header; the buttons inside keep their own classes and handlers. */
+    .v2-writewrap { position: relative; display: inline-flex; }
+    .v2-writemenu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; display: flex; flex-direction: column; gap: 4px;
+      min-width: 230px; padding: 6px; border-radius: 12px; border: 1px solid #3a3a5c; background: #1d1d36;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.5); }
+    .v2-writemenu[hidden] { display: none !important; }
+    .v2-writemenu > button { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 44px;
+      margin: 0; padding: 0 12px; border-radius: 9px; text-align: left; white-space: normal; box-sizing: border-box; }
+    .v2-writemenu > button { color: #e6e3f5; background: #14142a; border: 1px solid #2d2d4a; font-weight: 600; opacity: 1; }
+
+    /* ===== the note readout while drawing (2026-10-04) — dragTip, 18-layer-v2. Above the
+       finger, never under it; ignores the pointer so it cannot steal the gesture. */
+    .v2-dragtip { position: fixed; z-index: 10950; pointer-events: none; display: flex; align-items: baseline; gap: 10px;
+      padding: 6px 10px; border-radius: 10px; background: rgba(20, 18, 44, 0.96); border: 1px solid #5b4a99;
+      box-shadow: 0 8px 22px rgba(0,0,0,0.5); color: #e6e3f5; font: 600 0.8rem 'Segoe UI', sans-serif; white-space: nowrap; }
+    .v2-dragtip > b { font-size: 0.95rem; color: #c4b5fd; }
+    .v2-dragtip > span { font-variant-numeric: tabular-nums; }
+    .v2-dragtip i { font-style: normal; font-weight: 400; color: #8d8ab0; margin-right: 3px; }
+
+    /* ===== ⤢ FULL-SIZE DRAWING (2026-10-04) — the card's drawing block pinned
+       full-screen (`.v2-partviz.v2-full`, 18-layer-v2 openFullDraw). It stays in the
+       card, so every handler still finds its layer; the card chrome hides. */
+    body.v2-fullon { overflow: hidden; }
+    .v2-partviz.v2-full { position: fixed !important; inset: 0 !important; z-index: 10200; margin: 0 !important;
+      padding: 0 !important; border-radius: 0 !important; background: #0b0b18; display: flex !important; flex-direction: column;
+      overflow: hidden; width: auto !important; max-width: none !important; }
+    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph) { display: none !important; }
+    .v2-partviz.v2-full > .v2-vizcv { display: block !important; flex: 0 0 auto; width: 100% !important; }
+    .v2-fullhead { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: #14142a;
+      border-bottom: 1px solid #2d2d3f; padding-top: max(8px, env(safe-area-inset-top)); }
+    .v2-fullbar1, .v2-fullbar2 { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+    .v2-fulldone { min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #8b5cf6; color: #fff;
+      font: 700 0.9rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .v2-fullname { flex: 1 1 auto; min-width: 0; font: 700 0.95rem 'Segoe UI', sans-serif; color: #ece8f8; overflow-wrap: anywhere; }
+    .v2-fullib { width: 44px; height: 40px; border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #c9c4ee;
+      font: 700 1rem 'Segoe UI', sans-serif; cursor: pointer; flex: none; }
+    .v2-fullib[disabled] { opacity: 0.35; cursor: default; }
+    .v2-fullplay { color: #7ef0dc; border-color: #1f5a52; background: #0b1f1d; }
+    .v2-fullchip { min-height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid #2d2d3f; background: transparent;
+      color: #a9a6c7; font: 600 0.78rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .v2-fullchip.on { background: #0f2a28; border-color: #2f8f80; color: #cffaf3; }
+    .v2-fullread { flex: 1 1 160px; min-width: 0; padding: 6px 10px; border-radius: 10px; background: #0f0f22; border: 1px solid #2f8f80;
+      color: #d5fff8; font: 600 0.78rem 'Segoe UI', sans-serif; overflow-wrap: anywhere; }
+    .v2-fullread i { font-style: normal; font-weight: 400; color: #6fbfb2; }
+    .v2-fullread b { color: #fff; }
+    .v2-fullfoot { flex: 0 0 auto; margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom)); background: #14142a; border-top: 1px solid #2d2d3f; }
+    .v2-fulltiles { display: flex; gap: 4px; flex-wrap: wrap; }
+    .v2-fulltile { flex: 1 1 40px; min-width: 40px; min-height: 36px; border-radius: 8px; border: 1px solid #2d2d4a; background: #17172e;
+      color: #a9a6c7; font: 600 0.75rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .v2-fulltile.on { background: #2a2350; border-color: #8b6be0; color: #e9e3ff; }
+    .v2-fullpager { display: flex; align-items: center; gap: 8px; }
+    .v2-fullpager > span { flex: 1 1 auto; text-align: center; color: #a9a6c7; font: 600 0.8rem 'Segoe UI', sans-serif; }
+    .v2-loupe { position: fixed; z-index: 10960; width: 88px; height: 88px; border-radius: 50%; border: 2px solid #7ef0dc;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6); pointer-events: none; }
+    /* LANDSCAPE: one line of header and one of footer — two of each left five rows */
+    @media (orientation: landscape) and (max-height: 560px) {
+      .v2-fullhead { flex-direction: row; align-items: center; gap: 8px; padding: 6px 10px; }
+      .v2-fullbar1 { flex: 0 0 auto; }
+      .v2-fullbar1 > .v2-fullname { max-width: 22vw; }
+      .v2-fullbar2 { flex: 1 1 auto; flex-wrap: nowrap; }
+      .v2-fullfoot { flex-direction: row; align-items: center; padding: 6px 10px; }
+      .v2-fulltiles { flex: 1 1 auto; flex-wrap: nowrap; }
+      .v2-fulltile { min-height: 34px; }
+      .v2-fullpager { flex: 0 0 auto; }
+      .v2-fullpager > span { min-width: 92px; }
+    }
+    .v2-fulldel { min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid #6b2a2a; background: transparent;
+      color: #ff9c9c; font: 700 0.85rem 'Segoe UI', sans-serif; cursor: pointer; flex: none; }
+    /* ⤢ FULL SIZE — the door to the big drawing view. Labelled and accented: a
+       bare ⤢ glyph in a ghost circle read as decoration, not as a way in. */
+    .v2-fullbtn.ambient-seg { flex: none; width: auto; min-width: 0; min-height: 36px; padding: 0 12px;
+      border-radius: 10px; border: 1px solid #2f8f80; background: #0f2a28; color: #cffaf3;
+      font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+    .v2-fullmode { display: inline-flex; flex: none; }
+    .v2-fullmode .v2-fullm:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .v2-fullmode .v2-fullm:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-width: 0; }
+    /* ▦ COMPOSE ACTIONS — one row of buttons, the hint under it (they were a
+       squeezed column of wrapped labels beside a wide hint). */
+    .v2-gacts > .ambient-seg-row { grid-column: 1 / -1; display: flex; gap: 8px; min-width: 0; }
+    .v2-gacts > .ambient-seg-row > .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 44px; white-space: nowrap; }
+    .v2-gacts > .ambient-hint { grid-column: 1 / -1; }
+    /* COMPOSING KEEPS THE DRAWING'S HEAD — Roll ⇄ Pattern and ✍ Write ▾ (which
+       reads ▦ Composing and holds ▦ Close grid) are how you move between the
+       ways of writing, so the grid is one mode among them. Only the picture
+       and its roll-only controls step aside. No sticky footer: nothing to finish. */
+    .v2-layer.v2-composing .v2-vizhead > .v2-viztog, .v2-layer.v2-composing .v2-vizhead > .v2-fullbtn,
+    .v2-layer.v2-composing .v2-vizhead > .v2-modesel, .v2-layer.v2-composing .v2-vizhead > .v2-gridsel,
+    .v2-layer.v2-composing .v2-vizhead > .v2-vnav { display: none; }
+    .v2-writebtn.on { background: #2a2350; border-color: #8b6be0; color: #e9e3ff; }
+    .v2-layer.v2-composing .ambient-ctrl.v2-gacts { position: static; margin: 6px 0 0; padding: 0; background: none; border-top: 0; }
+    .v2-layer .v2-gacts > .ambient-seg-row > .ambient-seg { flex: 0 0 auto; padding: 0 16px; }

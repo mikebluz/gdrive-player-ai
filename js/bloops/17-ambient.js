@@ -31527,6 +31527,8 @@
     function _ambGridExitAsk(onDone) {
       const ge = _bloomGridEdit;
       if (!ge) { onDone && onDone(false); return; }
+      // a v2 grid saves as you go, so there is nothing to ask
+      if (ge.v2) { _ambGridEditStop(false); onDone && onDone(true); return; }
       if (!_ambGridEditDirty()) { _ambGridEditStop(true); onDone && onDone(false); return; }
       const ov = document.createElement('div');
       ov.className = 'sm-overlay ambient-step-modal-ov';
@@ -31587,7 +31589,10 @@
       // reader the phrase bank uses, so the two doors cannot diverge), ✕ Cancel
       // leaves the part exactly as it was. The teardown below is shared verbatim.
       if (ge.v2) {
-        try { if (!cancel && window._v2 && window._v2.composeCommit) window._v2.composeCommit(ge); } catch (e) {}
+        // SAVED AS YOU GO (18-layer-v2 `composeTick`): there is no discard — the
+        // close writes whatever the ticks have not, and nothing if the notes were
+        // rewritten elsewhere since. `cancel` is meaningless for a v2 session.
+        try { if (window._v2 && window._v2.composeClose) window._v2.composeClose(ge); } catch (e) {}
       } else if (cancel) {
         const fs = _ambFreezeState(ge.E, ge.key);
         fs.events = ge.snapshot.ev.map(e => ({ t: e.t, freq: e.freq, dur: e.dur, params: e.params }));

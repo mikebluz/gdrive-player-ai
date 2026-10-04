@@ -2337,6 +2337,9 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   sixteenths, so `presetBeatVal` scales them at BOTH ends — apply AND the "· tuned" compare — or
   picking one at ⊞ 32 silently halves the tempo and then reports itself as tuned.
 
+- **⤢ full view rows come from the notes, not a fixed centre.** The window spans every played pitch (`mids`) and grows outward to fill the screen; with ◈ in-key rows an out-of-key pitch a note plays keeps its row (amber). An in-key-only row list silently dropped those notes.
+- **v2 ▦ Compose saves as you go (2026-10-04) — no Done/Cancel, no footer; the drawing's HEAD stays while composing (✍ Write ▾ reads ▦ Composing and holds ▦ Close grid; Roll ⇄ Pattern and any tab also leave).** `composeTick` (400 ms) writes the lane into the part when its sig moves; its baseline is taken AFTER `_ambGridPadLaneToPass` or opening alone freezes a live part. If the part's notes change under the grid (roll, Sing, Clear) the session closes WITHOUT writing — the stale lane must never overwrite them. `_ambGridEditStop`'s `cancel` and `_ambGridExitAsk` are meaningless for a v2 session. Closing rebuilds the card, so a tab press that closes it must re-press its TWIN in the new card (`composeBlocks`).
+
 ### Bloom stores — what exists, and the one thing to know about each
 
 All are ADDITIVE and ABSENT BY DEFAULT unless noted, which is what keeps golden/arch/harness green.

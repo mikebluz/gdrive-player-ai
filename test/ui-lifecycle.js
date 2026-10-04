@@ -3047,7 +3047,8 @@ const ok = (name, cond, detail) => {
       secClosed: !document.querySelector('.v2-secpop-wrap') };
     if (pop && acts) {
       const r = pop.getBoundingClientRect(), ra = acts.getBoundingClientRect();
-      const done = acts.querySelector('.v2-gdone');
+      // the way OUT is the drawing head's ▦ Composing ▾ (✍ Write), kept on screen
+      const done = card().querySelector('.v2-vizhead .v2-writebtn');
       const rd = done.getBoundingClientRect();
       // RESTATED with the embed: the editor is the card's body now, so
       // "takes the whole screen" is no longer a thing it can do — it simply
@@ -3069,23 +3070,17 @@ const ok = (name, cond, detail) => {
       // body head's SECTION ROW, which `composeBlocks` still refuses and the
       // composing CSS still dims. Same contract: the card is not gutted, and
       // what you cannot use says so rather than vanishing.
-      o.stepsAside = getComputedStyle(bodyPop.querySelector('.v2-partviz')).display === 'none' &&
+      // the PICTURE steps aside, its head (Roll ⇄ Pattern, ✍ Write ▾) stays
+      o.stepsAside = getComputedStyle(bodyPop.querySelector('.v2-partviz .v2-vizcv')).display === 'none' &&
+        bodyPop.querySelector('.v2-partviz .v2-vizhead').getBoundingClientRect().height > 0 &&
+        /Composing/.test(bodyPop.querySelector('.v2-partviz .v2-writebtn').textContent) &&
         getComputedStyle(bodyPop.querySelector('.v2-pop-foot')).display === 'none' &&
-        (() => { const bn = bodyPop.querySelector('.v2-compbanner');
-          return !!bn && getComputedStyle(bn).display !== 'none' &&
-                 bn.getBoundingClientRect().height > 10; })() &&
         (() => { const gt = bodyPop.querySelector('.v2-pop-head .v2-gototab');
-          return !!gt && gt.getBoundingClientRect().height > 0 &&
-                 +getComputedStyle(gt).opacity < 0.6; })();
+          return !!gt && gt.getBoundingClientRect().height > 0; })();
       // A PRESS REFUSES AND EXPLAINS — it used to be hidden, and the Material
       // doors silently did nothing ("clicking the other options does nothing")
       // …driven on the SECTION ROW now: pressing one must neither open a
       // section popover over the dock nor silently do nothing.
-      const other = bodyPop.querySelector('.v2-pop-head .v2-gototab');
-      if (other) other.click(); await wait(240);
-      const tst2 = document.querySelector('.bloops-toast');
-      o.refuses = !!other && !document.querySelector('.v2-secpop-wrap') &&
-        !!tst2 && /composing/i.test(tst2.textContent);
       o.editorDocked = (() => { const ex = document.getElementById('lane-expander');
         return !!ex && !!ex.closest('.v2-dock') && ex.getBoundingClientRect().height > 200; })();
       // THE COMPOSITION SURFACE LEADS — the per-chord strip is what you write
@@ -3112,7 +3107,13 @@ const ok = (name, cond, detail) => {
       const rr = row0 ? row0.getBoundingClientRect() : null;
       o.stripInView = !!rr && rr.height > 10 &&
         rr.bottom > 0 && rr.top < (window.innerHeight || 780);
-      acts.querySelector('.v2-gcancel').click(); await wait(600);
+      // SAVED AS YOU GO, so a section press is a WAY OUT, not a refusal: it
+      // closes the grid (nothing to keep or discard) and does its own job.
+      const other = bodyPop.querySelector('.v2-pop-head .v2-gototab');
+      if (other) other.click(); await wait(600);
+      o.refuses = !!other && !(typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit);
+      try { const sx = document.querySelector('.v2-secpop-close'); if (sx) sx.click(); } catch (e) {}
+      await wait(240);
     }
     o.exited = !document.querySelector('.v2-layer.v2-composing');
     o.vizBack = (() => { const v = document.querySelector('.v2-pop .v2-partviz');
@@ -3156,7 +3157,7 @@ const ok = (name, cond, detail) => {
     delete E.getCfg().prog; E.getCfg();
     await open();
     const bare = meas();
-    const gc = card().querySelector('.v2-gacts .v2-gcancel'); if (gc) gc.click(); await wait(600);
+    const gc = card().querySelector('.v2-gridbtn'); if (gc) gc.click(); await wait(600);
     // WITH a progression — the per-chord strip takes over and the row parks,
     // so the chips are never drawn twice
     E.getCfg().prog = { on: true, name: 'SQ',
@@ -3164,7 +3165,7 @@ const ok = (name, cond, detail) => {
     E.getCfg();
     await open();
     const withProg = meas();
-    const gc2 = card().querySelector('.v2-gacts .v2-gcancel'); if (gc2) gc2.click(); await wait(600);
+    const gc2 = card().querySelector('.v2-gridbtn'); if (gc2) gc2.click(); await wait(600);
     if (svProg) E.getCfg().prog = svProg; else delete E.getCfg().prog;
     try { L().part = JSON.parse(svPart); } catch (e) {}
     E.getCfg();
@@ -3178,7 +3179,7 @@ const ok = (name, cond, detail) => {
     seqRun.withProg.chords > 40 && seqRun.withProg.strip === 0,
     JSON.stringify(seqRun));
 
-  ok('composing takes the editor — grid first, tabs inert but present, actions reachable, restores on exit',
+  ok('composing takes the editor — grid first, a tab closes it (saved as you go), actions reachable, restores on exit',
     compRun.composing && compRun.started && compRun.fullScreen && compRun.actsPinned &&
     compRun.doneHit && compRun.stepsAside && compRun.refuses && compRun.editorDocked &&
     compRun.exited && compRun.vizBack && compRun.stripLeads && compRun.stripInView,
@@ -3366,9 +3367,10 @@ const ok = (name, cond, detail) => {
     vizHeadRun.nothingBelow &&
     // whether → which → what a tap does → what edits snap to → where you look
     JSON.stringify(vizHeadRun.order) ===
-      // ⌫ Clear right of the 👁 View picker since 2026-09-16 — what a tap does,
-      // then the way to an empty part to tap into
-      JSON.stringify(['v2-viztog', 'v2-formseg', 'v2-gridbtn', 'v2-modesel', 'v2-clearpart', 'v2-gridsel', 'v2-vnav']) &&
+      // ✍ WRITE ▾ (2026-10-04) holds ▦ Compose, 🎤 Sing and ⌫ Clear — the ways to
+      // write the part — so one control sits where three did, left of the 👁 picker
+      // ⤢ (2026-10-04) opens the drawing full size — after ✍ Write, the other door
+      JSON.stringify(['v2-viztog', 'v2-formseg', 'v2-writewrap', 'v2-fullbtn', 'v2-modesel', 'v2-gridsel', 'v2-vnav']) &&
     vizHeadRun.noWordLabels &&
     // it was 153px of chrome against a 79px canvas — a watchdog, not a target
     vizHeadRun.chromeH < vizHeadRun.canvasH * 1.6 &&
@@ -8253,7 +8255,7 @@ const ok = (name, cond, detail) => {
     o.composing = card().classList.contains('v2-composing');
     o.whileComposing = lit();
     o.sessMark = !!(card().querySelector('.v2-gridbtn') || {}).classList;
-    const gc = card().querySelector('.v2-gacts .v2-gcancel'); if (gc) gc.click(); await wait(600);
+    const gc = card().querySelector('.v2-gridbtn'); if (gc) gc.click(); await wait(600);
     o.afterCancel = lit();
     try { L().part = JSON.parse(svPart); E.getCfg(); await show(); } catch (e) {}
     return o;
@@ -8301,12 +8303,15 @@ const ok = (name, cond, detail) => {
       return !!t && (t === e || e.contains(t)); };
     // ⌫ Clear sits in the drawing's head, right of the 👁 View picker
     // (moved out of ✦ Generate 2026-09-16) — measured there, on the same row.
+    // …inside ✍ Write ▾ since 2026-10-04: open it, then they are reachable
+    { const wb = card().querySelector('.v2-vizhead .v2-writebtn'); if (wb) { wb.click(); await wait(150); } }
     const o = { hasGrid: reach('.v2-gridbtn'),
                 hasRoll: !!card().querySelector('.v2-modepick option[value="draw"]') };
     o.hasClear = reach('.v2-vizhead .v2-clearpart');
     { const cp = card().querySelector('.v2-vizhead .v2-clearpart'),
             mp = card().querySelector('.v2-vizhead .v2-modesel');
-      o.clearBesideView = !!cp && !!mp && !!(mp.compareDocumentPosition(cp) & 4) &&
+      // ⌫ Clear is a way to WRITE the part, so it lives in ✍ Write ▾ (2026-10-04)
+      o.clearBesideView = !!cp && !!mp && !!cp.closest('.v2-writemenu') &&
         !card().querySelector('.v2-matgrp .v2-clearpart'); }
     // …and ✎ Written is GONE, not merely moved
     o.noDoor = !card().querySelector('.v2-compose');
@@ -13125,6 +13130,7 @@ const ok = (name, cond, detail) => {
     if (t) t.click();
   });
   await zz(250);
+  await tap('.v2-layer .v2-writebtn'); await zz(150);   // ▦ Compose is in ✍ Write ▾ (2026-10-04)
   e = await tap('.v2-layer .v2-gridbtn');
   await zz(300);
   await page.evaluate(() => {   // ▦ Compose goes straight in (2026-09-14)
@@ -13144,47 +13150,53 @@ const ok = (name, cond, detail) => {
     const ge = _bloomGridEdit; if (!ge) return;   // guarded: a failed open must not kill the run
     ge.lane.steps[0].freq = 440; ge.lane.steps[0].label = 'A4'; delete ge.lane.steps[0].chord;
   });
-  e = await tap('.v2-layer .v2-gdone');
+  await tap('.v2-layer .v2-writebtn'); await zz(150);   // ✍ ▾ ▸ ▦ Close grid
+  e = await tap('.v2-layer .v2-gridbtn');
   d = await dockState();
   const done = await page.evaluate(() => {
     const p = (_masterEng.getCfg().layers || [])[0].part;
     return { kind: p.kind, notes: (p.notes || []).length, hasA4: (p.notes || []).some((n) => n.midi === 69) };
   });
-  ok('✓ Done writes what was drawn into the part',
+  ok('▦ Close grid keeps what was drawn in the part',
     !e && done.kind === 'recorded' && done.notes > 0 && done.hasA4, e || JSON.stringify(done));
   ok('the session tears down cleanly (editor back, no scratch lane)',
     d.session === null && d.dockHidden === true && d.scratch === 0 && !/seedgrid/.test(d.expanderIn),
     JSON.stringify(d));
 
-  // ✕ Cancel must leave the part exactly as it was — a discard that half-commits
-  // is worse than no discard.
+  // SAVED AS YOU GO — there is no ✕ Cancel: an edit lands in the part while
+  // the grid is still open, and opening + closing with no edit changes nothing.
   await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
     L.part.kind = 'live'; window.__partBefore = JSON.stringify(L.part.notes);
     window._v2.render(_masterEng);
   });
   await zz(250);
+  await tap('.v2-layer .v2-writebtn'); await zz(150);
   await tap('.v2-layer .v2-gridbtn');
-  await zz(300);
-  await page.evaluate(() => {   // ▦ Compose again (2026-09-14)
-    const b = [...document.querySelectorAll('.addpop-btn')].find((x) => /grid/i.test(x.textContent));
-    if (b) b.click();
-  });
-  await zz(600);
+  await zz(900);
+  const untouched = await page.evaluate(() => (_masterEng.getCfg().layers || [])[0].part.kind);
   await page.evaluate(() => {
     const ge = _bloomGridEdit;
     if (ge) ge.lane.steps.forEach((s) => { s.freq = 110; s.label = 'A2'; delete s.chord; });
   });
-  await tap('.v2-layer .v2-gcancel');
-  const cancelled = await page.evaluate(() => {
+  await zz(900);
+  const live = await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
-    return { kind: L.part.kind, same: JSON.stringify(L.part.notes) === window.__partBefore,
+    return { kind: L.part.kind, a2: (L.part.notes || []).some((n) => n.midi === 45),
+             session: (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) ? 'OPEN' : null };
+  });
+  await tap('.v2-layer .v2-writebtn'); await zz(150);
+  await tap('.v2-layer .v2-gridbtn');
+  const closed = await page.evaluate(() => {
+    const L = (_masterEng.getCfg().layers || [])[0];
+    return { a2: (L.part.notes || []).some((n) => n.midi === 45),
              session: (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) ? 'OPEN' : null,
              scratch: lanes.filter((l) => l._bloomScratch).length };
   });
-  ok('✕ Cancel discards and leaves the part untouched',
-    cancelled.kind === 'live' && cancelled.same && !cancelled.session && cancelled.scratch === 0,
-    JSON.stringify(cancelled));
+  ok('▦ Compose saves as you go — opening alone changes nothing, an edit lands while open, Close keeps it',
+    untouched === 'live' && live.session === 'OPEN' && live.kind === 'recorded' && live.a2 &&
+    closed.a2 && !closed.session && closed.scratch === 0,
+    JSON.stringify({ untouched, live, closed }));
 
   // ---- THE SIGNAL CHAIN, AND THE SWEEPS -----------------------------------
   // A v2 layer used to bypass `vcf → vca → levelGain → gate → pan → [FX] → bus`

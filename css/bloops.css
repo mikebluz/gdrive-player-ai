@@ -17344,7 +17344,9 @@ select.ambient-select.v2-growpick {
    (`--evo`) — the same the badge above it wears — so the two read as one
    fact. Re-roll is Every 1; Repeat is off. */
 .v2-partviz .v2-statesw { display: flex; gap: 6px; margin-top: 6px; min-width: 0; }
-.v2-partviz .v2-statesw .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; white-space: nowrap; }
+/* the faces are sentences ("⟳ Evolve: off — this take repeats") — they WRAP inside
+   the button rather than run past it at phone width (rule 2) */
+.v2-partviz .v2-statesw .ambient-seg { flex: 1 1 0; min-width: 0; min-height: 40px; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; padding-top: 4px; padding-bottom: 4px; }
 .v2-partviz .v2-statesw .v2-evotog.on { border-color: var(--evo, #b8f24a); color: var(--evo, #b8f24a); background: rgba(184, 242, 74, 0.14); }
 /* a FROZEN take dims the button but never disables it — the press releases
    the take and turns Evolve on ("why can't i click it") */
@@ -18105,7 +18107,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-partviz.v2-full { position: fixed !important; inset: 0 !important; z-index: 10200; margin: 0 !important;
       padding: 0 !important; border-radius: 0 !important; background: #0b0b18; display: flex !important; flex-direction: column;
       overflow: hidden; width: auto !important; max-width: none !important; }
-    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph) { display: none !important; }
+    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph):not(.v2-fullvthumb):not(.v2-fullhthumb) { display: none !important; }
     .v2-partviz.v2-full > .v2-vizcv { display: block !important; flex: 0 0 auto; width: 100% !important; }
     .v2-fullhead { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: #14142a;
       border-bottom: 1px solid #2d2d3f; padding-top: max(8px, env(safe-area-inset-top)); }
@@ -18171,3 +18173,19 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-writebtn.on { background: #2a2350; border-color: #8b6be0; color: #e9e3ff; }
     .v2-layer.v2-composing .ambient-ctrl.v2-gacts { position: static; margin: 6px 0 0; padding: 0; background: none; border-top: 0; }
     .v2-layer .v2-gacts > .ambient-seg-row > .ambient-seg { flex: 0 0 auto; padding: 0 16px; }
+    /* ⤢ THE DRAWING TAKES EVERY TOUCH — iOS otherwise claims a finger for a page
+       pan/zoom and cancels the stroke. Scroll and zoom are the view's own
+       gestures (keys, ruler, two fingers) and buttons. */
+    .v2-partviz.v2-full { overscroll-behavior: none; }
+    .v2-partviz.v2-full > .v2-vizcv { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    .v2-fullvthumb, .v2-fullhthumb { position: absolute; z-index: 2; pointer-events: none; border-radius: 3px; background: rgba(126, 240, 220, 0.55); }
+    .v2-fullvthumb { right: 2px; width: 5px; }
+    .v2-fullhthumb { height: 5px; }
+    .v2-fullvthumb[hidden], .v2-fullhthumb[hidden] { display: none !important; }
+    .v2-partviz.v2-full > .v2-fullvthumb, .v2-partviz.v2-full > .v2-fullhthumb { display: block; }
+    .v2-fullpager { justify-content: space-between; gap: 6px; }
+    .v2-fullpager .v2-fullib { width: 38px; flex: none; }
+    .v2-fullzoom { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .v2-fullzoom > b { color: #7ef0dc; font: 700 0.95rem 'Segoe UI', sans-serif; }
+    .v2-fullzoom > i { font-style: normal; min-width: 0; color: #a9a6c7; font: 600 0.75rem 'Segoe UI', sans-serif; white-space: nowrap; }
+    .v2-partviz:not(.v2-full) > .v2-fullvthumb, .v2-partviz:not(.v2-full) > .v2-fullhthumb { display: none !important; }

@@ -12300,28 +12300,34 @@
     let _rowList = null;
     if (FV) {
       h = Math.max(base, Math.round(window.innerHeight - (FV.chrome || 170)));
-      // ~42 px rows in portrait; landscape trades row height for range (~32 px)
-      const want = Math.max(5, Math.floor((h - TOP) / (window.innerWidth > window.innerHeight ? 32 : 42)));
-      const c = Math.round((loM + hiM) / 2);
-      // THE NOTES ARE NEVER OFF THE PICTURE: the window always spans every pitch
-      // the part plays, and grows outward from them to fill the screen. With
-      // in-key rows, a pitch OUTSIDE the key still gets its row (drawn amber) —
-      // an in-key-only keyboard silently dropped those notes.
+      // A SCROLLABLE WINDOW onto the whole keyboard (A0–C8). `FV.rowPx` is the
+      // row height (↕ zoom), `FV.topM` the top row (↕ scroll); it opens centred
+      // on the notes. With in-key rows only the key's pitches are rows — plus
+      // any pitch outside the key that a note plays, drawn amber, so no note
+      // is ever without a row.
+      const rowPx = clamp(FV.rowPx || (window.innerWidth > window.innerHeight ? 32 : 42), 14, 80);
+      const want = Math.max(4, Math.floor((h - TOP) / rowPx));
       const used = new Set(mids.map(x => Math.round(x)).filter(x => x >= 0 && x <= 127));
-      const uLo = used.size ? Math.min(...used) : c, uHi = used.size ? Math.max(...used) : c;
       const keyOnly = !!(FV.keyRows && SPC);
-      const has = (m) => !keyOnly || !!SPC[((m % 12) + 12) % 12] || used.has(m);
-      let lo = uLo, hi = uHi, n = 0;
-      for (let m = lo; m <= hi; m++) if (has(m)) n++;
-      for (let k = 0; n < want && (lo > 0 || hi < 127) && k < 400; k++) {
-        if ((k % 2 === 0 && hi < 127) || lo <= 0) { hi++; if (has(hi)) n++; }
-        else { lo--; if (has(lo)) n++; }
+      const U = [];
+      for (let m = 127; m >= 0; m--) {
+        if ((m >= 21 && m <= 108 && (!keyOnly || !!SPC[((m % 12) + 12) % 12])) || used.has(m)) U.push(m);
       }
-      if (keyOnly) {
-        const list = []; for (let m = hi; m >= lo; m--) if (has(m)) list.push(m);
-        if (list.length >= 3) _rowList = list;
+      const nV = Math.min(want, U.length);
+      let i0;
+      if (FV.topM == null) {
+        const c = used.size ? (Math.min(...used) + Math.max(...used)) / 2 : (loM + hiM) / 2;
+        let ci = 0; for (let i = 0; i < U.length; i++) if (Math.abs(U[i] - c) < Math.abs(U[ci] - c)) ci = i;
+        i0 = ci - Math.floor(nV / 2);
+      } else {
+        i0 = U.findIndex(m => m <= FV.topM); if (i0 < 0) i0 = U.length - nV;
       }
-      hiM = hi; loM = lo; rows = _rowList ? _rowList.length : (hi - lo + 1);
+      i0 = clamp(i0, 0, Math.max(0, U.length - nV));
+      FV.topM = U[i0];
+      const win = U.slice(i0, i0 + nV);
+      if (keyOnly) _rowList = win;
+      hiM = win[0]; loM = win[win.length - 1]; rows = keyOnly ? win.length : (hiM - loM + 1);
+      cv._fullRows = { U: U, i0: i0, n: nV };          // the scroll extent, for gestures and the thumb
     }
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
@@ -12364,8 +12370,10 @@
     // answer here is not a scrollbar — the canvas keeps its width and the
     // drawing pans INSIDE it, so the keyboard gutter stays pinned where a
     // scrolled canvas would have carried it off screen.
-    const VB = free ? barsF : Math.min(barsF, Math.max(1, FV ? (window.innerWidth > window.innerHeight ? 2 : 1) : viewBarsMax()));
+    const VB = free ? barsF : (FV ? clamp(FV.vb || 1, Math.min(0.25, barsF), barsF)
+      : Math.min(barsF, Math.max(1, viewBarsMax())));
     const B0 = free ? 0 : clamp(nv.bar0 || 0, 0, Math.max(0, barsF - VB));
+    if (FV) { try { fullThumbs(host, cv, B0, VB, barsF, TOP, GUT); } catch (e) {} }
     const VSC = barsF > 0 ? (VB / barsF) : 1;            // cycle fraction per screen
     const F0 = barsF > 0 ? (B0 / barsF) : 0;             // the fraction at the left edge
     // ONE MAPPING, both ways — every x in this function goes through it, so a
@@ -14986,7 +14994,158 @@
   }
   const _fullLayer = (E) => { try { return FULL ? ((E.getCfg().layers || []).find(x => x && (x.id | 0) === FULL.id) || null) : null; } catch (e) { return null; } };
   const _fullCard = () => FULL ? document.querySelector('.v2-layer[data-v2id="' + FULL.id + '"]') : null;
-  const _fullVB = () => (window.innerWidth > window.innerHeight ? 2 : 1);
+  const _fullVB = () => (FULL && FULL.vb) || (window.innerWidth > window.innerHeight ? 2 : 1);
+  // WHERE YOU ARE in the part and on the keyboard — two thin bars over the
+  // canvas edges, sized to the window (a phone has no scrollbars to tell you)
+  function fullThumbs(host, cv, b0, vb, bars, top, gut) {
+    const fr = cv._fullRows; if (!fr) return;
+    let vt = host.querySelector(':scope > .v2-fullvthumb'), ht = host.querySelector(':scope > .v2-fullhthumb');
+    if (!vt) { vt = document.createElement('span'); vt.className = 'v2-fullvthumb'; host.appendChild(vt); }
+    if (!ht) { ht = document.createElement('span'); ht.className = 'v2-fullhthumb'; host.appendChild(ht); }
+    const H = (parseFloat(cv.style.height) || cv.clientHeight) - top, W = (cv.clientWidth || window.innerWidth) - gut;
+    const ct = cv.offsetTop + top;
+    const N = Math.max(1, fr.U.length);
+    vt.hidden = fr.n >= N;
+    vt.style.top = Math.round(ct + H * (fr.i0 / N)) + 'px';
+    vt.style.height = Math.max(18, Math.round(H * (fr.n / N))) + 'px';
+    ht.hidden = vb >= bars - 1e-6;
+    ht.style.top = Math.round(cv.offsetTop + top + H - 6) + 'px';
+    ht.style.left = Math.round(gut + W * (b0 / bars)) + 'px';
+    ht.style.width = Math.max(18, Math.round(W * (vb / bars))) + 'px';
+  }
+  // A REFUSED TOUCH SAYS WHY, in the readout — a drawing that silently ignores
+  // a finger is indistinguishable from a broken one.
+  function fullSay(msg) {
+    const rd = document.querySelector('.v2-full .v2-fullread');
+    if (rd) rd.textContent = msg;
+  }
+  // DRAG THE KEYS TO SCROLL PITCH. A tap still reaches the click handler (it
+  // moves the selected note to that key); a drag past 6px scrolls instead and
+  // stamps `_dragged` so the release is not also a tap.
+  function fullKeyDrag(ev, E, card, L, cvd) {
+    const fr = cvd._fullRows, pg = cvd._pitchGeo; if (!fr || !pg) return;
+    const sy = ev.clientY, i0 = fr.i0, rowH = Math.max(8, pg.rowH || 40);
+    let armed = false;
+    DRAG = { id: L.id | 0, pan: 1, moved: 0 };
+    const mv = (e2) => {
+      const dy = e2.clientY - sy;
+      if (!armed && Math.abs(dy) < 6) return;
+      armed = true; DRAG && (DRAG.moved = Math.abs(dy));
+      const U = (cvd._fullRows || fr).U, n = (cvd._fullRows || fr).n;
+      // the content follows the finger: pulling DOWN brings HIGHER rows in
+      FULL.topM = U[clamp(i0 - Math.round(dy / rowH), 0, Math.max(0, U.length - n))];
+      try { drawPartViz(card, L, E); } catch (e) {}
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      DRAG = null;
+      if (armed) cvd._dragged = Date.now();
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+  // TWO FINGERS PAN BOTH AXES AND PINCH TO ZOOM (each axis by its own spread);
+  // the wheel scrolls (⇧ for time) and ⌘/Ctrl + wheel zooms time (+⇧ pitch).
+  function fullWireGestures() {
+    const cvOf = (t) => t && t.closest && t.closest('.v2-full .v2-vizcv');
+    const mid = (ts) => ({ x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2,
+                           sx: Math.abs(ts[0].clientX - ts[1].clientX), sy: Math.abs(ts[0].clientY - ts[1].clientY) });
+    let raf = 0;
+    const redraw = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0;
+        const L = FULL && _fullLayer(FULL.E), card = _fullCard();
+        if (L && card) { try { drawPartViz(card, L, FULL.E); } catch (e) {} } });
+    };
+    document.addEventListener('touchstart', (e) => {
+      if (!FULL || e.touches.length < 2) return;
+      const cv = cvOf(e.target); if (!cv || !cv._fullRows || !cv._barsGeo) return;
+      if (e.cancelable) e.preventDefault();
+      const L = _fullLayer(FULL.E); if (!L) return;
+      // TAKE BACK what the first finger started — a pen note or a drag
+      if (DRAG && !DRAG.pan && FULL.snap != null) {
+        try { L.part.notes = JSON.parse(FULL.snap); L.part.kind = FULL.snapKind; } catch (e2) {}
+        NE = null;
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e2) {}
+      }
+      DRAG = null; try { dragTipHide(); } catch (e2) {}
+      cv._dragged = Date.now();
+      const m = mid(e.touches), vb = FULL.vb || 1;
+      FULL.two = { m: m, i0: cv._fullRows.i0, b0: vnavOf(L).bar0 || 0, vb: vb, rowPx: FULL.rowPx || 42,
+                   perBar: Math.max(1, cv._barsGeo.w / vb), rowH: Math.max(8, cv._pitchGeo.rowH || 40) };
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+      if (!FULL || !FULL.two || e.touches.length < 2) return;
+      if (e.cancelable) e.preventDefault();
+      const L = _fullLayer(FULL.E), cv = _fullCard() && _fullCard().querySelector('.v2-full .v2-vizcv');
+      if (!L || !cv) return;
+      const T = FULL.two, m = mid(e.touches), bars = Math.max(0.25, +L.part.bars || 1);
+      if (T.m.sx > 40) FULL.vb = clamp(T.vb * (T.m.sx / Math.max(1, m.sx)), Math.min(0.25, bars), bars);
+      if (T.m.sy > 40) FULL.rowPx = clamp(T.rowPx * (m.sy / Math.max(1, T.m.sy)), 16, 80);
+      vnavSet(L, { bar0: clamp(T.b0 - (m.x - T.m.x) / T.perBar, 0, Math.max(0, bars - FULL.vb)) });
+      const fr = cv._fullRows;
+      if (fr) FULL.topM = fr.U[clamp(T.i0 - Math.round((m.y - T.m.y) / T.rowH), 0, Math.max(0, fr.U.length - fr.n))];
+      redraw();
+    }, { passive: false });
+    const end = (e) => {
+      if (!FULL || !FULL.two || e.touches.length >= 2) return;
+      FULL.two = null;
+      try { refreshFull(FULL.E); } catch (e2) {}         // the zoom labels and tiles follow
+    };
+    document.addEventListener('touchend', end); document.addEventListener('touchcancel', end);
+    let wy = 0, chromeT = 0;
+    document.addEventListener('wheel', (e) => {
+      if (!FULL) return;
+      const cv = cvOf(e.target); if (!cv) return;
+      e.preventDefault();
+      const E = FULL.E;
+      if (e.ctrlKey || e.metaKey) {
+        const k = Math.exp(-e.deltaY * 0.01);
+        fullView(E, e.shiftKey ? { zy: 1, scaleY: k } : { zx: 1, scale: k });
+      } else {
+        const dx = e.shiftKey ? e.deltaY : e.deltaX, dy = e.shiftKey ? 0 : e.deltaY;
+        const pg = cv._pitchGeo, bg = cv._barsGeo;
+        wy += dy; const rows = (wy / Math.max(8, (pg && pg.rowH) || 40)) | 0;
+        if (rows) wy -= rows * Math.max(8, (pg && pg.rowH) || 40);
+        const op = {};
+        if (rows) op.rows = rows;
+        if (dx && bg) op.bars = dx / Math.max(1, bg.w / Math.max(0.25, FULL.vb || 1));
+        if (op.rows || op.bars) fullView(E, op);
+      }
+      clearTimeout(chromeT); chromeT = setTimeout(() => { if (FULL) refreshFull(FULL.E); }, 180);
+    }, { passive: false });
+  }
+  // ── SCROLL AND ZOOM ── the window moves; the drawing is redrawn in place.
+  const FULL_VBS = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64];
+  function fullView(E, op) {
+    const L = _fullLayer(E), card = _fullCard(); if (!L || !card || !FULL) return;
+    const cv = card.querySelector('.v2-full .v2-vizcv'); const fr = cv && cv._fullRows;
+    const bars = Math.max(0.25, +L.part.bars || 1);
+    if (op.rows && fr) {                                   // ↕ scroll, in rows (+ = down = lower pitches)
+      const i = clamp(fr.i0 + Math.round(op.rows), 0, Math.max(0, fr.U.length - fr.n));
+      FULL.topM = fr.U[i];
+    }
+    if (op.bars) {                                         // ↔ scroll, in bars (+ = later)
+      const vb = clamp(FULL.vb || 1, Math.min(0.25, bars), bars);
+      vnavSet(L, { bar0: clamp((vnavOf(L).bar0 || 0) + op.bars, 0, Math.max(0, bars - vb)) });
+    }
+    if (op.zx) {                                           // ↔ zoom: + shows fewer bars
+      const cur = FULL.vb || 1;
+      let nx = op.zx > 0 ? FULL_VBS.slice().reverse().find(v => v < cur - 1e-6) : FULL_VBS.find(v => v > cur + 1e-6);
+      if (op.scale) nx = cur / op.scale;
+      FULL.vb = clamp(nx == null ? cur : nx, Math.min(0.25, bars), bars);
+      vnavSet(L, { bar0: clamp(vnavOf(L).bar0 || 0, 0, Math.max(0, bars - FULL.vb)) });
+    }
+    if (op.zy) {                                           // ↕ zoom: + taller rows
+      const cur = FULL.rowPx || 42;
+      FULL.rowPx = clamp(op.scaleY ? cur * op.scaleY : cur + (op.zy > 0 ? 8 : -8), 16, 80);
+    }
+    if (op.chrome) refreshFull(E);
+    else { try { drawPartViz(card, L, E); } catch (e) {} }
+  }
   function fullChrome(host, L, E) {
     if (!FULL || !host || !L) return;
     let hd = host.querySelector(':scope > .v2-fullhead'), ft = host.querySelector(':scope > .v2-fullfoot');
@@ -15014,15 +15173,27 @@
         '<button type="button" class="v2-fullchip v2-fullgrid" title="The grid notes snap to \u2014 tap for ' + (gp === 8 ? '1/16' : '1/8') + '">\u229e ' + (gp === 8 ? '1/8' : gp === 16 ? '1/16' : ('1/' + gp)) + '</button>' +
         '<span class="v2-fullread">' + (prevRd || 'draw a note \u2014 its pitch, start, size and level show here') + '</span>' +
       '</div>';
-    const bars = Math.max(1, Math.ceil(+L.part.bars || 1)), VB = Math.min(bars, _fullVB());
-    const b0 = clamp((vnavOf(L).bar0 || 0) | 0, 0, Math.max(0, bars - VB));
+    const barsF = Math.max(0.25, +L.part.bars || 1), bars = Math.max(1, Math.ceil(barsF));
+    const VB = clamp(_fullVB(), Math.min(0.25, barsF), barsF);
+    const b0 = clamp(vnavOf(L).bar0 || 0, 0, Math.max(0, barsF - VB));
     let tiles = '';
-    for (let b = 0; b < bars; b++) tiles += '<button type="button" class="v2-fulltile' + (b >= b0 && b < b0 + VB ? ' on' : '') + '" data-b="' + b + '">' + (b + 1) + '</button>';
+    for (let b = 0; b < bars; b++) tiles += '<button type="button" class="v2-fulltile' + (b + 1 > b0 + 1e-6 && b < b0 + VB - 1e-6 ? ' on' : '') + '" data-b="' + b + '">' + (b + 1) + '</button>';
+    const vbTxt = VB >= barsF - 1e-6 ? 'all bars' : Math.abs(VB - 0.5) < 1e-6 ? '\u00bd bar' : Math.abs(VB - 0.25) < 1e-6 ? '\u00bc bar'
+      : (Math.round(VB * 10) / 10) + ' bar' + (Math.abs(VB - 1) < 1e-6 ? '' : 's');
     ft.innerHTML = '<div class="v2-fulltiles">' + tiles + '</div>' +
+      // ‹ › page by a screen · ↔ how many bars are across · ↕ how tall a row is.
+      // Also: drag the keys to scroll pitch, drag the bar ruler to scroll time,
+      // two fingers to pan both and pinch to zoom.
       '<div class="v2-fullpager">' +
-        '<button type="button" class="v2-fullib v2-fullprev" aria-label="Earlier bars"' + (b0 <= 0 ? ' disabled' : '') + '>\u2039</button>' +
-        '<span>' + (VB > 1 ? ('bars ' + (b0 + 1) + '\u2013' + Math.min(bars, b0 + VB)) : ('bar ' + (b0 + 1))) + ' of ' + bars + '</span>' +
-        '<button type="button" class="v2-fullib v2-fullnext" aria-label="Later bars"' + (b0 + VB >= bars ? ' disabled' : '') + '>\u203a</button>' +
+        '<button type="button" class="v2-fullib v2-fullprev" aria-label="Earlier bars"' + (b0 <= 1e-6 ? ' disabled' : '') + '>\u2039</button>' +
+        '<span class="v2-fullzoom" role="group" aria-label="Zoom time"><b>\u2194</b>' +
+          '<button type="button" class="v2-fullib v2-fullz" data-z="x-" aria-label="Zoom out \u2014 more bars"' + (VB >= barsF - 1e-6 ? ' disabled' : '') + '>\u2212</button>' +
+          '<i>' + vbTxt + '</i>' +
+          '<button type="button" class="v2-fullib v2-fullz" data-z="x+" aria-label="Zoom in \u2014 fewer bars"' + (VB <= Math.min(0.25, barsF) + 1e-6 ? ' disabled' : '') + '>+</button></span>' +
+        '<span class="v2-fullzoom" role="group" aria-label="Zoom pitch"><b>\u2195</b>' +
+          '<button type="button" class="v2-fullib v2-fullz" data-z="y-" aria-label="Zoom out \u2014 more rows"' + ((FULL.rowPx || 42) <= 16 ? ' disabled' : '') + '>\u2212</button>' +
+          '<button type="button" class="v2-fullib v2-fullz" data-z="y+" aria-label="Zoom in \u2014 taller rows"' + ((FULL.rowPx || 42) >= 80 ? ' disabled' : '') + '>+</button></span>' +
+        '<button type="button" class="v2-fullib v2-fullnext" aria-label="Later bars"' + (b0 + VB >= barsF - 1e-6 ? ' disabled' : '') + '>\u203a</button>' +
       '</div>';
     FULL.chrome = (hd.offsetHeight || 96) + (ft.offsetHeight || 100) + 10;
   }
@@ -15040,7 +15211,9 @@
     const L = ctx && ctx.L, card = ctx && ctx.card; if (!L || !card) return;
     const host = card.querySelector('.v2-partviz'); if (!host) return;
     const cfg = E.getCfg();
-    FULL = { id: L.id | 0, E: E, keyRows: !!(cfg && cfg.keyOn), prevGrid: L.part.grid, userGrid: false, prevMode: modeOf(L), chrome: 190 };
+    const land = window.innerWidth > window.innerHeight;
+    FULL = { id: L.id | 0, E: E, keyRows: !!(cfg && cfg.keyOn), prevGrid: L.part.grid, userGrid: false, prevMode: modeOf(L), chrome: 190,
+             vb: land ? 2 : 1, rowPx: land ? 32 : 42, topM: null };
     if (V2.gridPerBar(L) > 8) L.part.grid = 8;          // starts on 1/8 — a finger-sized step
     try { setMode(L, 'draw'); } catch (e) {}
     try { vnavSet(L, { bar0: 0 }); } catch (e) {}
@@ -15049,6 +15222,7 @@
     if (!window.__v2FullWired) {
       window.__v2FullWired = true;
       window.addEventListener('resize', () => { if (FULL) refreshFull(FULL.E); });
+      fullWireGestures();
       document.addEventListener('keydown', (e2) => {
         if (!FULL) return;
         if (e2.key === 'Escape') { closeFullDraw(FULL.E); return; }
@@ -24490,14 +24664,25 @@
         const ctxD = layerOf(cvd); if (!ctxD) return;
         let card = ctxD.card, L = ctxD.L;
         if (!L || !L.part) return;
-        if (vmRefuse(cvd)) return;   // another part's record is drawn — read-only
+        // ⤢ FULL VIEW: a second finger is a pan/pinch (the touch handlers own
+        // it), and the notes are snapshotted so that gesture can take back
+        // whatever the first finger started.
+        const inFull = !!(FULL && FULL.id === (L.id | 0) && cvd.closest('.v2-full'));
+        if (inFull) {
+          if (ev.isPrimary === false || FULL.two) return;
+          FULL.snap = JSON.stringify(L.part.notes || []); FULL.snapKind = L.part.kind;
+        }
+        if (vmRefuse(cvd)) { if (inFull) fullSay('Read-only \u2014 this drawing follows playback onto another part.'); return; }
 
         // 1 · WHAT IS UNDER THE FINGER, in the picture as it stands.
         const geo0 = cvd._plotGeo, pg0 = cvd._pitchGeo;
-        if (!geo0 || !pg0 || !geo0.cyc) return;
+        if (!geo0 || !pg0 || !geo0.cyc) { if (inFull) fullSay('Nothing to draw on yet \u2014 this part has no length.'); return; }
         const r0 = cvd.getBoundingClientRect();
         const px = ev.clientX - r0.left, py = ev.clientY - r0.top;
-        if (px < geo0.x0) return;                      // the keyboard is its own control
+        if (px < geo0.x0) {                            // the keyboard is its own control
+          if (inFull) fullKeyDrag(ev, E, card, L, cvd);   // …and in ⤢, dragging it scrolls pitch
+          return;
+        }
         let hit = null;
         const hits0 = cvd._hits || [];
         for (let i = 0; i < hits0.length; i++) {
@@ -24554,6 +24739,7 @@
               window.removeEventListener('pointerup', upP);
               window.removeEventListener('pointercancel', upP);
               DRAG = null;
+              if (FULL && far > 4) { try { refreshFull(E); } catch (e) {} }   // the bar tiles follow
               // …AND A PAN MUST NOT ALSO SELECT A BAR. The click handler
               // already honours `_dragged` for exactly this reason on the note
               // drag; a pan is the same gesture ending the same way.
@@ -24565,7 +24751,7 @@
             return;
           }
           const made = penAdd(E, L, cvd, px, py);
-          if (!made || made.idx < 0) return;
+          if (!made || made.idx < 0) { if (inFull) fullSay('Could not place a note there.'); return; }
           mode = 'pen'; pen = 1; locked = made.locked; idx = made.idx;
         } else {
           // THE RESIZE ZONE IS RELATIVE TO THE NOTE, never a fixed width: a
@@ -26159,12 +26345,14 @@
             refreshFull(E); return;
           }
           const tile = t.closest('.v2-fulltile');
-          if (tile && LF) { const bars = Math.max(1, Math.ceil(+LF.part.bars || 1)); vnavSet(LF, { bar0: clamp(tile.getAttribute('data-b') | 0, 0, Math.max(0, bars - _fullVB())) }); refreshFull(E); return; }
+          if (tile && LF) { const bf = Math.max(0.25, +LF.part.bars || 1); vnavSet(LF, { bar0: clamp(tile.getAttribute('data-b') | 0, 0, Math.max(0, bf - _fullVB())) }); refreshFull(E); return; }
           const pn = t.closest('.v2-fullprev, .v2-fullnext');
-          if (pn && LF && !pn.disabled) {
-            const bars = Math.max(1, Math.ceil(+LF.part.bars || 1)), VB = _fullVB();
-            vnavSet(LF, { bar0: clamp(((vnavOf(LF).bar0 || 0) | 0) + (pn.classList.contains('v2-fullnext') ? VB : -VB), 0, Math.max(0, bars - VB)) });
-            refreshFull(E); return;
+          if (pn && LF && !pn.disabled) { fullView(E, { bars: (pn.classList.contains('v2-fullnext') ? 1 : -1) * _fullVB(), chrome: 1 }); return; }
+          const zb = t.closest('.v2-fullz');
+          if (zb && LF && !zb.disabled) {
+            const z = zb.getAttribute('data-z');
+            fullView(E, z[0] === 'x' ? { zx: z[1] === '+' ? 1 : -1, chrome: 1 } : { zy: z[1] === '+' ? 1 : -1, chrome: 1 });
+            return;
           }
           if (t.closest('.v2-fulldel')) { fullDelete(E); return; }
           if (t.closest('.v2-fullplay')) { const cd = _fullCard(); const pb = cd && cd.querySelector('.v2-pop-preview'); if (pb) pb.click(); return; }

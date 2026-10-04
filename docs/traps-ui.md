@@ -253,6 +253,8 @@
   containers where a container-specific property is needed; check by reading the computed value of
   ALL THREE and counting distinct results.
 
+- **A drawing surface on iOS needs `touch-action: none`, not `manipulation`.** `manipulation` still lets WebKit claim a one-finger stroke as a pan (→ `pointercancel`), which desktop Chrome's touch emulation never reproduces — the ⤢ full view "drew nothing on the phone" while every headless probe drew (cause SUSPECTED, unconfirmed on device 2026-10-04). Own the scroll/zoom instead (keys/ruler drag, two-finger touch handlers, wheel), and make a refused touch say why (`fullSay`).
+
 ### Controls, wiring and reachability
 
 - **A MOVE IS A DELETE PLUS AN ADD — and a `data-pov` chip's handler is DELEGATED, so it does not

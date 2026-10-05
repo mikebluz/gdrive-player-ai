@@ -1168,9 +1168,8 @@
     return { rhythm: Object.assign({}, (p && p.rhythm) || {}, (ov && ov.rhythm) || {}),
              pitch: Object.assign({}, (p && p.pitch) || {}, (ov && ov.pitch) || {}),
              shape: Object.assign({}, (p && p.shape) || {}, (ov && ov.shape) || {}),
-             // OPS ARE PER-REGION ONLY — there is no part-level rung, so the
-             // inherited value is "none" and that is the truth, not a gap.
-             ops: Object.assign({}, (ov && ov.ops) || {}),
+             // OPS inherit the PART's (`part.ops`, 2026-10-05) like every other group
+             ops: Object.assign({}, (p && p.ops) || {}, (ov && ov.ops) || {}),
              own: !!ov };
   }
   // …and the same overlay as a PART, for the roll. `Object.assign` per group so
@@ -2141,6 +2140,10 @@
         // pitch would not sound (or sit) where it was dropped. Absent by
         // default like every per-note field.
         if (n.hx) o.hx = 1;
+        // ↔ A LENGTH SET BY HAND (`hl`, 2026-10-05) — resized, drawn or sized in the editor.
+        // Absent by default. The CHOKE leaves it alone: you dragged it across the change
+        // on purpose, and cutting it there made the resize look like it did nothing.
+        if (n.hl) o.hl = 1;
         // `ch` — ONE CHORD. Notes placed together by ⤢ ♫ Chord share a number,
         // so they draw in one colour and move, select and delete as a unit
         // until ✂ Break chord drops it. Absent by default like the rest.
@@ -2148,6 +2151,39 @@
         // `cr` — that chord's ROOT pitch class (an inversion's bass is not its
         // root), so it can be coloured and named by its degree in the key
         if (o.ch && Number.isFinite(n.cr)) o.cr = (((n.cr | 0) % 12) + 12) % 12;
+        // `gp` — the unit is a GROUP you made (⧉ Group notes): any notes, any
+        // timing, one unit; drawn apart from a chord and never named as one
+        if (o.ch && n.gp) o.gp = 1;
+        // ── ▦ COMPOSE NOTE ▾ (2026-10-05) — v1's step-level controls, per NOTE.
+        // Every one ABSENT BY DEFAULT; absent = the layer decides, and the emitter
+        // skips its branch, so an untouched note plays byte-for-byte as before.
+        if (Number.isFinite(n.pan) && n.pan !== 0) o.pan = clamp(Math.round(n.pan), -100, 100);
+        if (Number.isFinite(n.bend) && n.bend !== 0) {
+          o.bend = clamp(Math.round(n.bend), -12, 12);
+          if (Number.isFinite(n.bendAt)) o.bendAt = clamp(Math.round(n.bendAt), 0, 100);
+        }
+        if (typeof n.tone === 'string' && n.tone) o.tone = n.tone.slice(0, 80);
+        if (n.fx && typeof n.fx === 'object') {
+          const fx = {};
+          ['reverb', 'delay', 'distortion', 'chorus', 'phaser', 'vibrato', 'tremolo', 'autoFilter', 'pingPong'].forEach((k) => {
+            if (Number.isFinite(n.fx[k]) && n.fx[k] > 0) fx[k] = clamp(Math.round(n.fx[k]), 0, 100);
+          });
+          if (n.fx.over) fx.over = 1;
+          if (Object.keys(fx).length) o.fx = fx;
+        }
+        if (Number.isFinite(n.rat) && n.rat > 1) {
+          o.rat = clamp(n.rat | 0, 2, 8);
+          if (['accel', 'decel', 'random'].indexOf(n.ratp) >= 0) o.ratp = n.ratp;
+        }
+        if (Number.isFinite(n.chance) && n.chance < 100) {
+          o.chance = clamp(Math.round(n.chance), 0, 99);
+          if (n.chOf === 'rat') o.chOf = 'rat';
+        }
+        if (Number.isFinite(n.strum) && n.strum > 0) {
+          o.strum = clamp(Math.round(n.strum), 1, 300);
+          if (['down', 'random'].indexOf(n.strDir) >= 0) o.strDir = n.strDir;
+        }
+        if (['first', 'notfirst', 'every2', 'every4', 'odd'].indexOf(n.when) >= 0) o.when = n.when;
         return o;
       }).sort((a, b) => a.t - b.t);
       // A recorded part is fixed pitch material, but it still has to answer to a
@@ -2303,6 +2339,21 @@
         return Object.keys(ov).length ? ov : undefined;
       });
       if (rb2) p.ruleb = rb2; else delete p.ruleb;
+      // ⟳ / ⬡ OPERATIONS FOR THE WHOLE PART (2026-10-05, user chose "b": the per-bar
+      // Arpeggiate / Scale get a part-level rung). Same whitelist and neutral pruning
+      // as a region's, ABSENT BY DEFAULT — an untouched project stores nothing and
+      // plays exactly as it did. A region's own ops still win over these.
+      if (p.ops && typeof p.ops === 'object') {
+        const o3 = {};
+        Object.keys(BAR_RULE_F.ops).forEach((f) => {
+          const spec = BAR_RULE_F.ops[f], v = p.ops[f];
+          if (typeof spec[0] === 'string') { if (typeof v === 'string' && spec.indexOf(v) >= 0) o3[f] = v; }
+          else if (Number.isFinite(v)) o3[f] = clamp(Math.round(v), spec[0], spec[1]);
+        });
+        Object.keys(o3).forEach((f) => { if (o3[f] === BAR_NEUTRAL.ops[f]) delete o3[f]; });
+        if (!((o3.arp | 0) > 0)) delete o3.arpDir;
+        if (Object.keys(o3).length) p.ops = o3; else delete p.ops;
+      } else delete p.ops;
       // THE REGISTER THESE NOTES WERE MADE AT. A recorded part is absolute
       // MIDI, so Register — which sets the octave a LIVE part is generated in —
       // did nothing to it at all: a control on screen that moved nothing (the
@@ -4486,7 +4537,8 @@
   // established idiom; a no-op for lane engines and when a hold is open).
   let NF_HELD = false;
   function notesFor(L, ctx) {
-    if (!NF_HELD && ctx && ctx.E && typeof _ambWithCfgHold === 'function') {
+    if (!NF_HELD && ctx && ctx.E && typeof _ambWithCfgHold === 'function' &&
+        !(window._v2 && typeof window._v2.dragging === 'function' && window._v2.dragging())) {   // never mid-drag (see drawPartViz)
       NF_HELD = true;
       try { return _ambWithCfgHold(ctx.E, () => notesFor(L, ctx)); } finally { NF_HELD = false; }
     }
@@ -4523,7 +4575,33 @@
     }
     finally { try { window._ambSaltLayer = sv; } catch (e) {} }
   }
+  // ⟳ / ⬡ THE PART'S OWN OPERATIONS (`part.ops`), run ONCE on the outermost roll —
+  // after the per-part swap (so it is the SOUNDING record's ops) and after the
+  // composite (whose regions with ops of their own already ran theirs, and are
+  // skipped here). Nested calls (the swap, the composite's shims) pass straight through.
+  let OPS_DEPTH = 0, OPS_REC = null;
   function notesForRaw(L, ctx) {
+    if (OPS_DEPTH > 0) { OPS_DEPTH++; try { return notesForRaw0(L, ctx); } finally { OPS_DEPTH--; } }
+    OPS_DEPTH = 1; OPS_REC = null;
+    let ns;
+    try { ns = notesForRaw0(L, ctx); } finally { OPS_DEPTH = 0; }
+    const p = OPS_REC; OPS_REC = null;
+    if (!p || !p.ops || p.kind !== 'live' || !Array.isArray(ns) || !ns.length) return ns;
+    try { return partOpsStage(p, ctx, ns); } catch (e) { return ns; }
+  }
+  function partOpsStage(p, ctx, ns) {
+    const ops = p.ops, rate = clamp(ops.arp | 0, 0, 16), sc = clamp(gnum(ops.scale, 100) | 0, 10, 200);
+    if (!(rate > 0) && sc === 100) return ns;
+    const cs = ctx.cycleStart, cyc = ctx.cycleSec, barsF = Math.max(0.125, p.bars || 1);
+    const own = p.ruleb ? Object.keys(p.ruleb).filter((k) => p.ruleb[k] && p.ruleb[k].ops && Object.keys(p.ruleb[k].ops).length) : [];
+    const mine = [], keep = [];
+    ns.forEach((n) => ((own.length && regHas(own, slotAt((n.at - cs) / Math.max(0.001, cyc), barsF))) ? keep : mine).push(n));
+    let got = mine;
+    if (rate > 0) got = opsArp(got, cs + cyc, rate, ops.arpDir || 'up');
+    if (sc !== 100) got = opsScale(got, cs, sc, cs, cyc);
+    return keep.concat(got).sort((a, b) => a.at - b.at);
+  }
+  function notesForRaw0(L, ctx) {
     // PER-PART CONTENT. `L.part` is always the record being EDITED; `L.partFor`
     // names which arrangement part it belongs to and `L.parts` files the
     // others (the `mem` swap pattern — one live record, everything on the card
@@ -4549,6 +4627,7 @@
       }
     }
     const p = L.part, out = [];
+    if (OPS_DEPTH && OPS_REC === null) OPS_REC = p;     // the record that sounds (see `notesForRaw`)
     const cyc = ctx.cycleSec, cs = ctx.cycleStart;
     // ⌗ ROLL AND ▦ STEPS ARE PARALLEL — each keeps its own material and
     // switching between them preserves both. `part.notes` and
@@ -4671,6 +4750,10 @@
         if (Number.isFinite(n.sus)) o.sus = n.sus;
         if (Number.isFinite(n.rel)) o.rel = n.rel;
         if (Number.isFinite(n.glide)) o.glide = n.glide;
+        // ▦ Compose's per-note controls ride along the same way (absent = absent)
+        ['pan', 'bend', 'bendAt', 'tone', 'fx', 'rat', 'ratp', 'chance', 'chOf', 'strum', 'strDir', 'when', 'hl'].forEach((k) => {
+          if (n[k] != null) o[k] = n[k];
+        });
         out.push(o);
       }
       return out;
@@ -4727,7 +4810,9 @@
       Object.keys(groups).forEach((sig) => {
         const g2 = groups[sig];
         const rolled = roll(g2.t, g2.ov);
-        const ops = (g2.ov && g2.ov.ops) || null;
+        // a region that states ops of its own runs them OVER the part's (`part.ops`);
+        // one that states none is left to the part-level stage in `notesForRaw`
+        const ops = (g2.ov && g2.ov.ops && Object.keys(g2.ov.ops).length) ? Object.assign({}, p.ops || {}, g2.ov.ops) : null;
         g2.keys.forEach((k) => {
           const mine = rolled.filter((n) => regHas([k], slotOf(n)));
           if (!mine.length) return;
@@ -7204,6 +7289,26 @@
     } catch (e) { return false; }
     return true;
   }
+  // ── AUDITION ONE PITCH IN THE LAYER'S SOUND (▦ Compose's keyboard) ──────
+  // The layer's tone, its envelope (`_ambApplyAdsr` through the same shim the
+  // emitter uses) and its staging level; HELD — `startSustainedNote` returns a
+  // handle the key's release lets go of, so a key sounds exactly as long as it
+  // is down, and the envelope's own release ramps the edge (rule 3). A loop or
+  // kit layer has no pitch to audition and returns null.
+  function auditionStartFn(E, L, midi) {
+    if (!L || !L.instrument || typeof startSustainedNote !== 'function') return null;
+    const v = L.instrument.voice;
+    if (v === 'loop' || v === 'kit' || v === 'speech') return null;
+    try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+    let params = { type: toneOf(L), volume: _AMB_V2_STAGE };
+    try { if (typeof _ambApplyAdsr === 'function') params = _ambApplyAdsr(params, adsrShim(L)) || params; }
+    catch (e) {
+      params.attack = L.instrument.attack; params.decay = L.instrument.decay;
+      params.sustain = L.instrument.sustain; params.release = L.instrument.release;
+    }
+    delete params.glideMs; delete params.glideLayer;     // an audition never slides from the last note
+    try { return startSustainedNote(midiToFreq(clamp(midi | 0, 0, 127)), params); } catch (e) { return null; }
+  }
   // THE LANE'S TWO WORDS, read and written through one pair — the popover, the
   // grid's faces and the audition all ask here, so none of them can invent a
   // different default. Writing prunes what says nothing, exactly as the
@@ -7478,10 +7583,35 @@
       if (!fires) { next(); continue; }
       let notes = [];
       try { notes = notesFor(L, { E, cfg, key, cycleStart: cs, cycleSec: cw, pi: cpi }); } catch (e) { break; }
+      // ▦ STRUM — the notes that START TOGETHER and carry a strum fan out by
+      // their rank (up = low first, down = high first, random = seeded). Only
+      // built when some note asks, so an unstrummed layer does no work here.
+      let strumOff = null;
+      if (notes.some((n) => n && n.strum > 0)) {
+        strumOff = new Map(); const byAt = new Map();
+        notes.forEach((n, ix) => { if (n && n.strum > 0) { const k = Math.round(n.at * 1e4); if (!byAt.has(k)) byAt.set(k, []); byAt.get(k).push(ix); } });
+        byAt.forEach((ixs, k) => {
+          const dir = notes[ixs[0]].strDir || 'up';
+          ixs.sort((a, b) => notes[a].freq - notes[b].freq);
+          if (dir === 'down') ixs.reverse();
+          if (dir === 'random') ixs.sort((a, b) => vRnd(seedIdOf(L) ^ (k * 31 + a), 151) - vRnd(seedIdOf(L) ^ (k * 31 + b), 151));
+          ixs.forEach((ix, r) => strumOff.set(ix, r * (notes[ix].strum / 1000)));
+        });
+      }
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (!(n.at >= from - 1e-6 && n.at < to)) continue;
         if (!(n.freq > 0)) continue;
+        // ▦ WHEN — this NOTE plays only on some passes (`ci` = the pass)
+        if (n.when) {
+          const pc2 = ci | 0;
+          if ((n.when === 'first' && pc2 !== 0) || (n.when === 'notfirst' && pc2 === 0) ||
+              (n.when === 'every2' && pc2 % 2 !== 0) || (n.when === 'every4' && pc2 % 4 !== 0) || (n.when === 'odd' && pc2 % 2 !== 1)) continue;
+        }
+        // ▦ CHANCE — a seeded roll per note per pass, so a take replays the same
+        // way; on the ratchet instead, each HIT rolls (below)
+        if (Number.isFinite(n.chance) && n.chOf !== 'rat' &&
+            vRnd(seedIdOf(L) ^ (((n.nidx | 0) + 1) * 7919) ^ ((ci | 0) * 104729), 131) * 100 >= n.chance) continue;
         // CHORD MASK — how often this layer plays THIS chord. Also emitter-side
         // in v1, and per NOTE rather than per cycle because a cycle can span
         // several chords.
@@ -7634,6 +7764,15 @@
           params.glideMs = Math.max(params.glideMs || 0, n.glide | 0);
           params.glideLayer = adsrShim(L);
         }
+        // ▦ PER-NOTE PAN, BEND, SOUND, EFFECTS — playNote's own per-note fields
+        // (v1's step params); each only when the note states it
+        if (Number.isFinite(n.pan) && n.pan !== 0) params.pan = n.pan;
+        if (Number.isFinite(n.bend) && n.bend !== 0) params.bend = { semitones: n.bend, atFraction: Number.isFinite(n.bendAt) ? n.bendAt / 100 : 1 };
+        if (typeof n.tone === 'string' && n.tone) params.type = n.tone;
+        if (n.fx && typeof n.fx === 'object') {
+          for (const k7 in n.fx) { if (k7 !== 'over' && Number.isFinite(n.fx[k7])) params[k7] = n.fx[k7]; }
+          if (n.fx.over) params.fxOverrideGlobal = true;
+        }
         // TIGHT clamps the release so a note stops out of the way of the next
         // one — v1's own `_ambTightChoke`, applied AFTER the envelope is built.
         try { if (typeof _ambTightOn === 'function' && _ambTightOn(L) && typeof _ambTightChoke === 'function') params = _ambTightChoke(params) || params; } catch (e) {}
@@ -7654,7 +7793,7 @@
         }
         // set LAST — `_ambApplyAdsr` may hand back a fresh params object
         if (n.antic > 0) params._chokeLead = n.antic;     // see the chord choke (17-ambient)
-        if (n.line) params._chokeSkip = 1;                 // ⚇ Mix's line is a LINE, never choked
+        if (n.line || n.hl) params._chokeSkip = 1;        // ⚇ Mix's line is a LINE, never choked — nor a hand-set length
         // \u25c7 DOUBLING \u2014 the SAME note, at the SAME time, through more of the Tone
         // set (user, 2026-09-26: "one param for how many to play at once"). The extra
         // voices are emitted HERE, beside the lead, because this is the one place a v2
@@ -7710,7 +7849,29 @@
             _cuts = _ambToneCuts(_shim, at, (n.durMs || 0) / 1000) || [];
           }
         } catch (e) { _cuts = []; }
-        if (!_cuts.length) fire(at, n.durMs, params);
+        // ▦ STRUM shifts the onset (the note still ends where it did); RATCHET
+        // splits the note into hits (even / accel / decel / random), each its
+        // own envelope, each its own chance roll when Chance is "of the ratchet"
+        const sOff = (strumOff && strumOff.has(i)) ? strumOff.get(i) : 0;
+        const at1 = sOff ? at + sOff : at, dur1 = sOff ? Math.max(20, (n.durMs || 0) - sOff * 1000) : n.durMs;   // unstrummed = the original call, exactly
+        if (n.rat > 1 && !_cuts.length) {
+          const R = n.rat | 0; let ws = [];
+          for (let r = 0; r < R; r++) ws.push(n.ratp === 'accel' ? (R - r) : n.ratp === 'decel' ? (r + 1)
+            : n.ratp === 'random' ? (0.5 + vRnd(seedIdOf(L) ^ (((n.nidx | 0) + 1) * 613 + r), 167)) : 1);
+          const tot = ws.reduce((a, b) => a + b, 0);
+          let s1 = at1;
+          ws.forEach((w9, r) => {
+            const d9 = Math.max(15, Math.round(dur1 * w9 / tot));
+            const ok = !(Number.isFinite(n.chance) && n.chOf === 'rat' &&
+              vRnd(seedIdOf(L) ^ (((n.nidx | 0) + 1) * 7919 + r) ^ ((ci | 0) * 104729), 137) * 100 >= n.chance);
+            if (ok) {
+              const pR = {}; for (const kR in params) pR[kR] = params[kR];
+              if (r > 0) delete pR._chokeLead;
+              fire(s1, Math.max(15, d9 - 4), pR);
+            }
+            s1 += d9 / 1000;
+          });
+        } else if (!_cuts.length) fire(at1, dur1, params);
         else {
           let s0 = at;
           const ends = _cuts.concat([at + (n.durMs || 0) / 1000]);
@@ -9493,6 +9654,7 @@
     // `_ambPlaySynthDrum`'s two arms, `_AMB_V2_STAGE` or the semitone map, so a
     // label press asks the model to make the sound rather than making it itself.
     hitLane: hitLaneFn,
+    auditionStart: auditionStartFn,   // ▦ Compose keyboard: a held key in the layer's sound
     // …and the lane EDITOR's stores with it, for the same scope reason: the
     // card's IIFE can see neither `clamp` nor `_ambGenSynthKit`'s seeding rule.
     laneFxGet: laneFxGetFn, laneFxSet: laneFxSetFn, laneVoice: laneVoiceFn,
@@ -10274,6 +10436,19 @@
   // A DRAG IN PROGRESS. Held here rather than on the element so a card rebuild
   // mid-gesture cannot strand it; cleared on pointerup and on any commit.
   let DRAG = null;
+  // A DRAG FOLLOWS ITS NOTE, NOT AN INDEX. Every redraw reaches code that calls
+  // `getCfg()`, and a normalize RE-SORTS the notes by onset — so the moment a
+  // dragged note passes another's onset, `notes[DRAG.idx]` names the OTHER one
+  // and the drag carries it off ("dragging a note changes notes it comes close
+  // to"). Each move re-finds the note by what it was last written as.
+  const dragCur = (n) => (n ? { t: n.t, midi: n.midi | 0, dur: n.dur } : null);
+  function dragRefind(L, i, cur) {
+    const ns = (L && L.part && L.part.notes) || [];
+    const same = (n) => n && Math.abs(n.t - cur.t) < 1e-9 && (n.midi | 0) === cur.midi && Math.abs(n.dur - cur.dur) < 1e-9;
+    if (same(ns[i])) return i;
+    const j = ns.findIndex(same);
+    return j >= 0 ? j : i;
+  }
   // THE STICKY PITCH WINDOW, per layer id — survives card rebuilds (a locked
   // drag rebuilds at release) so the canvas cannot resize across one.
   // Transient by construction; a reload re-derives.
@@ -10485,7 +10660,9 @@
   // `persistWorkspace` (the documented `_soloLane` trap), and a project that
   // reloaded with its drawings hidden would read as content gone missing.
   const VIZOFF = new Set();
-  const vizHidden = (L) => !!(L && VIZOFF.has(L.id | 0));
+  // (a ROLL card has no fold since 2026-10-05 — its drawing is a small fixed thumbnail —
+  // so only a Pattern card can be hidden)
+  const vizHidden = (L) => !!(L && VIZOFF.has(L.id | 0) && V2.formOf(L) === 'steps');
   const setVizHidden = (L, off) => {
     if (!L) return;
     if (off) VIZOFF.add(L.id | 0); else VIZOFF.delete(L.id | 0);
@@ -10671,12 +10848,14 @@
         ': notes with their own time, pitch and length.'
       : ROLL + ' \u2014 notes with their own time, pitch and length. Tap for ' + STEPS +
         ': a grid of on/off steps.') + ' Both are kept \u2014 switching destroys neither.';
-    return '<span class="ambient-seg-row v2-formseg">' +
-      '<button type="button" class="ambient-seg v2-formbtn" title="' + esc(why) + '"' +
-        ' aria-label="Form: ' + esc(steps ? STEPS : ROLL) + '. Switch to ' +
-        esc(steps ? ROLL : STEPS) + '.">' +
-        half(ROLL, !steps) + '<span class="v2-formsw">\u21c4</span>' + half(STEPS, steps) +
-      '</button></span>';
+    // ROLL / PATTERN IS THE LAYER'S TYPE now (2026-10-05, user: "no need to have
+    // both in a layer") — stated, not toggled. A type is chosen at ＋ Add layer and
+    // changed deliberately with ⋯ ▸ ⇄ Convert, which rebuilds the other form from
+    // what this one plays. Same class as the old switch (layout + the head order).
+    // The badge itself went too (2026-10-05, user: "this label seems
+    // unnecessary") — the type reads from the picture and the ⋯ ▸ ⇄ Convert item.
+    void why;
+    return '';
   }
 
   // ── WHY THESE NOTES ─────────────────────────────────────────────────────
@@ -11192,16 +11371,8 @@
         // 🎤 Sing and ⌫ Clear. They are ACTIONS; the ✎ Edit picker beside them is a MODE
         // (what a tap does), so they stay apart from it. The buttons keep their classes,
         // so their delegated handlers are untouched — the menu only hides and shows them.
-        '<span class="v2-writewrap">' +
-          '<button type="button" class="ambient-seg v2-writebtn' + (V2.composeOpenFor(L) ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false" ' +
-            'title="Ways to write this part \u2014 compose it in the grid, sing it in, or clear it to draw into">' + (V2.composeOpenFor(L) ? '\u25a6 Composing' : '\u270d Write') + ' \u25be</button>' +
-          '<span class="v2-writemenu" hidden>' +
-          '<button type="button" class="ambient-seg v2-gridbtn" ' +
-          'title="Compose in the grid \u2014 steps, chords and the keyboard. Saved as you go; the part becomes FROZEN and plays exactly what you put there.">' + (V2.composeOpenFor(L) ? '\u25a6 Close grid' : '\u25a6 Compose') + '</button>' +
-          '<button type="button" class="ambient-seg v2-singbtn" ' +
-          'title="Sing it in \u2014 hum, sing or whistle the part (in time with the music, or a free take) and it is written down as notes. You review it before it replaces anything.">\ud83c\udfa4 Sing</button>' +
-          '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes FROZEN with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
-        '</span></span>' +
+        // (✍ Write ▾ retired 2026-10-05: its tools live IN the editor — ⌨ Keys,
+        // 🎤 Sing, 🗑 Delete ▾ ▸ Clear all — and ✎ Edit is the one door)
         // ↻ BACK TO THE GENERATED PATTERN. The roll's take bar (🎲/✎/💾) is
         // deliberately NOT here — those write a take down as NOTES, which is
         // the other form's material, and ✎ Write it down would fight the form
@@ -11601,96 +11772,10 @@
     // Grid keeps a ⊞ glyph rather than four characters of prose. The readout
     // keeps its own line under them, and the canvas follows — so everything
     // above the picture is chrome and everything below it acts on notes.
-    return '<div class="v2-partviz' + (vizHidden(L) ? ' v2-vizoff' : '') + '">' +
-      '<div class="v2-vizhead">' +
-        vizTogHtml(L) +
-        formSegHtml(L) +
-        // ▦ COMPOSE — moved out of the retired ✎ Written door into this row
-        // (2026-09-14, user: "move the compose in grid option into the main
-        // layer top button array as a compositional option"). It belongs with
-        // ⌗ Roll and ▦ Steps: those say what SHAPE the picture is, this is the
-        // third way to author it. Its OWN class, never `.v2-compose` — that one
-        // is still on the take bar, and a shared name makes `querySelector`
-        // answer for whichever comes first (the documented duplicate-class trap).
-        // ✍ WRITE ▾ (2026-10-04) — the ways to WRITE the part, in one door: ▦ Compose,
-        // 🎤 Sing and ⌫ Clear. They are ACTIONS; the ✎ Edit picker beside them is a MODE
-        // (what a tap does), so they stay apart from it. The buttons keep their classes,
-        // so their delegated handlers are untouched — the menu only hides and shows them.
-        '<span class="v2-writewrap">' +
-          '<button type="button" class="ambient-seg v2-writebtn' + (V2.composeOpenFor(L) ? ' on' : '') + '" aria-haspopup="true" aria-expanded="false" ' +
-            'title="Ways to write this part \u2014 compose it in the grid, sing it in, or clear it to draw into">' + (V2.composeOpenFor(L) ? '\u25a6 Composing' : '\u270d Write') + ' \u25be</button>' +
-          '<span class="v2-writemenu" hidden>' +
-          '<button type="button" class="ambient-seg v2-gridbtn" ' +
-          'title="Compose in the grid \u2014 steps, chords and the keyboard. Saved as you go; the part becomes FROZEN and plays exactly what you put there.">' + (V2.composeOpenFor(L) ? '\u25a6 Close grid' : '\u25a6 Compose') + '</button>' +
-          '<button type="button" class="ambient-seg v2-singbtn" ' +
-          'title="Sing it in \u2014 hum, sing or whistle the part (in time with the music, or a free take) and it is written down as notes. You review it before it replaces anything.">\ud83c\udfa4 Sing</button>' +
-          '<button type="button" class="ambient-seg v2-clearpart" title="Empty this part \u2014 it becomes FROZEN with no notes, ready to draw into. The generated settings are kept, so \u2699 Deep brings them back.">\u232b Clear</button>' +
-        '</span></span>' +
-        // ⤢ FULL SIZE — the drawing pinned full-screen, rows a finger can hit (2026-10-04)
-        '<button type="button" class="ambient-seg v2-fullbtn" aria-label="Draw full size" title="Draw full size \u2014 bigger rows, one bar across (two in landscape), only the key\u2019s notes as rows">\u2922 Full-screen editor</button>' +
-        // ONE CONTROL FOR ONE AXIS. Two buttons stated two switches for what
-        // is really four states of the same question — and three of the four
-        // combinations they offered meant the same thing, since drawing and
-        // gathering both imply you are working on the record you are editing.
-        // A <select> is safe HERE: picking commits on `change`, with the list
-        // already closed — the documented trap is a rebuild that replaces the
-        // picker WHILE it is open, which nothing here does.
-        '<label class="v2-modesel">' +
-          // 全 FOUR STATES ARE BACK IN THIS PICKER (2026-09-23 regression fix,
-          // user: "clicking Edit dropdown does nothing"). e44cd61 moved the
-          // 👁 View / ✎ Edit half of the axis to the Parts strip and left this
-          // control DISABLED in View — where it still displayed "✎ Edit", its
-          // first option, so a dead control wore the name of the mode you were
-          // NOT in. Two things were wrong and both are fixed by it being live:
-          //   · A MOVE IS A DELETE PLUS AN ADD, and the strip only renders when
-          //     there IS an arrangement. With no parts there is no strip, so the
-          //     axis had NO door at all and View could never be left.
-          //   · A disabled control gives no reason on a touch device (its title
-          //     needs a hover), so "does nothing" is all it can say.
-          // The strip keeps its button — both write the one global axis and each
-          // refreshes the other (`axisMoved` → strip; the handler → the cards).
-          // Picking a GESTURE turns the axis on for you, which is the rule the
-          // strip's own part <select> already follows ("choosing a part is the
-          // intent to hold it — doing it for them beats a dead control").
-          '<select class="ambient-select v2-modepick"' +
-            ' title="What a tap on the drawing does — and whether this layer follows what plays or holds the part you are editing.">' +
-            [['view', '\ud83d\udc41 View', 'follow playback — a tap selects a bar'],
-             ['edit', '\u270e Edit', 'hold the part you are editing — a tap opens a note'],
-             ['draw', '\u270e Draw', 'hold — a tap on empty space adds a note'],
-             ['multi', '\u2b1a Multi', 'hold — tap notes to gather, then move or resize them together']]
-              .map(([v, lab, why]) => '<option value="' + v + '"' + (vm2 === v ? ' selected' : '') +
-                ' title="' + esc(why) + '">' + lab + '</option>').join('') +
-          '</select></label>' +
-        // ⌫ CLEAR — the same door as the roll's head (this form has no View
-        // picker, so it follows ↻). Same class, same delegated handler.
-        // THE GRID EVERY HAND EDIT SNAPS TO — a note VALUE, so it reads the
-        // same on a 1-bar part and a 5-bar one. It is here rather than in a
-        // sheet because it is a property of EDITING THE PICTURE, not of the
-        // part: nothing about what plays changes when you move it.
-        '<label class="v2-gridsel"><span aria-hidden="true">\u229e</span>' +
-          '<select class="ambient-select v2-gridpick" ' +
-          'title="Grid \u2014 what the drag, the resize, the add and the editor\u2019s Position and Length all snap to.">' +
-          V2.GRIDS.map(([v, lab]) => '<option value="' + v + '"' +
-            (v === V2.gridPerBar(L) ? ' selected' : '') + '>' + lab + '</option>').join('') +
-        '</select></label>' +
-        // ── NAVIGATING THE WINDOW ───────────────────────────────────────
-        // BUTTONS, not a drag: every drag on this canvas already means
-        // something (move a note, resize it, draw one, gather them), so the one
-        // gesture left is a press. The pitch pair PANS, the ± pair RESIZES, and
-        // ◀ ▶ walk a long part — each one press, which is also what makes them
-        // usable on a phone, where a two-finger gesture would fight the page's
-        // own scroll.
-        '<span class="v2-vnav">' +
-          '<button type="button" class="ambient-seg v2-nav" data-nav="up" title="Look higher \u2014 pan the pitch window up">\u25b2</button>' +
-          '<button type="button" class="ambient-seg v2-nav" data-nav="dn" title="Look lower \u2014 pan the pitch window down">\u25bc</button>' +
-          '<button type="button" class="ambient-seg v2-nav" data-nav="grow" title="Taller \u2014 show more pitches at once">\uff0b</button>' +
-          '<button type="button" class="ambient-seg v2-nav" data-nav="shrink" title="Shorter \u2014 show fewer pitches">\u2212</button>' +
-          '<button type="button" class="ambient-seg v2-nav v2-navx" data-nav="left" title="Earlier bars">\u25c0</button>' +
-          '<button type="button" class="ambient-seg v2-nav v2-navx" data-nav="right" title="Later bars">\u25b6</button>' +
-          '<button type="button" class="ambient-seg v2-nav v2-navfit" data-nav="fit" title="Fit the window back to the notes">\u2302</button>' +
-          '<span class="ambient-hint v2-navlab"></span>' +
-        '</span>' +
-      '</div>' +
+    // NO HEAD ROW (2026-10-05, user: "drop the button and remove the fold too"). The
+    // drawing is a thumbnail and IS the door — a tap opens ⤢ Editor at that bar — so
+    // ▾ Hide and ⤢ Editor went; the corner badge below the canvas says it is tappable.
+    return '<div class="v2-partviz">' +
       '<span class="v2-vizlab ambient-hint"></span>' +
       // ⇄ EVEN THE PART, ON THE CARD — reported twice more after the warning
       // landed ("still goes off with 2nd pass", "everything goes wrong on
@@ -11702,6 +11787,9 @@
         'title="Fix the length that is making this drift — the cadence when the chords do not add up to whole bars, otherwise this layer’s own record against the part it plays under.">' +
         '<span class="v2-evenlab">⇄ Fix the length…</span></button>' +
       '<canvas class="v2-vizcv" height="84"></canvas>' +
+      // ⤢ THE DOOR, IN THE PICTURE: a real button (the `.v2-fullbtn` handler), overlaid on
+      // the thumbnail's bottom-right corner; the editor's own CSS hides it in ⤢.
+      '<button type="button" class="ambient-seg v2-fullbtn v2-thumbbadge" aria-label="Open the editor" title="Open the editor \u2014 or tap the drawing where you want to start">\u2922 Edit</button>' +
       '<canvas class="v2-vizph" aria-hidden="true"></canvas>' +
       // THE NOTE EDITOR OPENS HERE — directly under the drawing it edits, so
       // the picture stays visible while you move the note (a dialog over the
@@ -11899,8 +11987,12 @@
   // speed — "UI lag expanding/collapsing layers"). `_ambWithCfgHold` pins one
   // normalized result for this synchronous block (the established idiom — see
   // its own comment in 17-ambient); nested draws reuse the open hold.
+  // …EXCEPT DURING A DRAG: the hold's one normalize RE-SORTS the notes, and a
+  // drag redraws on every move — so mid-drag it would hand the finger's index
+  // to a different note. A drag redraws exactly as it always did.
+  V2.dragging = () => !!DRAG;
   function drawPartViz(card, L, E) {
-    if (E && typeof _ambWithCfgHold === 'function') return _ambWithCfgHold(E, () => drawPartVizRaw(card, L, E));
+    if (E && !DRAG && typeof _ambWithCfgHold === 'function') return _ambWithCfgHold(E, () => drawPartVizRaw(card, L, E));
     return drawPartVizRaw(card, L, E);
   }
   function drawPartVizRaw(card, L, E) {
@@ -12109,7 +12201,7 @@
     const takeHue = (k) => (k | 0) > 0 ? cv._takeHues[((k | 0) - 1) % cv._takeHues.length] : NOTE_EDGE;
     // ⬚ WHAT IS GATHERED, for this draw. Only in multi mode: the set survives a
     // mode change only as far as `setMode`, which drops it, so this is belt.
-    const MGRP = (modeOf(L) === 'multi') ? mselOf(L) : null;
+    const MGRP = (modeOf(L) === 'multi' || FV) ? mselOf(L) : null;   // ⤢ shows a gathering in any mode
     cv._vmOther = null;
     try {
       if (playing && vizMode(L) === 'view' && Number.isFinite(L.partFor) &&
@@ -12176,7 +12268,7 @@
         if (!n || !(n.durMs > 0)) return n;
         try {
           const ms = window._ambNoteChoke('v2:' + (L.id | 0), cs + n.at, n.durMs,
-            Object.assign({}, n.antic > 0 ? { _chokeLead: n.antic } : {}, n.line ? { _chokeSkip: 1 } : {}));
+            Object.assign({}, n.antic > 0 ? { _chokeLead: n.antic } : {}, (n.line || n.hl) ? { _chokeSkip: 1 } : {}));
           // COPY THE NOTE, OVERRIDE THE ONE FIELD. Rebuilding it from four
           // named fields silently DROPPED every per-note override the emitter
           // had put on it — `vel`, ⑁ Length shape's `shw`, `ghost`, `antic`,
@@ -12217,7 +12309,9 @@
     const cAt = freeClk ? 0 : withPvClocks(() => chordAnchor(E, cfg, L, playing, cs));
     const cmarks = freeClk ? null : withPvClocks(() => chordMarks(E, cfg, cAt, cyc));
     const CHT = cmarks ? 13 : 0;          // the chord band
-    const TOP = 15 + CHT;                 // the ruler gutter
+    // ⤢ a REAL bar ruler in the editor (2026-10-05, user: "we also need bars ruler"):
+    // taller, bar numbers you can read, beats ticked and named — see the ruler below
+    const TOP = (FV ? 30 : 15) + CHT;     // the ruler gutter
     const GUT = FV ? 52 : (phone ? 24 : 28);   // the keyboard gutter — wide enough for "C4" (wider full size)
     let loM = 60, hiM = 71;
     if (mids.length) {
@@ -12340,7 +12434,8 @@
     // was unreachable, and there was no way to give a dense part more room.
     // Deliberately NOT the interaction-driven resize this file retired: an
     // explicit button is an act, not a side effect of touching a note.
-    const nv = vnavOf(L);
+    // (the card is a THUMBNAIL — its window is always the fitted one; only ⤢ pans/zooms)
+    const nv = FV ? vnavOf(L) : { dy: 0, rows: 0, bar0: 0 };
     if (nv.rows) {
       const up = Math.ceil(nv.rows / 2), dn = nv.rows - up;
       hiM += up; loM -= dn;
@@ -12369,7 +12464,10 @@
       const rowPx = clamp(FV.rowPx || (window.innerWidth > window.innerHeight ? 32 : 42), 14, 80);
       const want = Math.max(4, Math.floor((h - TOP) / rowPx));
       const used = new Set(mids.map(x => Math.round(x)).filter(x => x >= 0 && x <= 127));
-      const keyOnly = !!(FV.keyRows && SPC);
+      // ◈ KEY rows SHADE, they no longer OMIT (2026-10-05, user: "i don't like in-key rows
+      // actually omitting rows, they should still show just different color") — every
+      // semitone keeps its row; the out-of-key ones are drawn darker below.
+      const keyOnly = false;
       const U = [];
       for (let m = 127; m >= 0; m--) {
         if ((m >= 21 && m <= 108 && (!keyOnly || !!SPC[((m % 12) + 12) % 12])) || used.has(m)) U.push(m);
@@ -12431,8 +12529,7 @@
     // answer here is not a scrollbar — the canvas keeps its width and the
     // drawing pans INSIDE it, so the keyboard gutter stays pinned where a
     // scrolled canvas would have carried it off screen.
-    const VB = free ? barsF : (FV ? clamp(FV.vb || 1, Math.min(0.25, barsF), barsF)
-      : Math.min(barsF, Math.max(1, viewBarsMax())));
+    const VB = (free || !FV) ? barsF : clamp(FV.vb || 1, Math.min(0.25, barsF), barsF);   // the card's thumbnail shows the whole part
     const B0 = free ? 0 : clamp(nv.bar0 || 0, 0, Math.max(0, barsF - VB));
     if (FV) { try { fullThumbs(host, cv, B0, VB, barsF, TOP, GUT); } catch (e) {} }
     const VSC = barsF > 0 ? (VB / barsF) : 1;            // cycle fraction per screen
@@ -12450,57 +12547,103 @@
     cv._plotGeo = { x0: GUT, w: PLOT, top: TOP, h: h, cyc: cyc, playing: playing,
                     vsc: VSC, f0: F0, barsF: barsF, vbars: VB, bar0: B0, cs: cs };
     // ⤢ the header's live faces — here, which EVERY draw reaches (the tail has early returns)
-    if (FV) { try { fullBreakSync(L); } catch (e) {} try { fullKeySync(E, L, cv); } catch (e) {} try { fullMap(L, cv); } catch (e) {} }
+    // ▦ the WRITE CURSOR (teal) — where ✎ Step's next note lands
+    if (FV && FV.comp) {
+      try {
+        const xc = Math.round(xF(FV.cur)) + 0.5;
+        if (xc >= GUT - 1 && xc <= w + 1) {
+          g.save(); g.fillStyle = '#7ef0dc'; g.globalAlpha = 0.95;
+          g.fillRect(xc - 1.5, 0, 3, h);
+          g.beginPath(); g.moveTo(xc - 7, 0); g.lineTo(xc + 7, 0); g.lineTo(xc, 9); g.closePath(); g.fill();
+          g.restore();
+        }
+      } catch (e) {}
+    }
+    if (FV) { try { fullHistCheck(L); fullHistSync(); } catch (e) {} try { fullSelSync(L); } catch (e) {} try { fullBreakSync(L); } catch (e) {} try { fullKeySync(E, L, cv, cfg); } catch (e) {} try { fullMap(L, cv); } catch (e) {} }
     // the keys, and their lines across the plot — the black rows are what make
     // a piano roll readable at a glance
     // WHITE KEYS ARE THE GROUND and the black ones sit ON them, narrower —
     // which is what makes a column of bands read as a keyboard rather than as
     // a barcode. Separators only between white keys, because a real one has no
     // line where a black key sits between them.
-    g.fillStyle = '#e8e4f2';
+    g.fillStyle = FV ? '#f4f2f8' : '#e8e4f2';
     g.fillRect(0, TOP, GUT, h - TOP);
-    for (const m of (_rowList || Array.from({ length: hiM - loM + 1 }, (_, i) => loM + i))) {
+    const _rowsK = _rowList || Array.from({ length: hiM - loM + 1 }, (_, i) => loM + i);
+    for (let ri = 0; ri < _rowsK.length; ri++) {
+      const m = _rowsK[ri];
       const y = yOf(m), pc = ((m % 12) + 12) % 12, blk = !!PC_BLACK[pc];
       const inSc = SPC ? !!SPC[pc] : null;
-      // IT HAS TO BE A REAL SIGNAL IN BOTH DIRECTIONS. A wash over a near-white
-      // ground stays near-white however much of it you add (the first cut was
-      // a 0.22 purple over #e8e4f2 and measured 16 points away from the plain
-      // key — reported, correctly, as barely visible). So the in-scale key is
-      // TINTED and the out-of-scale one is GREYED, which is what puts a large
-      // delta between them rather than between one of them and the ground.
-      // FOUR key colours plus the two plain ones, all distinct, because with
-      // no key at all nothing is in or out and both must still read as keys.
-      if (FV && inSc === false) {
-        // ⤢ an OUT-OF-KEY row is AMBER, key and band — it is there because a
-        // note plays it, and it should read as the exception it is
-        g.fillStyle = blk ? '#8a6420' : '#e9c27f';
-        g.fillRect(0, y + 0.5, blk ? Math.round(GUT * 0.62) : GUT, Math.max(1, rowH - 1));
-        g.fillStyle = 'rgba(245,176,74,0.07)';
-        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
-      } else if (blk) {
-        // A BLACK KEY IS LIFTED, never washed — it is already near the ground
-        // colour, so a tint on it is invisible.
-        g.fillStyle = inSc === true ? '#5b4a86' : inSc === false ? '#0e0e15' : '#15151f';
-        g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
-        // …and its row is tinted across the plot: the black rows are what let
-        // you count intervals off the picture
-        g.fillStyle = 'rgba(159,122,234,0.055)';
-        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
-      } else if (inSc !== null) {
-        g.fillStyle = inSc ? '#c4a9f0' : '#8e8b9e';
-        g.fillRect(0, y + 0.5, GUT, Math.max(1, rowH - 1));
-      }
-      if (inSc === false && !FV) {
-        // …and the row it owns is knocked back across the plot, so a note that
-        // sits outside the key reads as outside it in the picture too.
-        g.fillStyle = 'rgba(8,8,14,0.38)';
-        g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
-      }
-      if (!blk && !PC_BLACK[((m + 1) % 12 + 12) % 12]) {
-        // a white key with a white key above it (B|C and E|F) — the only
-        // places a keyboard shows a line
-        g.strokeStyle = 'rgba(20,20,35,0.45)'; g.lineWidth = 1;
-        g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
+      // ⤢ AN ACTUAL PIANO (2026-10-05, user: "the roll ruler is too confusing, it should
+      // look like an actual piano"). White keys white, black keys black and shorter, a line
+      // between every two white keys — no colour fills. Scale membership is not the key's
+      // colour any more: an OUT-OF-KEY row (there because a note plays it) gets a thin amber
+      // edge on the key and its amber band across the plot.
+      if (FV) {
+        if (blk) {
+          g.fillStyle = '#17161f';
+          g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
+          g.fillStyle = 'rgba(159,122,234,0.055)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+        }
+        if (inSc === false && FV.keyRows) {
+          // ◈ OUT OF KEY: the key greyed in its own shape and its row darkened across the plot
+          g.fillStyle = blk ? 'rgba(90,90,110,0.55)' : 'rgba(40,38,60,0.38)';
+          g.fillRect(0, y + 0.5, blk ? Math.round(GUT * 0.62) : GUT, Math.max(1, rowH - 1));
+          g.fillStyle = 'rgba(4,4,10,0.42)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+          // …and amber where a note actually plays it
+          if (mids.some((x) => Math.round(x) === m)) { g.fillStyle = '#e0a53f'; g.fillRect(GUT - 5, y + 1, 5, Math.max(1, rowH - 2)); }
+        }
+        // …and the IN-key rows lifted a touch, so the two read apart on a dark plot
+        if (inSc === true && FV.keyRows) { g.fillStyle = 'rgba(167,139,250,0.08)'; g.fillRect(GUT, y, PLOT, Math.max(1, rowH)); }
+        // a line between two white keys — the next row UP in the list, so in-key rows
+        // (which skip pitches) still read as separate keys
+        const up = _rowsK[ri + 1];
+        if (!blk && up != null && !PC_BLACK[((up % 12) + 12) % 12]) {
+          g.strokeStyle = 'rgba(20,20,35,0.35)'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
+        }
+      } else {
+        // IT HAS TO BE A REAL SIGNAL IN BOTH DIRECTIONS. A wash over a near-white
+        // ground stays near-white however much of it you add (the first cut was
+        // a 0.22 purple over #e8e4f2 and measured 16 points away from the plain
+        // key — reported, correctly, as barely visible). So the in-scale key is
+        // TINTED and the out-of-scale one is GREYED, which is what puts a large
+        // delta between them rather than between one of them and the ground.
+        // FOUR key colours plus the two plain ones, all distinct, because with
+        // no key at all nothing is in or out and both must still read as keys.
+        if (FV && inSc === false) {
+          // ⤢ an OUT-OF-KEY row is AMBER, key and band — it is there because a
+          // note plays it, and it should read as the exception it is
+          g.fillStyle = blk ? '#8a6420' : '#e9c27f';
+          g.fillRect(0, y + 0.5, blk ? Math.round(GUT * 0.62) : GUT, Math.max(1, rowH - 1));
+          g.fillStyle = 'rgba(245,176,74,0.07)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+        } else if (blk) {
+          // A BLACK KEY IS LIFTED, never washed — it is already near the ground
+          // colour, so a tint on it is invisible.
+          g.fillStyle = inSc === true ? '#5b4a86' : inSc === false ? '#0e0e15' : '#15151f';
+          g.fillRect(0, y + 0.5, Math.round(GUT * 0.62), Math.max(1, rowH - 1));
+          // …and its row is tinted across the plot: the black rows are what let
+          // you count intervals off the picture
+          g.fillStyle = 'rgba(159,122,234,0.055)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+        } else if (inSc !== null) {
+          g.fillStyle = inSc ? '#c4a9f0' : '#8e8b9e';
+          g.fillRect(0, y + 0.5, GUT, Math.max(1, rowH - 1));
+        }
+        if (inSc === false && !FV) {
+          // …and the row it owns is knocked back across the plot, so a note that
+          // sits outside the key reads as outside it in the picture too.
+          g.fillStyle = 'rgba(8,8,14,0.38)';
+          g.fillRect(GUT, y, PLOT, Math.max(1, rowH));
+        }
+        if (!blk && !PC_BLACK[((m + 1) % 12 + 12) % 12]) {
+          // a white key with a white key above it (B|C and E|F) — the only
+          // places a keyboard shows a line
+          g.strokeStyle = 'rgba(20,20,35,0.45)'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(0, Math.round(y) + 0.5); g.lineTo(GUT, Math.round(y) + 0.5); g.stroke();
+        }
       }
       // A LINE PER SEMITONE, ACROSS THE PLOT. The black rows were the only
       // horizontal reference, so between two of them a note's row was a guess
@@ -12513,10 +12656,12 @@
       g.beginPath();
       g.moveTo(GUT, Math.round(y) + 0.5); g.lineTo(w, Math.round(y) + 0.5); g.stroke();
       if (selM != null && m === selM) {
+        // (⤢ lights the KEY in its own shape — a black key stays short)
+        const kw = (FV && blk) ? Math.round(GUT * 0.62) : GUT;
         g.fillStyle = '#7b4fd6';
-        g.fillRect(0, y + 0.5, GUT, Math.max(1, rowH - 1));
+        g.fillRect(0, y + 0.5, kw, Math.max(1, rowH - 1));
         g.strokeStyle = '#fff'; g.lineWidth = 1;
-        g.strokeRect(0.5, y + 1, GUT - 1, Math.max(1, rowH - 2));
+        g.strokeRect(0.5, y + 1, kw - 1, Math.max(1, rowH - 2));
         // …AND THE ROW ITSELF, all the way across. The selected note's own
         // marker used to be a box inflated 4px above and below it — most of a
         // row at this size — so against a plot with no horizontal lines it
@@ -12553,7 +12698,7 @@
     // actually used where you tap.
     if (FV && FV.chord && CHORDM.sub === 'inv') {
       let pcsL = null;
-      try { pcsL = fullInvPcs(E, L, (cs || 0) + F0 * cyc); } catch (e) { pcsL = null; }
+      try { pcsL = fullInvPcs(E, L, (cs || 0) + F0 * cyc, cfg); } catch (e) { pcsL = null; }
       if (pcsL) {
         for (const m of (_rowList || Array.from({ length: hiM - loM + 1 }, (_, i) => loM + i))) {
           const y = yOf(m), lit = pcsL.indexOf(((m % 12) + 12) % 12) >= 0;
@@ -12628,10 +12773,40 @@
         if (x > w) break;
         g.strokeStyle = 'rgba(159,122,234,0.30)'; g.lineWidth = 1;
         g.beginPath(); g.moveTo(x, CHT + 2); g.lineTo(x, h); g.stroke();
-        if (b3 < nbars) {
+        if (b3 < nbars && !FV) {
           g.fillStyle = '#7a7a9c';
           g.fillText(String(b3 + 1), Math.min(w - 8, x + 3), CHT + 10);
         }
+      }
+      // ⤢ THE EDITOR'S BAR RULER: a strip of its own, the bar number big at each bar,
+      // every beat ticked and named ("2.3") when there is room, and the bar you are
+      // in pinned at the left edge when its own line has scrolled away.
+      if (FV) {
+        g.save();
+        g.fillStyle = '#141428'; g.fillRect(GUT, CHT, w - GUT, TOP - CHT);
+        const pxBar = (PLOT / Math.max(1e-6, barsF)) / VSC, BPB = 4, pxBeat = pxBar / BPB;
+        g.textBaseline = 'alphabetic';
+        for (let b3 = 0; b3 < nbars; b3++) {
+          for (let k = 0; k < BPB; k++) {
+            const fr = (b3 + k / BPB) / barsF; if (fr >= 1 - 1e-9) break;
+            const x = Math.round(xF(fr)) + 0.5;
+            if (x < GUT - 1) continue; if (x > w) break;
+            g.strokeStyle = k ? 'rgba(200,190,240,0.35)' : 'rgba(200,190,240,0.75)'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(x, k ? TOP - 7 : CHT); g.lineTo(x, TOP); g.stroke();
+            if (!k) { g.fillStyle = '#ece8f8'; g.font = '700 13px -apple-system, Segoe UI, sans-serif'; g.fillText(String(b3 + 1), x + 4, CHT + 17); }
+            else if (pxBeat >= 34) { g.fillStyle = '#8d8ab0'; g.font = '600 10px -apple-system, Segoe UI, sans-serif'; g.fillText((b3 + 1) + '.' + (k + 1), x + 3, TOP - 9); }
+          }
+        }
+        // the bar under the left edge, when its own number has scrolled off
+        const bIn = Math.floor(F0 * barsF + 1e-6);
+        if (xF(bIn / barsF) < GUT - 1 && bIn < nbars) {
+          const lab = String(bIn + 1);
+          g.font = '700 13px -apple-system, Segoe UI, sans-serif';
+          const tw = g.measureText(lab).width;
+          g.fillStyle = '#141428'; g.fillRect(GUT, CHT + 2, tw + 10, 18);
+          g.fillStyle = '#c9c5e3'; g.fillText(lab, GUT + 4, CHT + 17);
+        }
+        g.restore();
       }
       // the gutter's floor, so the numbers read as a ruler rather than as
       // labels floating over the notes
@@ -13042,6 +13217,12 @@
       }
       const inSelCh = !!(selChK && chK === selChK);
       if (inSelCh) { g.fillStyle = chColor(chK); g.strokeStyle = '#fff'; g.lineWidth = 2.5; }
+      // …and the note you TOUCHED (what ✂ Break from chord would free) is marked
+      // apart from the rest of the chord
+      if (inSelCh && FV && FV.tapNote && Number.isFinite(n.nidx)) {
+        const nn = L.part.notes[n.nidx];
+        if (nn && (nn.midi | 0) === FV.tapNote.midi && Math.abs(nn.t - FV.tapNote.t) < 1e-6) { g.lineWidth = 4.5; g.strokeStyle = '#ffe9a8'; }
+      }
       // RIGHT-ANGLE CORNERS, deliberately (2026-09-09, user: "so it's easier
       // to see visually how they line up on the grid"): a rounded end pulls
       // the visible edge inboard of the note's true start, so a note ON a
@@ -13072,6 +13253,30 @@
       if (la < 1 || ta < 1) g.globalAlpha = Math.max(0.4, la * ta);   // …and a previewed cycle is a sounding one
       g.fill(); g.stroke();
       g.globalAlpha = 1;
+      // ▦ RATCHET / CHANCE MARKS — a ratchet shows its hits as ticks and ×N; a
+      // chance note is faded, dashed, with its odds (they read without opening it)
+      try {
+        const sN = Number.isFinite(n.nidx) && L.part && L.part.notes ? L.part.notes[n.nidx] : null;
+        if (sN && (sN.rat > 1 || Number.isFinite(sN.chance))) {
+          g.save();
+          if (sN.rat > 1 && ww > 8) {
+            g.fillStyle = 'rgba(255,255,255,0.8)';
+            for (let r = 1; r < sN.rat; r++) g.fillRect(Math.round(xv + ww * r / sN.rat) - 0.5, y + 2, 1.5, Math.max(1, nh - 4));
+          }
+          if (Number.isFinite(sN.chance)) {
+            g.fillStyle = 'rgba(11,11,24,' + (0.55 * (1 - sN.chance / 100)).toFixed(3) + ')'; g.fillRect(xv, y, ww, nh);
+            g.setLineDash([3, 2]); g.strokeStyle = '#c9c4ee'; g.lineWidth = 1; g.strokeRect(xv + 0.5, y + 0.5, ww - 1, nh - 1);
+          }
+          const tag = (sN.rat > 1 ? '\u00d7' + sN.rat : '') + (Number.isFinite(sN.chance) ? (sN.rat > 1 ? ' ' : '') + sN.chance + '%' : '');
+          if (FV && tag && nh >= 10) {
+            g.setLineDash([]); g.font = '800 9px -apple-system, Segoe UI, sans-serif';
+            const tw = g.measureText(tag).width;
+            g.fillStyle = '#f5c27a'; g.fillRect(xv + ww - tw - 5, y - 9, tw + 4, 10);
+            g.fillStyle = '#1b1030'; g.textBaseline = 'bottom'; g.fillText(tag, xv + ww - tw - 3, y);
+          }
+          g.restore();
+        }
+      } catch (e) {}
       if (selKeys && willGo && !isSel && !isGrp) {
         g.strokeStyle = NOTE_EDGE; g.lineWidth = 1;
       }
@@ -13302,7 +13507,7 @@
         // canvas can carry a tooltip, and the chord band looks like a label
         // until something says it is a handle.
         (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + tapTxt(L, ' — tap a bar' + (cmarks ? ' or a chord' : '') + ' to change which')
-                            : tapTxt(L, ' · tap a note to edit · a bar' + (cmarks ? ' or chord' : '') + ' to re-roll'))
+                            : tapTxt(L, ' · tap the drawing to edit it · the ruler picks a bar' + (cmarks ? ' or chord' : '') + ' to re-roll'))
               : ' · take ' + (drawnTake + 1) +
                 // …the one SOUNDING, when the clock has moved past the pin —
                 // otherwise a moving picture beside a fixed number reads as
@@ -13323,21 +13528,41 @@
     try {
       const byCh = {};
       (cv._hits || []).forEach((hb) => { const k = chOfNote(L, hb.i); if (!k) return;
-        const b = byCh[k] || (byCh[k] = { x: hb.x, y0: hb.y, y1: hb.y + hb.h, n: 0 });
-        b.x = Math.min(b.x, hb.x); b.y0 = Math.min(b.y0, hb.y); b.y1 = Math.max(b.y1, hb.y + hb.h); b.n++; });
-      Object.keys(byCh).forEach((k) => { const b = byCh[k]; if (b.n < 2) return;
-        g.fillStyle = chColor(k | 0); g.fillRect(Math.round(b.x) - 1, b.y0, 3, b.y1 - b.y0);
+        const b = byCh[k] || (byCh[k] = { x: hb.x, x1: hb.x + hb.w, y0: hb.y, y1: hb.y + hb.h, n: 0 });
+        b.x = Math.min(b.x, hb.x); b.x1 = Math.max(b.x1, hb.x + hb.w); b.y0 = Math.min(b.y0, hb.y); b.y1 = Math.max(b.y1, hb.y + hb.h); b.n++; });
+      Object.keys(byCh).forEach((k) => { const b = byCh[k];
+        const ciG = CH_INFO && CH_INFO.get(k | 0);
+        if (ciG && ciG.group) {
+          // ⧉ A GROUP is outlined, dashed — its notes need not share an onset,
+          // so a chord's vertical bar would point at the wrong moment
+          g.save(); g.strokeStyle = GROUP_COL; g.lineWidth = 1.5; g.setLineDash([5, 4]);
+          g.strokeRect(Math.round(b.x) - 4.5, b.y0 - 4.5, (b.x1 - b.x) + 9, (b.y1 - b.y0) + 9);
+          g.restore();
+        } else {
+          if (b.n < 2) return;
+          g.fillStyle = chColor(k | 0); g.fillRect(Math.round(b.x) - 1, b.y0, 3, b.y1 - b.y0);
+        }
         // …and NAMED there: its numeral in the key (or its name outside it), /bass when inverted
         const ci = CH_INFO && CH_INFO.get(k | 0);
         if (ci && ci.label && FV) {
           g.save(); g.font = '700 11px -apple-system, Segoe UI, sans-serif'; g.textBaseline = 'bottom';
-          const ty = (b.y0 - 3 > TOP + 11) ? b.y0 - 3 : b.y1 + 13;
+          const pad = ci.group ? 6 : 0;
+          const ty = (b.y0 - 3 - pad > TOP + 11) ? b.y0 - 3 - pad : b.y1 + 13 + pad;
           const tw = g.measureText(ci.label).width;
           g.fillStyle = 'rgba(10,10,20,0.85)'; g.fillRect(Math.round(b.x) - 1, ty - 12, tw + 6, 13);
           g.fillStyle = ci.col; g.fillText(ci.label, Math.round(b.x) + 2, ty);
           g.restore();
         } });
     } catch (e) {}
+    // …and the write cursor once more, OVER the notes (the first pass is for a
+    // drawing that returns early with no notes)
+    if (FV && FV.comp) {
+      try {
+        const xc2 = Math.round(xF(FV.cur)) + 0.5;
+        if (xc2 >= GUT - 1 && xc2 <= w + 1) { g.save(); g.fillStyle = '#7ef0dc'; g.fillRect(xc2 - 1.5, 0, 3, h);
+          g.beginPath(); g.moveTo(xc2 - 7, 0); g.lineTo(xc2 + 7, 0); g.lineTo(xc2, 9); g.closePath(); g.fill(); g.restore(); }
+      } catch (e) {}
+    }
     try { vizChrome(card, L, E); } catch (e) {}
   }
   // The viz block's live chrome — the note editor, and what the lock button
@@ -15045,13 +15270,26 @@
     if (s <= 0) return '0';
     const bars = Math.floor(s / 16), rem = Math.round((s - bars * 16) * 4);   // remainder in 64ths
     let r = '';
-    if (rem) { let n = rem, d = 64; const g = (a, b) => (b ? g(b, a % b) : a); const k = g(n, d); n /= k; d /= k; r = n + '/' + d; }
+    // A NOTE VALUE, said as one: "¼ note", "⅜ note" — a bare "1/2" next to "bar"
+    // read as half a BAR (2026-10-05, "doesn't seem to be making any sense")
+    const GL = { '1/2': '½', '1/4': '¼', '3/4': '¾', '1/8': '⅛', '3/8': '⅜', '5/8': '⅝', '7/8': '⅞' };
+    if (rem) { let n = rem, d = 64; const g = (a, b) => (b ? g(b, a % b) : a); const k = g(n, d); n /= k; d /= k; r = (GL[n + '/' + d] || (n + '/' + d)) + ' note'; }
     if (!bars) return r;
     return bars + ' bar' + (bars === 1 ? '' : 's') + (r ? ' + ' + r : '');
   };
   function dragTip(ev, L, n, off) {
     if (!L || !n) return;
-    const bars = Math.max(0.25, +L.part.bars || 1);
+    // THE BARS THE PICTURE IS DRAWN IN (`_barsGeo.barsF`), not the record's `part.bars`:
+    // a per-part layer draws its part's pass, and with the two disagreeing a note
+    // drawn one bar long read "size 1 bar + 1/2" (2026-10-05, a 3-bar record under a
+    // 2-bar part). The readout must name what you see.
+    let bars = Math.max(0.25, +L.part.bars || 1);
+    try {
+      const cvB = (FULL && FULL.id === (L.id | 0)) ? document.querySelector('.v2-full .v2-vizcv')
+        : document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"] .v2-vizcv');
+      const bf = cvB && cvB._barsGeo && cvB._barsGeo.barsF;
+      if (bf > 0) bars = bf;
+    } catch (e) {}
     const midi = (n.midi | 0) + (Math.round(off) || 0);
     const name = NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
     const pos = Math.max(0, n.t) * bars;                    // in bars
@@ -15165,9 +15403,11 @@
     return bassPc;
   }
   // { col, label, deg } for chord `k` — its degree in the key at its onset
+  const GROUP_COL = '#e2e8f0';
   function chInfo(E, L, cfg, k, cs0, cyc0) {
     const ix = chIdxs(L, k); if (!ix.length) return { col: CH_OUT, label: '', deg: -1 };
     const ns = ix.map((i) => L.part.notes[i]);
+    if (ns.some((n) => n && n.gp)) return { col: GROUP_COL, label: '\u29c9 ' + ns.length, deg: -1, group: true };
     const bass = ns.reduce((a, n) => (n.midi < a.midi ? n : a), ns[0]);
     const pcsU = []; ns.slice().sort((a, b) => a.midi - b.midi).forEach((n) => { const c = _pc(n.midi); if (pcsU.indexOf(c) < 0) pcsU.push(c); });
     const root = Number.isFinite(ns[0].cr) ? ns[0].cr : chRootOf(pcsU, _pc(bass.midi));
@@ -15248,8 +15488,8 @@
   // ⇅ THE CHORD AN INVERSION IS OF, at absolute time `at`, as stacked pitch
   // classes (root first) — the ONE answer the tap check, the lit rows and the
   // placement all read, so what is lit is exactly what a tap will accept.
-  function fullInvPcs(E, L, at) {
-    const cfg = E.getCfg();
+  function fullInvPcs(E, L, at, cfg0) {
+    const cfg = cfg0 || E.getCfg();      // the draw passes its own — no normalize mid-drag
     const key = V2.keyScaleAt ? V2.keyScaleAt(E, cfg, at) : null;
     const N = clamp(CHORDM.size | 0, 2, 7);
     const IONIAN = [0, 2, 4, 5, 7, 9, 11];
@@ -15349,15 +15589,327 @@
     }
   }
   // the key at the window's left edge — the second writer for `.v2-fullkeyrd`
-  function fullKeySync(E, L, cv) {
+  // `cfg0` = the DRAW'S cfg. Never a fresh `getCfg()` here: it runs inside every
+  // redraw, a drag redraws on each move, and a normalize RE-SORTS the notes —
+  // the index under the finger then names a different note (a dragged E carried
+  // a chord's G along with it).
+  function fullKeySync(E, L, cv, cfg0) {
     const el = document.querySelector('.v2-full .v2-fullkeyrd'); if (!el) return;
     const pl = cv && cv._plotGeo; let lab = null;
-    try { lab = V2.keyLabelAt(E, E.getCfg(), ((pl && pl.cs) || 0) + ((pl && pl.f0) || 0) * ((pl && pl.cyc) || 0)); } catch (e) {}
+    try { lab = V2.keyLabelAt(E, cfg0 || E.getCfg(), ((pl && pl.cs) || 0) + ((pl && pl.f0) || 0) * ((pl && pl.cyc) || 0)); } catch (e) {}
     const txt = lab ? ('Key: ' + lab) : 'No key \u2014 chromatic';
     if (el.textContent !== txt) el.textContent = txt;
     el.classList.toggle('none', !lab);
   }
   // ◐ THE LEGEND — every colour and mark on the drawing, in THIS key's chords
+  // ── THE SELECTION BAR (2026-10-05, mock "A · selection bar") ───────────
+  // Whatever is selected — the tapped note, a ⬚ gathering, a chord or group —
+  // the foot of ⤢ swaps the map for actions on it. Same height as the map, so
+  // the drawing never moves when it appears.
+  function fullSelBarHtml() {
+    const b = (cls, lbl, title) => '<button type="button" class="v2-fsb ' + cls + '" title="' + title + '">' + lbl + '</button>';
+    return '<div class="v2-fullsel" role="toolbar" aria-label="Selected notes">' +
+      '<div class="v2-fslab"></div>' +
+      '<div class="v2-fsrow">' +
+        b('v2-fs-up', '\u25b2 Up', 'Up one scale step (hold: a half-step)') +
+        b('v2-fs-dn', '\u25bc Down', 'Down one scale step (hold: a half-step)') +
+        b('v2-fs-mv', '\u21c4 Move', 'Move earlier or later') +
+        b('v2-fs-sz', 'Size \u25be', 'Set the length, or quantize') + '</div>' +
+      '<div class="v2-fsrow">' +
+        b('v2-fs-dup', '\u29c9 Dup', 'A copy right after the selection') +
+        b('v2-fs-tf', 'Transform \u25be', 'Reverse, shuffle, rotate, invert, arpeggiate, quantize, repeat') +
+        b('v2-fs-nt', 'Note \u25be', 'Level, envelope, glide of the selected notes') +
+        b('v2-fs-del', '\ud83d\uddd1', 'Delete the selected notes') + '</div></div>';
+  }
+  // the SELECTED notes, as indices: the gathering, else the open note (its chord whole)
+  function fullSelIdx(L) {
+    if (!L || !L.part || !Array.isArray(L.part.notes)) return [];
+    const ms = mselOf(L);
+    if (ms && ms.size) return [...ms].filter((i) => L.part.notes[i]);
+    if (NE && NE.id === (L.id | 0) && L.part.notes[NE.idx]) {
+      const k = chOfNote(L, NE.idx);
+      return k ? chIdxs(L, k) : [NE.idx];
+    }
+    return [];
+  }
+  // shown / hidden on every draw (its second writer), at the map's own height
+  function fullSelSync(L) {
+    const host = document.querySelector('.v2-partviz.v2-full'); if (!host) return;
+    const ix = fullSelIdx(L), on = ix.length > 0;
+    host.classList.toggle('v2-hassel', on);
+    const lab = host.querySelector('.v2-fslab'); if (!lab) return;
+    if (!on) return;
+    const k = new Set(ix.map((i) => chOfNote(L, i)));
+    const one = ix.length === 1 ? L.part.notes[ix[0]] : null;
+    let txt;
+    if (k.size === 1 && [...k][0] && chIdxs(L, [...k][0]).length === ix.length) {
+      const ci = CH_INFO && CH_INFO.get([...k][0] | 0);
+      txt = (ci && ci.group ? '\u29c9 group' : '\u266b ' + ((ci && ci.label) || 'chord')) + ' \u2014 ' + ix.length + ' notes selected';
+    } else txt = one ? (noteName((one.midi | 0) + (L.part.transpose | 0)) + ' selected') : (ix.length + ' notes selected');
+    if (lab.textContent !== txt) lab.textContent = txt;
+  }
+  // EDIT THE SELECTION and keep it selected: the notes are mutated in place,
+  // `fn` may return NEW notes (added to the part and selected instead); after the
+  // normalize re-sorts, the selection is re-found by what each note now IS.
+  function fullSelEdit(E, fn, msg) {
+    const L = _fullLayer(E); if (!L) return;
+    const ix = fullSelIdx(L);
+    if (!ix.length) { fullSay('Select notes first \u2014 tap one, or gather several in \u2b1a Select.'); return; }
+    if (L.part.kind !== 'recorded') { if (!captureShown(E, L, null, 'draw')) return; }
+    // INSIDE A HOLD: an edit may ask the key (`stepPitch`), and every such ask is
+    // a `getCfg()` — a normalize that REPLACES the note objects mid-edit, so the
+    // edit lands on orphans and the selection is lost (the documented trap)
+    let keys = [];
+    const run = () => {
+      const refs = fullSelIdx(L).map((i) => L.part.notes[i]);
+      let out = fn(refs, L);
+      if (Array.isArray(out) && out.length) { out.forEach((n) => L.part.notes.push(n)); }
+      else out = refs;
+      keys = out.map((n) => ({ t: n.t, midi: n.midi | 0, dur: n.dur }));
+    };
+    if (typeof _ambWithCfgHold === 'function') _ambWithCfgHold(E, run); else run();
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+    const nx = new Set();
+    keys.forEach((k0) => { const j = dragRefind(L, -1, k0); if (j >= 0) nx.add(j); });
+    mselSet(L, nx.size ? nx : null); NE = null;
+    if (msg) fullSay(msg);
+    const card = _fullCard(); if (card) { try { drawPartViz(card, L, E); } catch (e) {} }
+  }
+  // one scale step (in the area key) or a half-step
+  function stepPitch(E, L, n, dir, half) {
+    if (half) return clamp((n.midi | 0) + dir, 0, 127);
+    let key = null; try { key = V2.keyScaleAt(E, E.getCfg(), 0); } catch (e) {}
+    if (!key) return clamp((n.midi | 0) + dir, 0, 127);
+    const inK = (m) => key.ivs.some((iv) => _pc(key.root + iv) === _pc(m + (L.part.transpose | 0)));
+    let m = (n.midi | 0) + dir;
+    for (let g = 0; g < 12 && !inK(m); g++) m += dir;
+    return clamp(m, 0, 127);
+  }
+  const selSpan = (refs) => { let a = 1, z = 0; refs.forEach((n) => { a = Math.min(a, n.t); z = Math.max(z, n.t + n.dur); }); return { a: a, z: z }; };
+  const gridCell = (L) => 1 / Math.max(1, V2.gridCells(L));
+  // a small SHEET over the drawing (the legend's chrome), one at a time
+  function fullSheet(title, html) {
+    const host = document.querySelector('.v2-partviz.v2-full'); if (!host) return null;
+    host.querySelectorAll(':scope > .v2-fullsheet').forEach((x) => x.remove());
+    const d = document.createElement('div');
+    d.className = 'v2-fulllegend v2-fullsheet'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', title);
+    d.innerHTML = '<div class="v2-lghead"><b>' + title + '</b><span class="v2-fshsel"></span>' +
+      '<button type="button" class="v2-fullib v2-fshclose" aria-label="Close">\u2715</button></div>' + html;
+    host.appendChild(d);
+    return d;
+  }
+  const sheetItem = (act, lbl, sub) => '<button type="button" class="v2-fsitem" data-act="' + act + '"><span>' + lbl + '</span><i>' + (sub || '') + '</i></button>';
+  function fullSelAct(E, act, opt) {
+    const L = _fullLayer(E); if (!L) return;
+    const cell = gridCell(L);
+    switch (act) {
+      case 'up': case 'dn': {
+        const d = act === 'up' ? 1 : -1, half = !!(opt && opt.half);
+        fullSelEdit(E, (refs) => { refs.forEach((n) => { n.midi = stepPitch(E, L, n, d, half); n.hx = 1; }); }, (d > 0 ? '\u25b2 Up ' : '\u25bc Down ') + (half ? 'a half-step' : 'a scale step'));
+        return;
+      }
+      case 'mvl': case 'mvr': case 'mvbl': case 'mvbr': {
+        const bar = 1 / Math.max(0.0625, L.part.bars || 1);
+        const d = (act === 'mvl' || act === 'mvbl' ? -1 : 1) * ((act === 'mvbl' || act === 'mvbr') ? bar : cell);
+        fullSelEdit(E, (refs) => {
+          const sp = selSpan(refs); const dd = clamp(d, -sp.a, 1 - 1e-6 - sp.a);
+          refs.forEach((n) => { n.t = clamp(n.t + dd, 0, 0.99999); n.dur = Math.min(n.dur, 1 - n.t); });
+        }, d < 0 ? '\u25c0 earlier' : 'later \u25b6');
+        return;
+      }
+      case 'dup': case 'rep2': case 'rep4': {
+        const times = act === 'rep4' ? 3 : act === 'rep2' ? 1 : 1;
+        fullSelEdit(E, (refs) => {
+          const sp = selSpan(refs), len = Math.max(cell, Math.ceil((sp.z - sp.a) / cell - 1e-6) * cell);
+          const outN = [];
+          for (let k = 1; k <= times; k++) refs.forEach((n) => {
+            const t = n.t + len * k; if (t >= 1 - 1e-6) return;
+            const c = JSON.parse(JSON.stringify(n)); c.t = t; c.dur = Math.min(n.dur, 1 - t);
+            if (c.ch) c.ch = (c.ch | 0) + 1000 * k;          // a copied chord is its OWN chord
+            outN.push(c);
+          });
+          return outN;
+        }, act === 'dup' ? '\u29c9 Duplicated \u2014 the copy is selected' : '\u29c9 Repeated');
+        return;
+      }
+      case 'sz': {
+        const f = opt && opt.f;                            // a fraction of a BAR
+        fullSelEdit(E, (refs) => { const bar = 1 / Math.max(0.0625, L.part.bars || 1); refs.forEach((n) => { n.dur = Math.max(1e-4, Math.min(f * bar, 1 - n.t)); n.hl = 1; }); }, 'Size \u2192 ' + (opt && opt.lbl));
+        return;
+      }
+      case 'x2': case 'h2':
+        fullSelEdit(E, (refs) => { refs.forEach((n) => { n.dur = Math.max(1e-4, Math.min(act === 'x2' ? n.dur * 2 : n.dur / 2, 1 - n.t)); n.hl = 1; }); }, act === 'x2' ? 'Lengths \u00d72' : 'Lengths \u00f72');
+        return;
+      case 'quant':
+        fullSelEdit(E, (refs) => { refs.forEach((n) => { n.t = clamp(Math.round(n.t / cell) * cell, 0, 1 - cell); n.dur = Math.max(cell, Math.round(n.dur / cell) * cell); n.dur = Math.min(n.dur, 1 - n.t); }); }, '\u229e Quantized to the grid');
+        return;
+      case 'rev':
+        fullSelEdit(E, (refs) => { const sp = selSpan(refs); refs.forEach((n) => { n.t = clamp(sp.a + (sp.z - (n.t + n.dur)), 0, 0.99999); }); }, '\u2194 Reversed');
+        return;
+      case 'shuf':
+        fullSelEdit(E, (refs) => { const ps = refs.map((n) => n.midi | 0);
+          for (let i = ps.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const x = ps[i]; ps[i] = ps[j]; ps[j] = x; }
+          refs.forEach((n, i) => { n.midi = ps[i]; n.hx = 1; }); }, '\u2928 Shuffled the pitches');
+        return;
+      case 'rot':
+        fullSelEdit(E, (refs) => { const o = refs.slice().sort((a, b) => a.t - b.t || a.midi - b.midi); const ps = o.map((n) => n.midi | 0);
+          o.forEach((n, i) => { n.midi = ps[(i + ps.length - 1) % ps.length]; n.hx = 1; }); }, '\u21bb Rotated');
+        return;
+      case 'inv':
+        fullSelEdit(E, (refs) => { const lo = refs.reduce((a, n) => ((n.midi | 0) < (a.midi | 0) ? n : a), refs[0]); lo.midi = clamp((lo.midi | 0) + 12, 0, 127); lo.hx = 1; }, '\u21c5 Next inversion \u2014 the lowest note went up an octave');
+        return;
+      case 'arpU': case 'arpD':
+        fullSelEdit(E, (refs) => { const o = refs.slice().sort((a, b) => act === 'arpU' ? a.midi - b.midi : b.midi - a.midi);
+          const t0 = Math.min(...o.map((n) => n.t)), st = Math.max(cell / 2, cell);
+          o.forEach((n, i) => { n.t = clamp(t0 + i * st, 0, 0.99999); n.dur = Math.max(1e-4, Math.min(n.dur, 1 - n.t)); }); }, '\u266a Arpeggiated ' + (act === 'arpU' ? 'upward' : 'downward'));
+        return;
+      case 'del': fullDelete(E); return;
+      case 'genwrite': compGenWrite(E); { const sh = document.querySelector('.v2-full .v2-fullsheet'); if (sh) sh.remove(); } return;
+      case 'wrap:stack': case 'wrap:run': { const ms = (FULL.wrap && FULL.wrap.ms) || []; FULL.wrap = null; refreshFull(E); compWriteUnit(E, ms, act === 'wrap:run' ? 'run' : 'stack'); return; }
+      case 'wrap:discard': FULL.wrap = null; refreshFull(E); fullSay('Wrap discarded.'); return;
+      case 'sel:all': case 'sel:none': case 'sel:inv': case 'sel:n2': case 'sel:n3': case 'sel:n4': case 'sel:chord': case 'sel:beat': {
+        const ns = L.part.notes || [], cur = new Set(mselOf(L) || []);
+        let pick = [];
+        const onsets = [...new Set(ns.map((n) => Math.round(n.t * 1e6)))].sort((a, b) => a - b);
+        const byOn = (k) => ns.reduce((a, n, i) => { if (Math.round(n.t * 1e6) === k) a.push(i); return a; }, []);
+        if (act === 'sel:all') pick = ns.map((_, i) => i);
+        else if (act === 'sel:inv') pick = ns.map((_, i) => i).filter((i) => !cur.has(i));
+        else if (act === 'sel:n2' || act === 'sel:n3' || act === 'sel:n4') { const N = +act.slice(-1); onsets.forEach((k, j) => { if (j % N === 0) pick.push(...byOn(k)); }); }
+        else if (act === 'sel:chord') onsets.forEach((k) => { const g = byOn(k); if (g.length > 1) pick.push(...g); });
+        else if (act === 'sel:beat') { const bf = Math.max(0.0625, L.part.bars || 1); ns.forEach((n, i) => { const q = n.t * bf * 4; if (Math.abs(q - Math.round(q)) < 1e-6) pick.push(i); }); }
+        mselSet(L, pick.length ? new Set(pick) : null); NE = null;
+        fullSay(pick.length ? ('\u2b1a Selected ' + pick.length + ' note' + (pick.length === 1 ? '' : 's')) : 'Nothing selected');
+        const cS = _fullCard(); if (cS) { try { drawPartViz(cS, L, E); } catch (e) {} }
+        return;
+      }
+      case 'nreset': {
+        const tab = (document.querySelector('.v2-full .v2-fullsheet') || {}).getAttribute ? document.querySelector('.v2-full .v2-fullsheet').getAttribute('data-ntab') : 'Sound';
+        const fs = (NOTE_FIELDS[tab] || []).map((f) => f[0]).concat(tab === 'Groove' ? ['rat', 'ratp', 'chance', 'chOf', 'strum', 'strDir', 'when'] : tab === 'FX' ? ['fx'] : tab === 'Sound' ? ['pan', 'bend', 'tone'] : []);
+        fullSelEdit(E, (refs) => { refs.forEach((n) => fs.forEach((f) => { delete n[f]; })); }, '\u21ba Back to the layer\u2019s ' + tab.toLowerCase());
+        fullNoteSheet(E, tab);
+        return;
+      }
+    }
+  }
+  // ── NOTE ▾ — per-note settings for the selection (tabs: Sound · Groove · FX)
+  const NOTE_FIELDS = {
+    Sound: [['vel', 'Level', 0, 200, '%', 100], ['atk', 'Attack', 0, 2000, 'ms', null], ['dec', 'Decay', 0, 2000, 'ms', null],
+            ['sus', 'Sustain', 0, 100, '%', null], ['rel', 'Release', 0, 4000, 'ms', null], ['glide', 'Glide', 0, 1000, 'ms', 0],
+            ['pan', 'Pan', -100, 100, '', 0], ['bend', 'Bend', -12, 12, 'st', 0], ['bendAt', 'Bend reach', 0, 100, '%', 100]],
+    Groove: [['chance', 'Chance', 0, 100, '%', 100], ['strum', 'Strum', 0, 300, 'ms', 0]],
+    FX: [['fx.reverb', 'Reverb', 0, 100, '%', 0], ['fx.delay', 'Delay', 0, 100, '%', 0], ['fx.distortion', 'Distortion', 0, 100, '%', 0],
+         ['fx.chorus', 'Chorus', 0, 100, '%', 0], ['fx.phaser', 'Phaser', 0, 100, '%', 0], ['fx.vibrato', 'Vibrato', 0, 100, '%', 0],
+         ['fx.tremolo', 'Tremolo', 0, 100, '%', 0], ['fx.autoFilter', 'Auto filter', 0, 100, '%', 0], ['fx.pingPong', 'Ping-pong', 0, 100, '%', 0]],
+  };
+  // a note field by PATH ('fx.reverb'): read / write / clear
+  const nGet = (n, f) => { if (f.indexOf('fx.') === 0) return n.fx ? n.fx[f.slice(3)] : undefined; return n[f]; };
+  const nSet = (n, f, v) => {
+    if (f.indexOf('fx.') === 0) { const k = f.slice(3); n.fx = n.fx || {}; if (v === undefined) delete n.fx[k]; else n.fx[k] = v; if (!Object.keys(n.fx).length) delete n.fx; return; }
+    if (v === undefined) delete n[f]; else n[f] = v;
+  };
+  function noteDefault(L, f) {
+    const I = L.instrument || {};
+    return f === 'atk' ? (I.attack | 0) : f === 'dec' ? (I.decay | 0) : f === 'sus' ? (I.sustain | 0) : f === 'rel' ? (I.release | 0) : f === 'vel' ? 100 : 0;
+  }
+  function fullNoteSheet(E, tab) {
+    const L = _fullLayer(E); if (!L) return;
+    const ix = fullSelIdx(L);
+    if (!ix.length) { fullSay('Select notes first \u2014 tap one, or gather several in \u2b1a Select.'); return; }
+    const n0 = L.part.notes[ix[0]];
+    const tabs = '<div class="v2-ntabs">' + ['Sound', 'Groove', 'FX'].map((t) => '<button type="button" class="v2-ntab' + (t === tab ? ' on' : '') + '" data-tab="' + t + '">' + t + '</button>').join('') + '</div>';
+    let body = '';
+    const seg = (f, lbl, opts, dflt) => {
+      const cur = nGet(n0, f) != null ? String(nGet(n0, f)) : dflt;
+      return '<div class="v2-nrow"><span>' + lbl + '</span><span class="v2-nsegs">' + opts.map((o) =>
+        '<button type="button" class="v2-nseg' + (String(o[0]) === cur ? ' on' : '') + '" data-f="' + f + '" data-v="' + o[0] + '">' + o[1] + '</button>').join('') + '</span></div>';
+    };
+    if (tab === 'Groove') {
+      body += seg('rat', 'Ratchet', [['1', '\u00d71'], ['2', '\u00d72'], ['3', '\u00d73'], ['4', '\u00d74'], ['6', '\u00d76'], ['8', '\u00d78']], '1');
+      body += seg('ratp', 'Ratchet feel', [['even', 'even'], ['accel', 'accel'], ['decel', 'decel'], ['random', 'random']], 'even');
+    }
+    if (tab === 'FX') {
+      body += '<label class="v2-nrow"><span>Instead</span><input type="checkbox" class="v2-ncb" data-f="fx.over"' + (n0.fx && n0.fx.over ? ' checked' : '') +
+        '><b style="width:auto;text-align:left">use these instead of the layer\u2019s effects</b></label>';
+    }
+    (NOTE_FIELDS[tab] || []).forEach((f) => {
+      const has = Number.isFinite(nGet(n0, f[0]));
+      const v = has ? nGet(n0, f[0]) : (f[5] != null ? f[5] : noteDefault(L, f[0]));
+      body += '<label class="v2-nrow"><span>' + f[1] + '</span><input type="range" class="v2-ntin" data-f="' + f[0] + '" min="' + f[2] + '" max="' + f[3] + '" value="' + v + '">' +
+        '<b data-u="' + f[4] + '">' + v + ' ' + f[4] + (has ? '' : ' \u00b7 layer') + '</b></label>';
+    });
+    if (tab === 'Groove') {
+      body += seg('chOf', 'Chance of', [['note', 'the note'], ['rat', 'each hit']], 'note');
+      body += seg('strDir', 'Strum', [['up', 'up'], ['down', 'down'], ['random', 'random']], 'up');
+      body += seg('when', 'When', [['', 'always'], ['first', '1st'], ['notfirst', 'not 1st'], ['every2', 'every 2nd'], ['every4', 'every 4th'], ['odd', 'odd']], '');
+    }
+    if (tab === 'Sound') {
+      // the layer's own tone list, borrowed from its Instrument select (one source)
+      let opts = '';
+      try { const ts = (_fullCard() || document).querySelector('select[data-f="instrument.tone"]'); if (ts) opts = ts.innerHTML; } catch (e) {}
+      body += '<label class="v2-nrow"><span>Sound</span><select class="ambient-select v2-nsel" data-f="tone"><option value="">the layer\u2019s</option>' + opts + '</select></label>';
+    }
+    body += '<button type="button" class="v2-fsitem" data-act="nreset"><span>\u21ba Back to the layer\u2019s</span><i>clears these for the selected notes</i></button>';
+    const d = fullSheet('Note', tabs + body);
+    if (d) { d.classList.add('v2-keep'); d.setAttribute('data-ntab', tab);
+      const sp = d.querySelector('.v2-fshsel'); if (sp) sp.textContent = ix.length + ' note' + (ix.length === 1 ? '' : 's'); }
+    fullNoteSheetExtra(E, L, d, tab, n0);
+    try { const ts = d && d.querySelector('.v2-nsel'); if (ts) ts.value = n0.tone || ''; } catch (e) {}
+  }
+  // (Groove and FX rows are filled by `fullNoteSheetExtra` — the new per-note fields)
+  function fullNoteSheetExtra(E, L, d, tab, n0) {
+    void E; void L; void d; void tab; void n0;
+  }
+  // ── ⇄ CONVERT A LAYER'S TYPE ─────────────────────────────────────────
+  // Roll → Pattern: what the layer PLAYS becomes the pattern — a pitched layer's
+  // notes snap onto the grid as runs in their pitch rows (`pitch.kind = 'grid'`);
+  // a kit seeds its lanes from ♦ Beat, as the old switch did. Pattern → Roll: what
+  // the pattern plays is written down as notes (a frozen take). The other form's
+  // stored data is left where it is (save-compat) — it just stops playing.
+  function convertFormFn(E, L, want) {
+    if (!L || !L.part) return false;
+    const P = L.part, kit = (L.instrument || {}).voice === 'kit';
+    const cfg = E.getCfg(), cyc = V2.cycleSec(L, cfg);
+    const plays = () => {
+      let ns = [];
+      try { ns = V2.withEdit(() => V2.withTake(V2.pinOf(L), () => V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: cyc }))) || []; } catch (e) { ns = []; }
+      return ns.filter((n) => n && n.freq > 0 && n.at >= 0 && n.at < cyc).map((n) => ({
+        t: n.at / cyc, dur: Math.max(0.001, (n.durMs || 0) / 1000 / cyc), midi: Math.round(69 + 12 * Math.log2(n.freq / 440)) }));
+    };
+    if (want === 'steps') {
+      if (kit) {
+        P.form = 'steps';
+        try { E.getCfg(); } catch (e) {}
+        const r0 = P.rhythm || (P.rhythm = {});
+        const anyLane = (r0.lanes || []).some((row) => (row || []).some(Boolean));
+        if (!anyLane) { const seed = V2.beatToLanes ? V2.beatToLanes(L, Math.max(1, r0.steps | 0)) : null; if (seed) r0.lanes = seed.lanes; }
+        return true;
+      }
+      const ns = plays();
+      P.form = 'steps';
+      try { E.getCfg(); } catch (e) {}                   // sizes the grid: bars × grid cells
+      const cells = Math.max(1, V2.gridCells(L)), rows = {};
+      ns.forEach((n) => {
+        const st = clamp(Math.round(n.t * cells), 0, cells - 1);
+        const len = clamp(Math.max(1, Math.round(n.dur * cells)), 1, cells - st);
+        const row = rows[String(n.midi)] || (rows[String(n.midi)] = { c: [] });
+        if (!row.c.some((q) => st < q[0] + q[1] && q[0] < st + len)) row.c.push([st, len]);   // one run at a time per row
+      });
+      P.pitch = P.pitch || {};
+      P.pitch.kind = 'grid'; P.pitch.rows = rows;
+      P.rhythm = P.rhythm || {}; P.rhythm.kind = 'drawn';
+      return true;
+    }
+    // → ROLL
+    if (kit) { delete P.form; return true; }            // a kit's Roll is its ♦ Beat rules
+    const ns = plays();
+    delete P.form;
+    P.notes = ns.map((n) => ({ t: clamp(n.t, 0, 0.99999), midi: clamp(n.midi - (P.transpose | 0), 0, 127), dur: n.dur }));
+    P.kind = 'recorded'; P.made = 'take';
+    return true;
+  }
+  try { V2.convertForm = (E, L, want) => convertFormFn(E, L, want); } catch (e) {}
   function fullLegend(E) {
     const L = _fullLayer(E), card = _fullCard(); if (!L || !card) return;
     const host = card.querySelector('.v2-partviz.v2-full'); if (!host) return;
@@ -15386,39 +15938,189 @@
       (rows ? '<ul class="v2-lglist">' + rows + '</ul>' : '<p><i>Set a key on the area to colour chords by degree.</i></p>') +
       '<ul class="v2-lglist v2-lgmarks">' +
         '<li>' + sw(CH_OUT, 'a chord whose root is <b>outside the key</b> \u2014 labelled by its name (e.g. B\u266d)') + '</li>' +
+        '<li><span class="v2-lgsw v2-lggrp"></span><span class="v2-lgtx">dashed outline, <b>\u29c9 N</b> \u2014 a <b>group</b> you made with \u29c9 Group notes: any notes, any timing, one unit</span></li>' +
         '<li>' + sw('rgba(159,122,234,0.92)', 'a single note (not part of a chord) \u2014 the layer\u2019s own colour') + '</li>' +
         '<li><span class="v2-lgsw v2-lgring"></span><span class="v2-lgtx">amber outline \u2014 that note is <b>outside the key</b></span></li>' +
         '<li>' + sw('rgba(245,176,74,0.35)', 'amber row \u2014 a pitch outside the key that some note uses') + '</li>' +
-        '<li><span class="v2-lgsw v2-lgbar"></span><span class="v2-lgtx">the line down a chord\u2019s left edge joins its notes \u2014 they move, select and delete together (\u2702 Break chord splits them)</span></li>' +
+        '<li><span class="v2-lgsw v2-lgbar"></span><span class="v2-lgtx">the line down a chord\u2019s left edge joins its notes \u2014 they move, select and delete together (\u2702 Break from chord frees the note you tapped)</span></li>' +
         '<li><span class="v2-lgsw v2-lgsel"></span><span class="v2-lgtx">white edge \u2014 the selected note</span></li>' +
         '<li>' + sw('#7ef0dc', 'teal key edge (\u21c5 Inversion) \u2014 the notes you can tap') + '</li>' +
       '</ul>';
     host.appendChild(p2);
   }
   // ✂ is live only while a chord is selected (re-lit on every draw — the second writer)
+  // ⧉ live while 2+ notes are gathered that are not ALREADY exactly one unit
+  function groupable(L) {
+    const ms = mselOf(L); if (!ms || ms.size < 2) return false;
+    const ks = new Set([...ms].map((i) => chOfNote(L, i)));
+    if (ks.size === 1) { const k = [...ks][0]; if (k && chIdxs(L, k).length === ms.size) return false; }
+    return true;
+  }
   function fullBreakSync(L) {
+    // DIMMED, NEVER DISABLED: a disabled button swallows the press and says
+    // nothing ("can't press Group notes") — pressed when it does not apply,
+    // each one says in the readout what to do first.
+    const gb = document.querySelector('.v2-full .v2-fullgroup'); if (gb) gb.classList.toggle('v2-dim', !groupable(L));
     const b = document.querySelector('.v2-full .v2-fullbreak'); if (!b) return;
     const k = selChord(L);
-    b.disabled = !k;
+    b.classList.toggle('v2-dim', !k);
     b.style.setProperty('--ch', k ? chColor(k) : '');
   }
-  function fullBreak(E) {
+  // ⧉ GROUP NOTES — the inverse of ✂: the gathered notes become ONE unit (a new
+  // `ch`, marked `gp`), any number, any timing. A chord it takes members from
+  // and leaves with a single note is dissolved (a chord of one is not a chord).
+  function fullGroup(E) {
     const L = _fullLayer(E); if (!L) return;
-    const k = selChord(L); if (!k) { fullSay('Tap a chord to select it, then \u2702 Break chord.'); return; }
-    const ix = chIdxs(L, k);
-    ix.forEach((i) => { delete L.part.notes[i].ch; });
+    if (!groupable(L)) {
+      const ms0 = mselOf(L);
+      fullSay((ms0 && ms0.size >= 2) ? 'Those notes are already one group.'
+        : (modeOf(L) === 'multi' ? 'Gather two or more notes first \u2014 tap each, or drag a box across them \u2014 then \u29c9 Group notes.'
+          : 'Switch to \u2b1a Select, gather two or more notes (tap each, or drag a box across them), then \u29c9 Group notes.'));
+      return;
+    }
+    const idxs = [...mselOf(L)].filter((i) => L.part.notes[i]);
+    const touched = new Set(idxs.map((i) => chOfNote(L, i)).filter(Boolean));
+    const k = (L.part.notes || []).reduce((mx, n) => Math.max(mx, (n && n.ch) | 0), 0) + 1;
+    idxs.forEach((i) => { const n = L.part.notes[i]; n.ch = k; n.gp = 1; delete n.cr; });
+    touched.forEach((k0) => { const left = chIdxs(L, k0); if (left.length === 1) { const n1 = L.part.notes[left[0]]; delete n1.ch; delete n1.cr; delete n1.gp; } });
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     try { E.getCfg(); } catch (e) {}
-    mselSet(L, null); NE = null;
-    fullSay('\u2702 Broke the chord into ' + ix.length + ' separate notes.');
+    mselSet(L, new Set(chIdxs(L, k))); NE = null;
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+    fullSay('\u29c9 Grouped ' + idxs.length + ' notes \u2014 they move, select and delete together. \u2702 Break from chord frees one.');
     refreshFull(E);
+  }
+  // ✂ BREAK FROM CHORD — frees the ONE note you tapped (the rest stays a chord;
+  // a chord left with a single note frees that one too), and selects it alone.
+  function fullBreak(E) {
+    const L = _fullLayer(E); if (!L) return;
+    const k = selChord(L); if (!k) { fullSay('Tap a note of a chord, then \u2702 Break from chord.'); return; }
+    let i = -1;
+    const tn = FULL && FULL.tapNote;
+    if (tn && tn.ch === k) i = L.part.notes.findIndex((n) => n && (n.ch | 0) === k && (n.midi | 0) === tn.midi && Math.abs(n.t - tn.t) < 1e-6);
+    if (i < 0 && NE && NE.id === (L.id | 0) && chOfNote(L, NE.idx) === k) i = NE.idx;
+    if (i < 0) { fullSay('Tap the note you want to break off the chord, then \u2702.'); return; }
+    const n = L.part.notes[i], t0 = n.t, m0 = n.midi | 0;
+    delete n.ch; delete n.cr; delete n.gp;
+    const rest = chIdxs(L, k);
+    if (rest.length === 1) { delete L.part.notes[rest[0]].ch; delete L.part.notes[rest[0]].cr; delete L.part.notes[rest[0]].gp; }
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    mselSet(L, null);
+    const j = nearestNote(L.part.notes, t0, m0);
+    NE = j >= 0 ? { id: L.id | 0, idx: j } : null;
+    if (FULL) FULL.tapNote = null;
+    fullSay('\u2702 ' + noteName(m0) + ' broke off the chord \u2014 it moves and changes on its own now' +
+      (rest.length === 1 ? ' (that left one note, so it is on its own too).' : '; the rest stays a chord.'));
+    refreshFull(E);
+  }
+  // ── ↶ ↷ UNDO / REDO ── the editor watches its PART: every draw compares a
+  // snapshot, and a change is committed 300 ms after it stops moving (a drag, a
+  // slider sweep, a run of typed notes in one burst = ONE step). Nothing is
+  // committed mid-gesture. Covers every way notes change while the editor is
+  // open — the keys, the roll, the bar, Sing, Clear all.
+  const partSnap = (L) => { try { return JSON.stringify(L.part); } catch (e) { return ''; } };
+  function fullHistCommit() {
+    if (!FULL || !FULL.hist) return;
+    const H = FULL.hist; clearTimeout(H.timer); H.timer = 0;
+    const L = _fullLayer(FULL.E); if (!L) return;
+    const s2 = partSnap(L);
+    if (!s2 || s2 === H.cur) return;
+    H.undo.push(H.cur); if (H.undo.length > 100) H.undo.shift();
+    H.redo = []; H.cur = s2;
+    fullHistSync();
+  }
+  function fullHistCheck(L) {
+    if (!FULL || !FULL.hist || DRAG) return;
+    const H = FULL.hist;
+    if (partSnap(L) === H.cur) return;
+    clearTimeout(H.timer); H.timer = setTimeout(fullHistCommit, 300);
+  }
+  function fullHistSync() {
+    if (!FULL || !FULL.hist) return;
+    const u = document.querySelector('.v2-full .v2-fullundo'), r = document.querySelector('.v2-full .v2-fullredo');
+    if (u) u.classList.toggle('v2-dim', !FULL.hist.undo.length);
+    if (r) r.classList.toggle('v2-dim', !FULL.hist.redo.length);
+  }
+  function fullHistStep(E, dir) {
+    if (!FULL || !FULL.hist) return;
+    fullHistCommit();                                   // a pending change becomes its own step first
+    const H = FULL.hist, from = dir < 0 ? H.undo : H.redo, to = dir < 0 ? H.redo : H.undo;
+    if (!from.length) { fullSay(dir < 0 ? 'Nothing to undo.' : 'Nothing to redo.'); return; }
+    const L = _fullLayer(E); if (!L) return;
+    to.push(H.cur);
+    const snap = from.pop();
+    try {
+      const obj = JSON.parse(snap);
+      Object.keys(L.part).forEach((k) => { delete L.part[k]; });
+      Object.assign(L.part, obj);
+    } catch (e) { return; }
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    try {
+      if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (L.id | 0), Tone.now());
+      if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)];
+    } catch (e) {}
+    const L2 = _fullLayer(E) || L;
+    H.cur = partSnap(L2);                               // the normalized form, so this is not a "change"
+    mselSet(L2, null); NE = null;
+    refreshFull(E);
+    fullHistSync();
+    fullSay(dir < 0 ? '\u21b6 Undone' : '\u21b7 Redone');
   }
   // A REFUSED TOUCH SAYS WHY, in the readout — a drawing that silently ignores
   // a finger is indistinguishable from a broken one.
   function fullSay(msg) {
     flog('say ' + String(msg).slice(0, 80));
     const rd = document.querySelector('.v2-full .v2-fullread');
+    if (rd) rd.title = String(msg);                // the whole message, when two lines clip it
     if (rd) rd.textContent = msg;
+  }
+  function fullMarquee(ev, E, card, L, cvd) {
+    const host = cvd.closest('.v2-full'); if (!host) return;
+    const hr = host.getBoundingClientRect();
+    const sx = ev.clientX, sy = ev.clientY;
+    let box = null, moved = 0, got = new Set();
+    DRAG = { id: L.id | 0, pan: 1, moved: 0 };          // the touchmove guard: the page must not scroll
+    const mv = (e2) => {
+      const x0 = Math.min(sx, e2.clientX), x1 = Math.max(sx, e2.clientX);
+      const y0 = Math.min(sy, e2.clientY), y1 = Math.max(sy, e2.clientY);
+      moved = Math.max(moved, Math.hypot(e2.clientX - sx, e2.clientY - sy));
+      if (DRAG) DRAG.moved = moved;
+      if (moved < 6) return;
+      if (!box) { box = document.createElement('div'); box.className = 'v2-marquee'; host.appendChild(box); }
+      box.style.left = (x0 - hr.left) + 'px'; box.style.top = (y0 - hr.top) + 'px';
+      box.style.width = (x1 - x0) + 'px'; box.style.height = (y1 - y0) + 'px';
+      // every DRAWN note the box touches, in canvas space; a chord / group comes whole
+      const cr = cvd.getBoundingClientRect();
+      const bx0 = x0 - cr.left, bx1 = x1 - cr.left, by0 = y0 - cr.top, by1 = y1 - cr.top;
+      const next = new Set();
+      (cvd._hits || []).forEach((hb) => {
+        if (!Number.isFinite(hb.i) || hb.x > bx1 || hb.x + hb.w < bx0 || hb.y > by1 || hb.y + hb.h < by0) return;
+        const k = chOfNote(L, hb.i);
+        (k ? chIdxs(L, k) : [hb.i]).forEach((i) => next.add(i));
+      });
+      const changed = next.size !== got.size || [...next].some((i) => !got.has(i));
+      got = next;
+      if (changed) { mselSet(L, got.size ? new Set(got) : null); NE = null; try { drawPartViz(card, L, E); } catch (e) {} }
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      DRAG = null;
+      if (box) { try { box.remove(); } catch (e) {} }
+      cvd._dragged = Date.now();                       // either way the click that follows is ours
+      if (moved < 6) {                                 // a TAP on empty space: gather nothing (said here,
+        if ((mselOf(L) || { size: 0 }).size) {        // not by the click — one swallowed by a just-ended
+          mselSet(L, null); NE = null;                 // drag's guard would leave the gathering standing)
+          try { drawPartViz(card, L, E); } catch (e) {}
+        }
+        return;
+      }
+      try { drawPartViz(card, L, E); } catch (e) {}
+      fullSay(got.size ? ('\u2b1a Gathered ' + got.size + ' note' + (got.size === 1 ? '' : 's') + (got.size > 1 ? ' \u2014 \u29c9 Group notes makes them one unit.' : '.'))
+                       : 'Nothing inside the box \u2014 drag across the notes you want.');
+    };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
   // one step of a vertical scroll: pulling DOWN brings HIGHER rows in
   function fullVScroll(vs, y, cvd, card, L) {
@@ -15486,6 +16188,7 @@
   // ancestor is tagged and stripped of what confines it; their scroll positions
   // are kept and handed back on close.
   let FULL_ANC = [];
+  let COMP_ON = 0;                 // the layer whose ▦ Compose sheet is up (full screen)
   function fullFreeAncestors(host) {
     fullRestoreAncestors();
     for (let e = host.parentElement; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
@@ -15562,6 +16265,78 @@
       try { refreshFull(FULL.E); } catch (e2) {}         // the zoom labels and tiles follow
     };
     document.addEventListener('touchend', end); document.addEventListener('touchcancel', end);
+    // NOTE ▾ SLIDERS — every selected note follows the slider live; the store is
+    // written (and normalized) once, on release
+    document.addEventListener('input', (e) => {
+      const r = e.target && e.target.closest && e.target.closest('.v2-full .v2-ntin');
+      if (!r || !FULL) return;
+      const L = _fullLayer(FULL.E); if (!L) return;
+      const f = r.getAttribute('data-f'), v = +r.value;
+      fullSelIdx(L).forEach((i) => { nSet(L.part.notes[i], f, v); });
+      const b = r.parentElement.querySelector('b'); if (b) b.textContent = v + ' ' + (b.getAttribute('data-u') || '');
+      const card = _fullCard(); if (card) { try { drawPartViz(card, L, FULL.E); } catch (e2) {} }
+    });
+    document.addEventListener('change', (e) => {
+      const r = e.target && e.target.closest && e.target.closest('.v2-full .v2-ntin');
+      if (!r || !FULL) return;
+      const L = _fullLayer(FULL.E); if (!L) return;
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e2) {}
+      try { FULL.E.getCfg(); } catch (e2) {}
+      try { if (FULL.E._v2Phase && _ambLiveApplyOK(FULL.E)) delete FULL.E._v2Phase['v2:' + (L.id | 0)]; } catch (e2) {}
+    });
+    // NOTE ▾ SEGMENTS, SOUND SELECT, THE FX SWITCH — written to every selected note;
+    // the "off" choice clears the field (absent = the layer's / always)
+    const nWrite = (f, v) => {
+      if (!FULL) return;
+      const L = _fullLayer(FULL.E); if (!L) return;
+      fullSelIdx(L).forEach((i) => nSet(L.part.notes[i], f, v));
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e2) {}
+      try { FULL.E.getCfg(); } catch (e2) {}
+      try { if (FULL.E._v2Phase && _ambLiveApplyOK(FULL.E)) delete FULL.E._v2Phase['v2:' + (L.id | 0)]; } catch (e2) {}
+      const card = _fullCard(); if (card) { try { drawPartViz(card, L, FULL.E); } catch (e2) {} }
+    };
+    document.addEventListener('click', (e) => {
+      const sg = e.target && e.target.closest && e.target.closest('.v2-full .v2-nseg');
+      if (!sg || !FULL) return;
+      const f = sg.getAttribute('data-f'), raw = sg.getAttribute('data-v');
+      const off = (f === 'rat' && raw === '1') || (f === 'ratp' && raw === 'even') || (f === 'chOf' && raw === 'note') || (f === 'strDir' && raw === 'up') || (f === 'when' && raw === '');
+      nWrite(f, off ? undefined : (/^\d+$/.test(raw) ? +raw : raw));
+      sg.parentElement.querySelectorAll('.v2-nseg').forEach((b) => b.classList.toggle('on', b === sg));
+    });
+    document.addEventListener('change', (e) => {
+      const sl = e.target && e.target.closest && e.target.closest('.v2-full .v2-nsel, .v2-full .v2-ncb');
+      if (!sl || !FULL) return;
+      if (sl.classList.contains('v2-ncb')) nWrite(sl.getAttribute('data-f'), sl.checked ? 1 : undefined);
+      else nWrite(sl.getAttribute('data-f'), sl.value || undefined);
+    });
+    // ▲ ▼ HELD = a half-step (a tap is a scale step)
+    document.addEventListener('pointerdown', (e) => {
+      const ud = e.target && e.target.closest && e.target.closest('.v2-full .v2-fs-up, .v2-full .v2-fs-dn');
+      if (!ud || !FULL) return;
+      ud._held = false;
+      clearTimeout(ud._ht);
+      ud._ht = setTimeout(() => { ud._held = true; fullSelAct(FULL.E, ud.classList.contains('v2-fs-up') ? 'up' : 'dn', { half: true }); }, 450);
+      const clr = () => { clearTimeout(ud._ht); window.removeEventListener('pointerup', clr); window.removeEventListener('pointercancel', clr); setTimeout(() => { ud._held = false; }, 50); };
+      window.addEventListener('pointerup', clr); window.addEventListener('pointercancel', clr);
+    });
+    // ▦ COMPOSE KEYS — pointerdown for the sound (no click delay), one id per
+    // finger so a chord and a held key are separate presses
+    document.addEventListener('pointerdown', (e) => {
+      const k = e.target && e.target.closest && e.target.closest('.v2-full .v2-fck');
+      if (!k || !FULL || !FULL.comp) return;
+      e.preventDefault();
+      try { k.setPointerCapture(e.pointerId); } catch (e2) {}
+      k.classList.add('down');
+      compKeyDown(FULL.E, k.getAttribute('data-pc') | 0, 'p' + e.pointerId);
+    });
+    const keyUp = (e) => {
+      if (!FULL) return;
+      const id = 'p' + e.pointerId;
+      if (!FULL.sus.has(id) && !FULL.held.has(id) && !FULL.perfHeld.has(id)) return;
+      document.querySelectorAll('.v2-full .v2-fck.down').forEach((b) => b.classList.remove('down'));
+      compKeyUp(FULL.E, id);
+    };
+    document.addEventListener('pointerup', keyUp); document.addEventListener('pointercancel', keyUp);
     // TAP OR DRAG THE MINI-MAP — the view's box centres on the finger
     document.addEventListener('pointerdown', (e) => {
       const mc = e.target && e.target.closest && e.target.closest('.v2-full .v2-fullmap');
@@ -15649,6 +16424,227 @@
     if (op.chrome) refreshFull(E);
     else { try { drawPartViz(card, L, E); } catch (e) {} }
   }
+  // ── ▦ COMPOSE = THE ROLL + INPUTS (2026-10-05, mock board A) ───────────
+  // The compose keyboard docked above the ⤢ roll. A key AUDITIONS (held: it
+  // sounds while it is down); with ✎ Step on it also WRITES at the teal cursor,
+  // one grid step long, and the cursor advances. Keys landing within 90 ms of
+  // each other are ONE onset (a chord). A key still HELD while the cursor moves
+  // on keeps growing to the cursor — that is how a held note over a moving line
+  // is entered. ● Perf records in real time while the music plays.
+  // ⌨ KEYS — whether the editor shows the keyboard panel; remembered per viewer
+  // (a convenience, so browser storage, guarded — it can be missing or throw)
+  let KEYS_ON = false;
+  try { KEYS_ON = localStorage.getItem('v2KeysOn') === '1'; } catch (e) {}
+  const keysRemember = (on) => { KEYS_ON = !!on; try { localStorage.setItem('v2KeysOn', on ? '1' : '0'); } catch (e) {} };
+  const COMP_PCS = [['C', 'C\u266f', 'D', 'D\u266f', 'E', 'F'], ['F\u266f', 'G', 'G\u266f', 'A', 'A\u266f', 'B']];
+  const COMP_COL = ['#e5484d', '#f0a35e', '#e3c46d', '#2a9d8f', '#4a7aa0', '#9d5fd9', '#e9559f', '#16b6e8', '#14d39b', '#f5b301', '#f05a14', '#8b3fe0'];
+  function fullCompPanel(L) {
+    const F = FULL;
+    let keys = '';
+    COMP_PCS.forEach((row, r) => {
+      keys += '<div class="v2-fckrow">';
+      row.forEach((nm, i) => {
+        const pc = r * 6 + i;
+        keys += '<button type="button" class="v2-fck" data-pc="' + pc + '" style="--kc:' + COMP_COL[pc] + '" aria-label="' + nm + (F.oct | 0) + '">' + nm + '</button>';
+      });
+      keys += '</div>';
+    });
+    return '<div class="v2-fullcomp">' +
+      '<div class="v2-fckeys"><div class="v2-fckgrid">' + keys + '</div>' +
+        '<div class="v2-fcoct"><button type="button" class="v2-fullib v2-fco" data-o="1" aria-label="Octave up">\u25b2</button>' +
+          '<span>' + (F.oct | 0) + '</span>' +
+          '<button type="button" class="v2-fullib v2-fco" data-o="-1" aria-label="Octave down">\u25bc</button></div></div>' +
+      '<div class="v2-fcrow">' +
+        '<button type="button" class="v2-fcb v2-fcperf' + (F.perf ? ' on' : '') + '" title="Record what you play in real time while the music plays \u2014 added to what is there">\u25cf Perf</button>' +
+        '<button type="button" class="v2-fcb v2-fcstep' + (F.step ? ' on' : '') + '" title="Each key writes a note at the teal cursor, one grid step long, and the cursor moves on. Off = keys only audition.">\u270e Step</button>' +
+        '<button type="button" class="v2-fcb v2-fcrest" title="Move the cursor one grid step without writing (a held key keeps sounding through it)">Rest</button>' +
+        '<button type="button" class="v2-fcb v2-fcbar" title="Move the cursor to the next bar line">\u2938 Bar</button>' +
+      '</div>' +
+      '<div class="v2-fcrow">' +
+        '<button type="button" class="v2-fcb v2-fcgen" title="Euclidean rhythm: K hits spread over N steps, written from the cursor with the last key you played">Gen \u25be</button>' +
+        '<button type="button" class="v2-fcb v2-fcwrap' + (F.wrap && F.wrap.on ? ' on' : '') + '" title="Collect the keys you play, then write them at the cursor as one chord (Stack) or one run (Run)">' +
+          (F.wrap && F.wrap.on ? 'Wrap \u2713 ' + F.wrap.ms.length : 'Wrap') + '</button>' +
+        '<button type="button" class="v2-fcb v2-fcwraps" title="Write one of your saved wraps at the cursor">Wraps \u25be</button>' +
+      '</div></div>';
+  }
+  const compStep = (L) => 1 / (Math.max(0.0625, (L.part && L.part.bars) || 1) * Math.max(1, V2.gridPerBar(L)));
+  const compPos = (L, t) => { const bars = Math.max(0.0625, L.part.bars || 1), pos = t * bars, b = Math.floor(pos + 1e-6);
+    const inB = pos - b, bt = Math.floor(inB * 4 + 1e-6), sx = Math.floor(inB * 16 + 1e-6) % 4; return (b + 1) + '.' + (bt + 1) + '.' + (sx + 1); };
+  const compFind = (L, h) => (L.part.notes || []).findIndex((n) => n && Math.abs(n.t - h.t) < 1e-9 && (n.midi | 0) === h.midi);
+  // the cursor moves; every key still HELD grows to it
+  function compAdvance(E, L, dt) {
+    if (!FULL) return;
+    FULL.cur = clamp(FULL.cur + dt, 0, 1);
+    FULL.held.forEach((h) => {
+      const i = compFind(L, h); if (i < 0) return;
+      L.part.notes[i].dur = Math.max(1e-4, Math.min(1 - h.t, FULL.cur - h.t)); L.part.notes[i].hl = 1;
+    });
+  }
+  function compCommit(E, L, soundMidi) {
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    try { E.getCfg(); } catch (e) {}
+    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (L.id | 0)]; } catch (e) {}
+    // THE VIEW FOLLOWS THE WRITING: a note written off the visible rows, or a
+    // cursor run past the right edge, would be work you cannot see
+    try {
+      const cvF = document.querySelector('.v2-full .v2-vizcv'), fr = cvF && cvF._fullRows;
+      if (fr && Number.isFinite(soundMidi)) {
+        const ui = fr.U.indexOf(soundMidi | 0);
+        if (ui >= 0 && (ui < fr.i0 || ui >= fr.i0 + fr.n)) FULL.topM = fr.U[clamp(ui - Math.floor(fr.n / 2), 0, Math.max(0, fr.U.length - fr.n))];
+      }
+      const bf = Math.max(0.0625, L.part.bars || 1), vb = Math.min(bf, FULL.vb || 1), b0 = vnavOf(L).bar0 || 0, cb = Math.min(FULL.cur, 0.99999) * bf;
+      if (cb < b0 - 1e-6 || cb >= b0 + vb - 1e-6) vnavSet(L, { bar0: clamp(Math.floor(cb / vb) * vb, 0, Math.max(0, bf - vb)) });
+    } catch (e) {}
+    const card = _fullCard(); if (card) { try { drawPartViz(card, L, E); } catch (e) {} }
+  }
+  // a GENERATED take is frozen before the first write, exactly as the pencil does
+  function compEnsureWritable(E, L) {
+    if (L.instrument && L.instrument.voice === 'loop') { fullSay('This layer plays an audio loop \u2014 notes don\u2019t apply to it.'); return false; }
+    if (L.part.kind === 'recorded') return true;
+    if (!captureShown(E, L, null, 'draw')) { fullSay('Nothing to write into yet \u2014 press \ud83c\udfb2 New take first.'); return false; }
+    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    return true;
+  }
+  function compKeyDown(E, pc, id) {
+    const L = _fullLayer(E); if (!L || !FULL) return;
+    const midi = clamp(12 * ((FULL.oct | 0) + 1) + pc, 0, 127);
+    // SOUND FIRST (rule 4), then the writing
+    const hnd = V2.auditionStart ? V2.auditionStart(E, L, midi) : null;
+    if (hnd) FULL.sus.set(id, hnd);
+    FULL.lastMidi = midi;
+    if (FULL.wrap && FULL.wrap.on) {
+      if (FULL.wrap.ms.indexOf(midi) < 0) FULL.wrap.ms.push(midi);
+      const wb = document.querySelector('.v2-full .v2-fcwrap'); if (wb) wb.textContent = 'Wrap \u2713 ' + FULL.wrap.ms.length;
+      fullSay('Wrap: ' + FULL.wrap.ms.map(noteName).join(' ') + ' \u2014 press Wrap again to write them');
+      return;
+    }
+    if (FULL.perf) { compPerfDown(E, L, midi, id); return; }
+    if (!FULL.step) { fullSay('\u266a ' + noteName(midi) + ' \u2014 \u270e Step is off, so keys only audition.'); return; }
+    if (!compEnsureWritable(E, L)) return;
+    const step = compStep(L), now = performance.now();
+    let t;
+    if (FULL.chordWin && now - FULL.chordWin.at < 90) t = FULL.chordWin.t;          // the same onset: a chord
+    else {
+      if (FULL.cur >= 1 - 1e-9) { fullSay('The cursor is at the end of the part \u2014 tap the ruler to move it.'); return; }
+      t = FULL.cur; FULL.chordWin = { at: now, t: t };
+    }
+    const stored = clamp(midi - (L.part.transpose | 0), 0, 127);
+    const nn = { t: t, midi: stored, dur: Math.max(1e-4, Math.min(step, 1 - t)) };
+    try { if (harmFollows(L)) nn.hx = 1; } catch (e) {}
+    L.part.notes.push(nn);
+    FULL.held.set(id, { t: t, midi: stored });
+    if (FULL.chordWin.t === t && FULL.cur === t) compAdvance(E, L, step);              // first key of the onset moves the cursor
+    compCommit(E, L, midi);
+    fullSay('\u270e ' + noteName(midi) + ' at ' + compPos(L, t) + (FULL.held.size > 1 ? ' \u00b7 holding ' + FULL.held.size : '') + ' \u2014 cursor \u2192 ' + compPos(L, Math.min(FULL.cur, 0.99999)));
+  }
+  function compKeyUp(E, id) {
+    if (!FULL) return;
+    const h = FULL.sus.get(id); if (h) { try { h.release(); } catch (e) {} FULL.sus.delete(id); }
+    FULL.held.delete(id);
+    if (FULL.perfHeld.has(id)) compPerfUp(E, id);
+  }
+  // ● PERF — the note starts at the press and ends at the release, exact, in the
+  // cycle that is SOUNDING (the drawing's own clock: heardPhase / cycleWindowAt)
+  function compPerfAt(E, L) {
+    const cfg = E.getCfg();
+    const stp = E.timer && heardPhase(E, 'v2:' + (L.id | 0));
+    const nowT = audibleNow();
+    if (!stp || !Number.isFinite(stp.startAt) || nowT < stp.startAt) return null;
+    const w = V2.cycleWindowAt(L, E, cfg, nowT, stp);
+    if (!w || !(w.cyc > 0)) return null;
+    return { t: clamp((nowT - w.cs) / w.cyc, 0, 0.99999), now: nowT, cyc: w.cyc };
+  }
+  function compPerfDown(E, L, midi, id) {
+    const at = compPerfAt(E, L);
+    if (!at) { fullSay('\u25cf Perf records while the music plays \u2014 press \u25b6 on the transport, then play along.'); return; }
+    if (!compEnsureWritable(E, L)) return;
+    const stored = clamp(midi - (L.part.transpose | 0), 0, 127);
+    const nn = { t: at.t, midi: stored, dur: Math.min(1 - at.t, 0.02) };
+    try { if (harmFollows(L)) nn.hx = 1; } catch (e) {}
+    L.part.notes.push(nn);
+    FULL.perfHeld.set(id, { t: at.t, midi: stored, t0: at.now, cyc: at.cyc });
+    compCommit(E, L, midi);
+    fullSay('\u25cf ' + noteName(midi) + ' at ' + compPos(L, at.t));
+  }
+  function compPerfUp(E, id) {
+    const L = _fullLayer(E), h = FULL.perfHeld.get(id); FULL.perfHeld.delete(id);
+    if (!L || !h) return;
+    const i = compFind(L, h); if (i < 0) return;
+    L.part.notes[i].dur = Math.max(0.004, Math.min(1 - h.t, (audibleNow() - h.t0) / h.cyc));
+    compCommit(E, L);
+  }
+  // write MIDI pitches (SOUNDING) at the cursor as one unit: 'stack' = a chord
+  // (all at the cursor), 'run' = one after another inside ONE step (a ⧉ group)
+  function compWriteUnit(E, ms, shape) {
+    const L = _fullLayer(E); if (!L || !ms.length || !compEnsureWritable(E, L)) return;
+    if (FULL.cur >= 1 - 1e-9) { fullSay('The cursor is at the end of the part \u2014 tap the ruler to move it.'); return; }
+    const step = compStep(L), t0 = FULL.cur, tr = L.part.transpose | 0;
+    const k = (L.part.notes || []).reduce((mx, n) => Math.max(mx, (n && n.ch) | 0), 0) + 1;
+    const srt = ms.slice().sort((a, b) => a - b);
+    const keys = [];
+    srt.forEach((m, i) => {
+      const run = shape === 'run' && srt.length > 1;
+      const t = run ? t0 + (step / srt.length) * i : t0, d = run ? step / srt.length : step;
+      const nn = { t: t, midi: clamp(m - tr, 0, 127), dur: Math.max(1e-4, Math.min(d, 1 - t)) };
+      if (srt.length > 1) { nn.ch = k; if (run) nn.gp = 1; else nn.cr = _pc(srt[0]); }
+      try { if (harmFollows(L)) nn.hx = 1; } catch (e) {}
+      L.part.notes.push(nn); keys.push({ t: nn.t, midi: nn.midi, dur: nn.dur });
+    });
+    compAdvance(E, L, step); FULL.chordWin = null;
+    compCommit(E, L, srt[0]);
+    const nx = new Set(); keys.forEach((k0) => { const j = dragRefind(L, -1, k0); if (j >= 0) nx.add(j); });
+    mselSet(L, nx.size ? nx : null);
+    const card = _fullCard(); if (card) { try { drawPartViz(card, L, E); } catch (e) {} }
+    fullSay((shape === 'run' ? '\u29c9 Run ' : '\u266b ') + srt.map(noteName).join(' ') + ' at ' + compPos(L, t0));
+  }
+  // ⊛ GEN — K hits over N steps from the cursor, with the last key's pitch
+  function compGenSheet(E) {
+    const G = FULL.gen || (FULL.gen = { k: 3, n: 8, r: 0 });
+    const cells = (V2.euclidCells && V2.euclidCells(G.k, G.n, G.r)) || [];
+    const pat = cells.map((c) => (c ? '\u25cf' : '\u00b7')).join(' ');
+    const rowG = (lbl, key, v) => '<div class="v2-nrow"><span>' + lbl + '</span><span class="v2-fullsize" style="margin-left:auto">' +
+      '<button type="button" class="v2-fullib v2-fsitem2" data-act="gen:' + key + ':-1" aria-label="Fewer">\u2212</button><i>' + v + '</i>' +
+      '<button type="button" class="v2-fullib v2-fsitem2" data-act="gen:' + key + ':1" aria-label="More">+</button></span></div>';
+    const pitch = Number.isFinite(FULL.lastMidi) ? FULL.lastMidi : 12 * ((FULL.oct | 0) + 1);
+    const d = fullSheet('Gen \u2014 euclidean rhythm',
+      rowG('Hits', 'k', G.k) + rowG('Steps', 'n', G.n) + rowG('Rotate', 'r', G.r) +
+      '<p class="v2-genpat">' + pat + '</p>' +
+      sheetItem('genwrite', '\u25b6 Write from the cursor', noteName(pitch) + ' \u00b7 one grid step each'));
+    if (d) d.classList.add('v2-keep');
+  }
+  function compGenWrite(E) {
+    const L = _fullLayer(E); if (!L || !compEnsureWritable(E, L)) return;
+    const G = FULL.gen || { k: 3, n: 8, r: 0 };
+    const cells = (V2.euclidCells && V2.euclidCells(G.k, G.n, G.r)) || [];
+    const pitch = Number.isFinite(FULL.lastMidi) ? FULL.lastMidi : 12 * ((FULL.oct | 0) + 1);
+    const step = compStep(L), t0 = FULL.cur, keys = [];
+    cells.forEach((c, i) => {
+      const t = t0 + i * step; if (!c || t >= 1 - 1e-9) return;
+      const nn = { t: t, midi: clamp(pitch - (L.part.transpose | 0), 0, 127), dur: Math.min(step, 1 - t) };
+      try { if (harmFollows(L)) nn.hx = 1; } catch (e) {}
+      L.part.notes.push(nn); keys.push({ t: nn.t, midi: nn.midi, dur: nn.dur });
+    });
+    compAdvance(E, L, Math.min(1 - t0, cells.length * step)); FULL.chordWin = null;
+    compCommit(E, L, pitch);
+    const nx = new Set(); keys.forEach((k0) => { const j = dragRefind(L, -1, k0); if (j >= 0) nx.add(j); });
+    mselSet(L, nx.size ? nx : null);
+    const card = _fullCard(); if (card) { try { drawPartViz(card, L, E); } catch (e) {} }
+    fullSay('\u229b Gen ' + G.k + ' of ' + G.n + ' \u2014 ' + keys.length + ' notes of ' + noteName(pitch) + ' written (selected)');
+  }
+  // the saved wraps (v1's User bank and each user Prog), as { name, ms, shape }
+  function compSavedWraps() {
+    const out = [];
+    try {
+      const opts = (typeof _wrapSequenceOptions === 'function') ? _wrapSequenceOptions() : [];
+      const toM = (v) => Math.round(69 + 12 * Math.log2((+v.freq || 440) / 440));
+      opts.forEach((g) => (g.items || []).forEach((it) => {
+        const st = it.step || {};
+        if (Array.isArray(st.chord) && st.chord.length) out.push({ name: it.name || st.label || 'wrap', grp: g.label, ms: st.chord.map(toM), shape: 'stack' });
+        else if (st.isSub && Array.isArray(st.subSteps) && st.subSteps.length) out.push({ name: it.name || st.label || 'run', grp: g.label, ms: st.subSteps.map(toM), shape: 'run' });
+      }));
+    } catch (e) {}
+    return out;
+  }
   // ♫ the chord row: what a tap builds, which chord an inversion is of, how many notes
   function fullChordRow(E, L) {
     const inv = CHORDM.sub === 'inv';
@@ -15680,7 +16676,7 @@
   }
   function fullChrome(host, L, E) {
     if (!FULL || !host || !L) return;
-    const fm0 = FULL.chord ? 'chord' : (modeOf(L) === 'multi' ? 'multi' : 'draw');
+    const fm0 = FULL.comp ? 'compose' : FULL.chord ? 'chord' : (modeOf(L) === 'multi' ? 'multi' : 'draw');
     let hd = host.querySelector(':scope > .v2-fullhead'), ft = host.querySelector(':scope > .v2-fullfoot');
     if (!hd) { hd = document.createElement('div'); hd.className = 'v2-fullhead'; host.insertBefore(hd, host.firstChild); }
     if (!ft) { ft = document.createElement('div'); ft.className = 'v2-fullfoot'; host.appendChild(ft); }
@@ -15694,7 +16690,9 @@
         // so a part or section with its own key is named as you scroll onto it
         '<span class="v2-fullname"><b>' + esc(L.name || ('Layer ' + L.id)) + '</b>' +
           '<small class="v2-fullkeyrd" title="The key these rows and chords use">\u2026</small></span>' +
-        '<button type="button" class="v2-fulldel" title="Delete the selected note \u2014 or every note gathered with \u2b1a Select (Delete / Backspace)">\ud83d\uddd1 Delete</button>' +
+        '<button type="button" class="v2-fullib v2-fullundo" aria-label="Undo" title="Undo (\u2318Z / Ctrl+Z)">\u21b6</button>' +
+        '<button type="button" class="v2-fullib v2-fullredo" aria-label="Redo" title="Redo (\u21e7\u2318Z / Ctrl+Y)">\u21b7</button>' +
+        '<button type="button" class="v2-fulldel" aria-haspopup="dialog" title="Delete the selected notes (Delete / Backspace) \u2014 or clear the whole part">\ud83d\uddd1 Delete \u25be</button>' +
         // ▶ PREVIEW — the card's own Preview (same handler, same ■ Stop face),
         // under its OWN class so `querySelector('.v2-pop-preview')` still finds
         // the card's
@@ -15702,15 +16700,24 @@
           ((typeof V2.previewing === 'function' && V2.previewing(L)) ? '\u25a0 Stop' : '\u25b6 Preview') + '</button>' +
       '</div>' +
       '<div class="v2-fullbar2">' +
+        // ⌨ KEYS — the keyboard + write tools, shown or hidden (one editor, the
+        // keyboard is a writing tool inside it)
+        // 🎤 SING — the same sheet the card's Write ▾ used to open (its handler
+        // finds the layer from the button, and this one is inside the card)
+        '<button type="button" class="v2-fullchip v2-singbtn" title="Sing it in \u2014 hum, sing or whistle the part and it is written down as notes. You review it before it replaces anything.">\ud83c\udfa4 Sing</button>' +
         // WHAT A TOUCH DOES here — the card's ✎/⬚ gestures, the two that mean
         // anything at this size (👁 View is the card's job; ✎ Edit's panel lives
         // on the card). Draw also selects: a tap on a note picks it for 🗑.
         '<span class="v2-fullmode" role="group" aria-label="What a touch does">' +
           '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'draw' ? ' on' : '') + '" data-m="draw" title="Draw new notes, drag to move or stretch, tap a note to select it, double-tap it to delete it">\u270e Draw</button>' +
           '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'chord' ? ' on' : '') + '" data-m="chord" title="Tap to place a whole chord, built from the key \u2014 drag right to size it">\u266b Chord</button>' +
-          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'multi' ? ' on' : '') + '" data-m="multi" title="Tap notes to gather several \u2014 drag one to move them all, or \ud83d\uddd1 Delete them">\u2b1a Select</button>' +
+          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'multi' ? ' on' : '') + '" data-m="multi" title="Tap notes to gather them, or drag a box across empty space to gather everything it touches \u2014 then \u29c9 Group notes, drag one to move them all, or \ud83d\uddd1 Delete them">\u2b1a Select</button>' +
+          // ⌨ COMPOSE — the keyboard + write tools appear only in this mode; the
+          // note grid is inert while it is on (write from the keys)
+          '<button type="button" class="v2-fullchip v2-fullm' + (fm0 === 'compose' ? ' on' : '') + '" data-m="compose" title="Compose from the keyboard \u2014 keys write at the teal cursor, \u25cf Perf records along, Gen, Wrap. The roll is read-only while it is on.">\u2328 Compose</button>' +
         '</span>' +
-        (hasKey ? '<button type="button" class="v2-fullchip v2-fullkey' + (FULL.keyRows ? ' on' : '') + '" title="Only the key\u2019s notes get a row \u2014 bigger rows, and what you draw lands in key. A pitch outside the key that a note already plays keeps its row, in amber.">\u25c8 in-key rows</button>' : '') +
+        (fm0 === 'multi' ? '<button type="button" class="v2-fullchip v2-fsrules" title="Select by rule \u2014 all, none, invert, every 2nd/3rd/4th, chords, on the beat">Select \u25be</button>' : '') +
+        (hasKey ? '<button type="button" class="v2-fullchip v2-fullkey' + (FULL.keyRows ? ' on' : '') + '" title="Shade the rows outside the key \u2014 every note keeps its row; the ones outside the key are drawn darker (amber where a note plays one).">\u25c8 Shade key</button>' : '') +
         // ⊞ THE GRID notes snap to — every value the part can hold, triplets too
         '<label class="v2-fullgridw" title="The grid notes snap to">\u229e <select class="ambient-select v2-fullgridsel" aria-label="Grid">' +
           (V2.GRIDS || []).map((gv) => '<option value="' + gv[0] + '"' + (gv[0] === gp ? ' selected' : '') + '>' + gv[1] + '</option>').join('') +
@@ -15720,11 +16727,17 @@
         '<label class="v2-fullslip' + (FULL_SLIP.on ? ' on' : '') + '" title="Slip \u2014 move, place and size notes off the grid, by the smallest step (an arbitrary onset). Off = everything snaps to the grid.">' +
           '<input type="checkbox" class="v2-fullslipcb"' + (FULL_SLIP.on ? ' checked' : '') + '> Slip</label>' +
         '<button type="button" class="v2-fullchip v2-fulllegbtn" aria-haspopup="dialog" title="What the colours, outlines and labels on this drawing mean">\u25d0 Chord legend</button>' +
+        '<button type="button" class="v2-fullgroup v2-dim" title="Make the notes gathered with \u2b1a Select one unit \u2014 any number, any timing; they move, select and delete together like a chord">\u29c9 Group notes</button>' +
         // ✂ live only while a chord is selected (`fullBreakSync`, every draw)
-        '<button type="button" class="v2-fullbreak" disabled title="Break the selected chord into separate notes \u2014 each goes back to its own colour and moves on its own">\u2702 Break chord</button>' +
+        '<button type="button" class="v2-fullbreak v2-dim" title="Break the note you tapped off its chord or group \u2014 it goes back to a plain note that moves and changes on its own; the rest stays together">\u2702 Break from chord</button>' +
 
-        '<span class="v2-fullread">' + (prevRd || 'draw a note \u2014 its pitch, start, size and level show here') + '</span>' +
+        '<span class="v2-fullread">' + (prevRd || (FULL.comp ? 'play a key \u2014 \u270e Step writes it at the teal cursor' : 'draw a note \u2014 its pitch, start, size and level show here')) + '</span>' +
       '</div>' + (fm0 === 'chord' ? fullChordRow(E, L) : '');
+    // ▦ COMPOSE: the input panel sits between the title row and the tools
+    if (FULL.comp) {
+      const b1 = hd.querySelector('.v2-fullbar1');
+      if (b1) b1.insertAdjacentHTML('afterend', fullCompPanel(L));
+    }
     const barsF = Math.max(0.25, +L.part.bars || 1), bars = Math.max(1, Math.ceil(barsF));
     const VB = clamp(_fullVB(), Math.min(0.25, barsF), barsF);
     const b0 = clamp(vnavOf(L).bar0 || 0, 0, Math.max(0, barsF - VB));
@@ -15734,7 +16747,7 @@
     // THE MINI-MAP — the whole part in one strip (bars, every note, a box for
     // what is on screen); tap or drag it to go there. It replaced the bar tiles,
     // ‹ › and the bottom position bar: one control that SHOWS where you are.
-    ft.innerHTML = '<div class="v2-fullmapw">' +
+    ft.innerHTML = fullSelBarHtml() + '<div class="v2-fullmapw">' +
         '<span class="v2-fullmaplab" aria-live="polite"></span>' +
         '<canvas class="v2-fullmap" role="slider" aria-label="The whole part \u2014 tap or drag to move the view"></canvas>' +
       '</div>' +
@@ -15765,16 +16778,24 @@
     fullPin(host, L, E);
     try { drawPartViz(card, L, E); } catch (e) {}
   }
-  function openFullDraw(E, ctx) {
+  function openFullDraw(E, ctx, opt) {
+    if (opt && opt.compose) keysRemember(true);
     const L = ctx && ctx.L, card = ctx && ctx.card; if (!L || !card) return;
     const host = card.querySelector('.v2-partviz'); if (!host) return;
     const cfg = E.getCfg();
     const land = window.innerWidth > window.innerHeight;
     FULL = { id: L.id | 0, E: E, keyRows: !!(cfg && cfg.keyOn), prevGrid: L.part.grid, userGrid: false, prevMode: modeOf(L), chrome: 190,
-             vb: land ? 2 : 1, rowPx: land ? 32 : 42, topM: null };
+             vb: land ? 2 : 1, rowPx: land ? 32 : 42, topM: null,
+             // ▦ COMPOSE state: the cursor (part fraction), ✎ Step / ● Perf, the
+             // keyboard's octave, and which keys are down
+             comp: (opt && opt.compose) ? true : KEYS_ON, cur: 0, step: true, perf: false,
+             oct: clamp(((L.instrument && L.instrument.register) | 0) || 4, 1, 7),
+             held: new Map(), sus: new Map(), perfHeld: new Map(), chordWin: null,
+             // ↶ ↷ the editor's history: whole-part snapshots, newest last
+             hist: { undo: [], redo: [], cur: JSON.stringify(L.part), timer: 0 } };
     if (V2.gridPerBar(L) > 8) L.part.grid = 8;          // starts on 1/8 — a finger-sized step
     try { setMode(L, 'draw'); } catch (e) {}
-    try { vnavSet(L, { bar0: 0 }); } catch (e) {}
+    try { vnavSet(L, { bar0: (opt && opt.bar > 0) ? Math.floor(opt.bar) : 0 }); } catch (e) {}   // a thumbnail tap opens AT its bar (the draw clamps it)
     fullPin(host, L, E);
     try { drawPartViz(card, L, E); } catch (e) { flog('draw threw ' + e.message); }
     try { fullTraceWire(); const cvT = card.querySelector('.v2-full .v2-vizcv'); if (cvT) fullTraceCanvas(cvT, 'open'); } catch (e) {}
@@ -15786,6 +16807,11 @@
         if (!FULL) return;
         if (e2.key === 'Escape') { closeFullDraw(FULL.E); return; }
         const tg = e2.target, typing = tg && (tg.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || ''));
+        if (!typing && (e2.metaKey || e2.ctrlKey) && (e2.key === 'z' || e2.key === 'Z' || e2.key === 'y' || e2.key === 'Y')) {
+          e2.preventDefault();
+          fullHistStep(FULL.E, ((e2.key === 'y' || e2.key === 'Y') || e2.shiftKey) ? 1 : -1);
+          return;
+        }
         if (!typing && (e2.key === 'Delete' || e2.key === 'Backspace')) { e2.preventDefault(); fullDelete(FULL.E); }
       });
     }
@@ -15824,6 +16850,8 @@
   function closeFullDraw(E) {
     if (!FULL) return;
     try { fullRestoreAncestors(); } catch (e) {}
+    try { if (FULL.hist) clearTimeout(FULL.hist.timer); } catch (e) {}
+    try { (FULL.sus || new Map()).forEach((h) => { try { h.release(); } catch (e2) {} }); } catch (e) {}
     try { const cdS = _fullCard(); if (cdS) previewStopFor(cdS, 'full'); } catch (e) {}   // a preview started here ends with it
     try { document.querySelectorAll('.v2-fulllegend').forEach((x) => x.remove()); } catch (e) {}
     const F = FULL, L = _fullLayer(E), card = _fullCard();
@@ -15836,6 +16864,10 @@
       if (!F.userGrid) { if (F.prevGrid == null) delete L.part.grid; else L.part.grid = F.prevGrid; }
       try { setMode(L, F.prevMode || 'view'); } catch (e) {}
       try { vnavSet(L, { bar0: 0 }); } catch (e) {}
+      // the card is a THUMBNAIL — the editor's selection stays in the editor, or the
+      // card would grow the old inline note panel / gather bar on the way out
+      if (NE && NE.id === (L.id | 0)) NE = null;
+      try { mselSet(L, null); } catch (e) {}
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       try { if (card) drawPartViz(card, L, E); } catch (e) {}
     }
@@ -20326,6 +21358,13 @@
           // a panel rebuild recreates the card, so a stored node goes stale.
           // Same markup, so `_placeLaneExpander` finds it with no change there.
           '<div class="ambient-seedgrid-slot v2-dock" data-sgkey="v2:' + L.id + '" hidden>' +
+            // ▦ COMPOSE IS FULL SCREEN, like ⤢ — its own head: Done (the grid
+            // saves as you go, so closing decides nothing) and what you are in
+            '<div class="v2-comphead">' +
+              '<button type="button" class="v2-gdone v2-compdone" title="Close the grid \u2014 everything in it is already saved">Done</button>' +
+              '<span class="v2-fullname"><b>' + esc(L.name || ('Layer ' + L.id)) + '</b>' +
+                '<small class="v2-compsub">\u25a6 Composing \u2014 saved as you go</small></span>' +
+            '</div>' +
             '<div class="ambient-seedgrid-dockhost"></div>' +
             '<div class="ambient-seedgrid-prib" hidden></div>' +
             '<div class="ambient-seedgrid-chords" hidden></div>' +
@@ -21295,6 +22334,20 @@
         _bloomGridEdit.key === 'v2:' + (L.id | 0));
     } catch (e) {}
     card.classList.toggle('v2-composing', !!composing);
+    // …AND FULL SCREEN while it is: the dock is pinned over the page, so its
+    // ancestors are freed exactly as ⤢'s are (iOS confines a fixed element to a
+    // clipping/scrolling ancestor), the page behind stops scrolling, and both
+    // are handed back when the session ends.
+    try {
+      const dk = card.querySelector('.v2-dock');
+      if (composing && dk) {
+        if (!FULL && (!FULL_ANC.length || !FULL_ANC[0].el.contains(dk))) fullFreeAncestors(dk);
+        document.body.classList.add('v2-fullon'); COMP_ON = L.id | 0;
+      } else if (!composing && COMP_ON === (L.id | 0)) {
+        COMP_ON = 0;
+        if (!FULL) { fullRestoreAncestors(); document.body.classList.remove('v2-fullon'); }
+      }
+    } catch (e) {}
     // WHY THIS LAYER IS LIVE, said where its switches are. From `liveness()`,
     // the same predicate the drawing's readout uses, so the two can never
     // disagree — and it names the two reasons the LAYER does not own (a mask
@@ -23974,7 +25027,12 @@
     const card = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
     if (card) { try { drawPartViz(card, L, E); } catch (e) {} }
   };
-  V2.render = function (E) {
+  // `opt.only` = ONE CARD'S ID: rebuild just that card (its own state saved and
+  // restored exactly as a full rebuild does) — for an edit that changes one
+  // card's markup and nothing about the set, like Roll ⇄ Pattern. Rebuilding
+  // all six cards for it cost ~0.4 s at phone speed. Falls back to the full
+  // rebuild whenever the card set itself has changed.
+  V2.render = function (E, opt) {
     const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
     const list = V2.layers(cfg);
     const h = host(E); if (!h) return;
@@ -24004,7 +25062,15 @@
     // cost a round on the Groove Humanize fader). Only rebuild when the set of
     // cards actually CHANGES; a value edit re-applies the gate in place instead.
     const sig = list.map(L => L.id + ':' + L.name + ':' + L.part.kind + ':' + (L.on ? 1 : 0)).join('|');
-    if (h._sig === sig && h.querySelectorAll('.v2-layer').length === list.length) {
+    let onlyCard = null;
+    if (opt && Number.isFinite(opt.only) && h._sig === sig && h.querySelectorAll('.v2-layer').length === list.length) {
+      onlyCard = h.querySelector('.v2-layer[data-v2id="' + (opt.only | 0) + '"]');
+    }
+    // the cards a rebuild touches: one, or all
+    const cardsDo = () => onlyCard
+      ? [...h.querySelectorAll('.v2-layer[data-v2id="' + (opt.only | 0) + '"]')]
+      : [...h.querySelectorAll('.v2-layer')];
+    if (!onlyCard && h._sig === sig && h.querySelectorAll('.v2-layer').length === list.length) {
       h.querySelectorAll('.v2-layer').forEach(card => {
         const L = list.find(x => x.id === (card.getAttribute('data-v2id') | 0));
         if (!L) return;
@@ -24068,10 +25134,15 @@
     try {
       const exp = document.getElementById('lane-expander');
       const stash = document.getElementById('lane-expander-stash');
-      if (exp && stash && h.contains(exp)) { stash.appendChild(exp); parked = true; }
+      if (exp && stash && (onlyCard || h).contains(exp)) { stash.appendChild(exp); parked = true; }
     } catch (e) {}
-    h.innerHTML = list.map(cardHtml).join('');
-    h.querySelectorAll('.v2-layer').forEach(card => {
+    if (onlyCard) {
+      const Lo = list.find(x => (x.id | 0) === (opt.only | 0));
+      const tmp = document.createElement('div'); tmp.innerHTML = cardHtml(Lo);
+      if (tmp.children.length === 1) onlyCard.replaceWith(tmp.firstElementChild);
+      else { onlyCard = null; h.innerHTML = list.map(cardHtml).join(''); }
+    } else h.innerHTML = list.map(cardHtml).join('');
+    cardsDo().forEach(card => {
       const id = card.getAttribute('data-v2id') | 0;
       const L = list.find(x => x.id === id); if (!L) return;
       // A STAGED CARD'S TWO PANELS ARE BUILT FROM THE COPY — the rows carry
@@ -24140,7 +25211,7 @@
     // …and an EXPANDED card always carries one: the editor is the card's body
     // now, so a card with none would render empty. Same group and tab as
     // before the rebuild, else the section that holds the drawing.
-    h.querySelectorAll('.v2-layer').forEach((card2) => {
+    cardsDo().forEach((card2) => {
       const id2 = card2.getAttribute('data-v2id') | 0;
       const L2 = list.find(x => (x.id | 0) === id2);
       if (!L2 || card2.classList.contains('collapsed')) return;
@@ -24165,7 +25236,7 @@
     // ELEMENT (it takes an `el(suffix)` lookup), so it has to run against the
     // rebuilt DOM each time. Guarded by a per-element flag so a rebuild that
     // reuses a node cannot double-bind it (the documented double-handler trap).
-    h.querySelectorAll('.v2-layer').forEach((card) => {
+    cardsDo().forEach((card) => {
       const id = card.getAttribute('data-v2id') | 0;
       const el = (suf) => document.getElementById('ambient-v2-' + id + '-' + suf);
       const getL = () => { try { return (E.getCfg().layers || []).find(x => x && (x.id | 0) === id) || null; } catch (e) { return null; } };
@@ -25243,6 +26314,9 @@
           if (ev.isPrimary === false || FULL.two) return;
           FULL.snap = JSON.stringify(L.part.notes || []); FULL.snapKind = L.part.kind;
         }
+        // THE CARD'S DRAWING IS A THUMBNAIL (2026-10-05): no gesture starts on it — the
+        // click handler opens ⤢ Editor (or, on the ruler, picks a bar to re-roll).
+        if (!inFull && !cvd.closest('.v2-partsteps')) return;
         if (inFull && L.instrument && L.instrument.voice === 'loop') {
           let ln = ''; try { ln = String(L.instrument.loopId || '').split('/').pop().replace(/_/g, ' '); } catch (e) {}
           fullSay('This layer plays an audio loop' + (ln ? ' (' + ln + ')' : '') + ' \u2014 notes don\u2019t apply to it. Pick a pitched sound in Instrument to draw notes.');
@@ -25258,6 +26332,21 @@
         const px = ev.clientX - r0.left, py = ev.clientY - r0.top;
         if (px < geo0.x0) {                            // the keyboard is its own control
           if (inFull) fullKeyDrag(ev, E, card, L, cvd);   // …and in ⤢, dragging it scrolls pitch
+          return;
+        }
+        // ⌨ COMPOSE MAKES THE NOTE GRID INERT (for now — user 2026-10-05): notes
+        // and empty space alike; writing comes from the keys. The ruler (cursor),
+        // the piano strip (scroll), the map and two fingers still work.
+        // …EXCEPT AS A PLACE (2026-10-05, user: "in Compose, clicking in grid should set
+        // where the cursor is"): a tap anywhere on it moves the teal write cursor to that
+        // time, snapped to the step — the same move a ruler tap makes. Notes stay untouched.
+        if (inFull && FULL.comp && py >= pg0.top) {
+          const frG = (geo0.f0 || 0) + ((px - geo0.x0) / Math.max(1, geo0.w)) * ((geo0.vsc > 0) ? geo0.vsc : 1);
+          const stG = compStep(L);
+          FULL.cur = clamp(Math.round(frG / stG) * stG, 0, 1 - stG); FULL.chordWin = null;
+          cvd._dragged = Date.now();
+          try { drawPartViz(card, L, E); } catch (e) {}
+          fullSay('Cursor \u2192 ' + compPos(L, FULL.cur));
           return;
         }
         let hit = null;
@@ -25287,6 +26376,21 @@
           // it, release commits — direct drawing, not tap-then-edit. Empty
           // space outside draw mode still belongs to the click handler
           // (bar select), and the ruler strip is nobody's target.
+          // ⬚ MARQUEE (⤢ Select): a drag on empty space boxes notes in — every
+          // note it touches is gathered (a chord or group whole), live, ready
+          // for ⧉ Group notes. Sideways panning lives on the ruler, the map
+          // and two fingers.
+          if (inFull && modeOf(L) === 'multi' && py >= pg0.top) { fullMarquee(ev, E, card, L, cvd); return; }
+          // ▦ COMPOSE: a tap on the RULER moves the write cursor there (to the grid)
+          if (inFull && FULL.comp && py < pg0.top) {
+            const frC = (geo0.f0 || 0) + ((px - geo0.x0) / Math.max(1, geo0.w)) * ((geo0.vsc > 0) ? geo0.vsc : 1);
+            const stC = compStep(L);
+            FULL.cur = clamp(Math.round(frC / stC) * stC, 0, 1 - stC); FULL.chordWin = null;
+            cvd._dragged = Date.now();
+            try { drawPartViz(card, L, E); } catch (e) {}
+            fullSay('Cursor \u2192 ' + compPos(L, FULL.cur));
+            return;
+          }
           if (modeOf(L) !== 'draw' || py < pg0.top) {
             // ── DRAG THE PICTURE SIDEWAYS (2026-09-21) ───────────────────
             // user: "user needs to be able to navigate the entire part, so
@@ -25359,7 +26463,7 @@
             const ch = fullChordAdd(E, L, cvd, made);
             if (ch) { chordG = ch.group; idx = ch.idx; mode = 'len'; }   // a drag right sizes the whole chord
           } else if (inFull && modeOf(L) !== 'multi') {
-            mselSet(L, null);                          // a new single note is the selection now
+            mselSet(L, new Set([made.idx]));           // the note you just drew is the selection
           }
         } else {
           // THE RESIZE ZONE IS RELATIVE TO THE NOTE, never a fixed width: a
@@ -25403,6 +26507,13 @@
           else { idx = nearestNote(L.part.notes, hit.t, hit.midi); if (idx < 0) return; }
         }
         const n0 = L.part.notes[idx]; if (!n0) return;
+        // A NOTE PAST THE CYCLE'S END IS TRIMMED TO WHAT IS DRAWN, on the press. An
+        // overhang is invisible (the picture clips it), so a move uncovered and re-hid it
+        // and the note seemed to resize from its left edge with its right edge pinned —
+        // reported twice on 2026-10-05. What you grab is what you see.
+        if (Array.isArray(L.part.notes)) L.part.notes.forEach((nq) => {
+          if (nq && Number.isFinite(nq.t) && Number.isFinite(nq.dur) && nq.t + nq.dur > 1 + 1e-9) nq.dur = Math.max(1e-4, 1 - nq.t);
+        });
 
         // 3 · FREEZE THE AXIS, EXACTLY AS DRAWN, FROM THE PRESS. The window
         // follows the notes' own range, so dragging one would move the very
@@ -25443,7 +26554,14 @@
         // 🗑 act on what you just touched, never on a chord left gathered earlier
         if (inFull && !pen && modeOf(L) !== 'multi') {
           const k0 = chOfNote(L, idx);
-          mselSet(L, k0 ? new Set(chIdxs(L, k0)) : null);
+          // the press IS the selection, kept as a gathering so it survives a tap on
+          // the selection bar (the open-note marker does not: a tap outside the
+          // drawing closes it) — a chord / group whole, else this one note
+          mselSet(L, new Set(k0 ? chIdxs(L, k0) : [idx]));
+          // …and WHICH note of it you touched — by what it is (`t`, `midi`), not
+          // its index, which the next normalize re-sorts — for ✂ Break from chord
+          const nT = L.part.notes[idx];
+          FULL.tapNote = (k0 && nT) ? { t: nT.t, midi: nT.midi | 0, ch: k0 } : null;
           try { drawPartViz(card, L, E); } catch (e) {}   // the selection shows on the press
         }
         let group = chordG;
@@ -25466,6 +26584,8 @@
                  t0: n0.t, m0: n0.midi, d0: n0.dur, moved: 0,
                  gain: gain, off: off, group: group,
                  win: { loM: pgA.loM, hiM: pgA.hiM } };
+        DRAG.cur = dragCur(n0);
+        if (DRAG.group) DRAG.group.forEach((q) => { q.cur = dragCur(L.part.notes[q.i]); });
         cvd._dragGain = gain;                          // probes read the resolution here
         try { dragTip(ev, L, n0, off); } catch (e) {}  // the readout, from the first touch
         if (chordG && FULL && FULL.lastChord) fullSay(FULL.lastChord);   // …but a chord names the chord
@@ -25498,6 +26618,8 @@
             }
           }
           if (e2.cancelable) e2.preventDefault();
+          if (DRAG.cur) DRAG.idx = dragRefind(L, DRAG.idx, DRAG.cur);
+          if (DRAG.group) DRAG.group.forEach((q) => { if (q.cur) q.i = dragRefind(L, q.i, q.cur); });
           const n = L.part.notes[DRAG.idx]; if (!n) return;
           // ONE GESTURE, ONE AXIS. A move is horizontal OR vertical — decided
           // by the dominant travel at the arm, held for the whole gesture —
@@ -25554,14 +26676,16 @@
               const room = Math.min(...G.map((q) => Math.floor((1 - q.t0) / cell) - Math.round(q.d0 / cell)));
               k = clamp(k, 1 - minK, Math.max(0, room));
               G.forEach((q) => { const n2 = L.part.notes[q.i]; if (!n2) return;
-                n2.dur = Math.max(cell, Math.min(1 - n2.t, Math.round(q.d0 / cell) * cell + k * cell)); });
+                n2.dur = Math.max(cell, Math.min(1 - n2.t, Math.round(q.d0 / cell) * cell + k * cell)); n2.hl = 1; });
             } else {
               if (DRAG.axis !== 'y') {
                 let k = Math.round(dt / cell);
                 const loK = Math.min(...G.map((q) => Math.round(q.t0 / cell)));
                 const hiK = Math.max(...G.map((q) => Math.round(q.t0 / cell)));
                 const maxK = Math.max(0, Math.round((1 - cell / 2) / cell));
-                k = clamp(k, -loK, maxK - hiK);
+                // …and the gathering stops when its LAST-ENDING note meets the cycle's end
+                const endK = Math.min(...G.map((q) => Math.max(0, Math.floor((1 - Math.round(q.t0 / cell) * cell - (+q.d0 || 0)) / cell + 1e-6))));
+                k = clamp(k, -loK, Math.min(maxK - hiK, endK));
                 G.forEach((q) => { const n2 = L.part.notes[q.i]; if (!n2) return;
                   n2.t = clamp(Math.round(q.t0 / cell) * cell + k * cell, 0, 0.99999); });
               }
@@ -25581,6 +26705,8 @@
               }
             }
             try {
+              G.forEach((q) => { q.cur = dragCur(L.part.notes[q.i]) || q.cur; });
+              DRAG.cur = dragCur(L.part.notes[DRAG.idx]) || DRAG.cur;
               const cNow2 = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
               if (cNow2) card = cNow2;
               drawPartViz(card, L, E);
@@ -25591,9 +26717,18 @@
             // never shorter than one cell, never past the end of the cycle
             const want = Math.round((DRAG.d0 + dt) / cell) * cell;
             n.dur = Math.max(cell, Math.min(1 - n.t, want));
+            n.hl = 1;
           } else {
-            if (DRAG.axis !== 'y')
-              n.t = clamp(Math.round((DRAG.t0 + dt) / cell) * cell, 0, 1 - cell / 2);
+            // A MOVE KEEPS THE WHOLE NOTE IN THE CYCLE (2026-10-05, user: "if i drag this
+            // note to the right, it just shortens it, and … left it just makes it bigger").
+            // The start was clamped but the LENGTH was not, so a note ending at the cycle's
+            // end slid its tail past it, was drawn clipped (shorter), and came back into
+            // view on the way left (bigger). It stops at the end now; a note that already
+            // overhangs can still go left, never further right.
+            if (DRAG.axis !== 'y') {
+              const hiT = Math.max(Math.min(DRAG.t0, 1 - cell / 2), 1 - (+n.dur || 0));
+              n.t = clamp(Math.round((DRAG.t0 + dt) / cell) * cell, 0, Math.min(1 - cell / 2, hiT));
+            }
             if (DRAG.axis !== 'x') {
               // TOTAL displacement from the press, through a DETENT: plain
               // round() flips at every half-row boundary, and a 1-2px hand
@@ -25620,7 +26755,9 @@
           }
           // REDRAW ONLY. `getCfg` normalizes, which REPLACES every note object
           // and re-sorts — mid-drag that invalidates the index under the
-          // finger — so the commit waits for pointerup.
+          // finger — so the commit waits for pointerup. (And the redraw itself
+          // can normalize, so the note is re-found next move: `dragRefind`.)
+          DRAG.cur = dragCur(n);
           try {
             const cNow = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]');
             if (cNow) card = cNow;
@@ -25632,6 +26769,8 @@
           document.removeEventListener('pointermove', mv);
           dragTipHide();
           const d = DRAG; DRAG = null;
+          if (d && d.cur) d.idx = dragRefind(L, d.idx, d.cur);
+          if (d && d.group) d.group.forEach((q) => { if (q.cur) q.i = dragRefind(L, q.i, q.cur); });
           if (d && d.vs) { cvd._dragged = Date.now(); try { drawPartViz(card, L, E); } catch (e) {} return; }   // a scroll, nothing to commit
           if (d && d.group && FULL && FULL.chord && FULL.lastChord) fullSay(FULL.lastChord);
           // the lock's card rebuild, deferred out of the press so the
@@ -25656,7 +26795,17 @@
             // means the same thing either way. A PENCIL tap already made its
             // note, so it opens too — and stamps the click suppressor, or
             // the click handler's own draw path would add a SECOND note.
-            if (d && (d.locked || d.pen)) { try { neOpen(E, L, d.idx, card); } catch (e) {} }
+            // …IN ⬚ SELECT THAT TAP GATHERS, it does not open the editor: the
+            // freeze that a first tap on a GENERATED take performs rebuilds the
+            // card, so no click follows and the gather had nowhere to happen —
+            // the first tap gathered nothing and Group notes stayed off.
+            if (d && d.locked && !d.pen && modeOf(L) === 'multi') {
+              const k3 = chOfNote(L, d.idx);
+              const cur3 = new Set(mselOf(L) || []);
+              (k3 ? chIdxs(L, k3) : [d.idx]).forEach((i) => cur3.add(i));
+              mselSet(L, cur3); NE = null;
+              try { const cG = document.querySelector('.v2-layer[data-v2id="' + (L.id | 0) + '"]') || card; drawPartViz(cG, L, E); multiSync(cG, L); } catch (e) {}
+            } else if (d && (d.locked || d.pen)) { try { neOpen(E, L, d.idx, card); } catch (e) {} }
             if (d && d.pen) cvd._dragged = Date.now();
             return;
           }
@@ -25678,6 +26827,8 @@
             mselSet(L, nx);
           }
           if (NE && NE.id === (L.id | 0)) NE.idx = nearestNote(L.part.notes, t, midi);
+          // ⤢ a single note's selection follows it through the re-sort
+          if (!gid && FULL && FULL.id === (L.id | 0) && n) { const ms1 = mselOf(L); if (!ms1 || ms1.size <= 1) mselSet(L, new Set([nearestNote(L.part.notes, t, midi)])); }
           // ⤢ FULL VIEW: the note you just drew or dragged IS the selection, so
           // 🗑 Delete has something to act on without a second tap (a pencil
           // TAP already selects via `neOpen`; a pencil DRAG never did).
@@ -26858,7 +28009,7 @@
                       ' are kept and come back when you switch back.'
                     : 'the other form keeps whatever is in it.'), { ms: 3800 });
           } catch (e) {}
-          commit(ctx); h._sig = ''; V2.render(E);
+          commit(ctx); V2.render(E, { only: ctx.L.id | 0 });   // only THIS card's markup changed
           return;
         }
         // ── ⌸ A TAP ON THE ROW'S GRID ───────────────────────
@@ -26944,7 +28095,14 @@
         // ONE COMPOSE SESSION, TWO DOORS: ▦ Compose in the row above the
         // drawing, and the take bar's own grid option. A function DECLARATION
         // so it hoists above the branch below that calls it.
+        // ▦ COMPOSE IS THE ROLL NOW (option A): the ⤢ view with the compose
+        // keyboard docked above it. The old docked step-grid session is no
+        // longer a v2 door (`composeFn` stays for its own callers).
         function openComposeGrid(ctx) {
+          try { secClose(ctx.card); } catch (e) {}
+          openFullDraw(E, ctx, { compose: true });
+        }
+        function openComposeGridOld(ctx) {
           // A DOOR THAT HANDS OFF TO THE CARD MUST CLOSE THE SECTION POPOVER
           // FIRST (the documented "grid doesn't show" bug): Make is modal over
           // the card, and the dock these open is pinned to the card BODY.
@@ -26983,6 +28141,10 @@
           const fm = t.closest('.v2-fullm');
           if (fm && LF) {
             const m = fm.getAttribute('data-m');
+            const wasComp = FULL.comp;
+            FULL.comp = (m === 'compose'); keysRemember(FULL.comp);
+            if (wasComp && !FULL.comp) { try { FULL.sus.forEach((h2) => { try { h2.release(); } catch (e2) {} }); } catch (e2) {} FULL.sus.clear(); FULL.held.clear(); FULL.perf = false; FULL.wrap = null; }
+            if (FULL.comp) { refreshFull(E); fullSay('\u2328 Compose \u2014 a key writes at the teal cursor (\u270e Step); the roll is read-only. Tap the ruler to move the cursor.'); return; }
             FULL.chord = (m === 'chord');
             setMode(LF, m === 'multi' ? 'multi' : 'draw'); NE = null;
             refreshFull(E);
@@ -27014,8 +28176,96 @@
             fullView(E, z[0] === 'x' ? { zx: z[1] === '+' ? 1 : -1, chrome: 1 } : { zy: z[1] === '+' ? 1 : -1, chrome: 1 });
             return;
           }
-          if (t.closest('.v2-fulldel')) { fullDelete(E); return; }
+          if (t.closest('.v2-fulldel') && LF) {
+            const nSel = fullSelIdx(LF).length, nAll = (LF.part.notes || []).length;
+            fullSheet('Delete', sheetItem('del', '\ud83d\uddd1 Delete selected', nSel ? (nSel + ' note' + (nSel === 1 ? '' : 's')) : 'select notes first') +
+              // CLEAR ALL is the card's own ⌫ Clear — same class, same handler (it asks first)
+              '<button type="button" class="v2-fsitem v2-clearpart v2-fsdanger"><span>\u232b Clear all notes</span><i>' + nAll + ' note' + (nAll === 1 ? '' : 's') + ' \u2014 asks first</i></button>');
+            return;
+          }
+          if (t.closest('.v2-fullundo') && LF) { fullHistStep(E, -1); return; }
+          if (t.closest('.v2-fullredo') && LF) { fullHistStep(E, 1); return; }
           if (t.closest('.v2-fullbreak')) { fullBreak(E); return; }
+          // ── the selection bar and its sheets
+          if (t.closest('.v2-fshclose')) { const sh = t.closest('.v2-fullsheet'); if (sh) sh.remove(); return; }
+          const fs2 = t.closest('.v2-fsitem2');
+          if (fs2 && LF) {
+            const pr = fs2.getAttribute('data-act').split(':'); const G = FULL.gen || (FULL.gen = { k: 3, n: 8, r: 0 });
+            const d = pr[2] | 0;
+            if (pr[1] === 'n') { G.n = clamp(G.n + d, 1, 32); G.k = Math.min(G.k, G.n); G.r = Math.min(G.r, G.n - 1); }
+            if (pr[1] === 'k') G.k = clamp(G.k + d, 0, G.n);
+            if (pr[1] === 'r') G.r = (G.r + d + G.n) % G.n;
+            compGenSheet(E); return;
+          }
+          const fsi = t.closest('.v2-fsitem');
+          if (fsi && LF && !fsi.classList.contains('v2-clearpart')) {   // Clear all falls through to ⌫ Clear's handler
+            const a2 = fsi.getAttribute('data-act');
+            const sh = fsi.closest('.v2-fullsheet');
+            if (a2 && a2.indexOf('wraps:') === 0) { const w = (FULL.wrapsList || [])[a2.slice(6) | 0]; if (w) compWriteUnit(E, w.ms, w.shape); if (sh) sh.remove(); return; }
+            if (a2 && a2.indexOf('sz:') === 0) { const pr = a2.split(':'); fullSelAct(E, 'sz', { f: +pr[1], lbl: fsi.querySelector('span').textContent }); }
+            else fullSelAct(E, a2);
+            if (sh && !sh.classList.contains('v2-keep')) sh.remove();
+            return;
+          }
+          if (t.closest('.v2-fs-up') && LF) { if (!(t.closest('.v2-fs-up')._held)) fullSelAct(E, 'up'); return; }
+          if (t.closest('.v2-fs-dn') && LF) { if (!(t.closest('.v2-fs-dn')._held)) fullSelAct(E, 'dn'); return; }
+          if (t.closest('.v2-fs-del') && LF) { fullSelAct(E, 'del'); return; }
+          if (t.closest('.v2-fs-dup') && LF) { fullSelAct(E, 'dup'); return; }
+          if (t.closest('.v2-fs-mv') && LF) {
+            const d = fullSheet('Move', sheetItem('mvl', '\u25c0 Earlier', 'one grid step') + sheetItem('mvr', 'Later \u25b6', 'one grid step') +
+              sheetItem('mvbl', '\u23ee Earlier a bar', '') + sheetItem('mvbr', 'Later a bar \u23ed', ''));
+            if (d) d.classList.add('v2-keep');
+            return;
+          }
+          if (t.closest('.v2-fs-sz') && LF) {
+            fullSheet('Size', [['0.03125', '1/32'], ['0.0625', '1/16'], ['0.125', '1/8'], ['0.25', '1/4'], ['0.5', '1/2'], ['1', '1 bar']].map((z) => sheetItem('sz:' + z[0], z[1], '')).join('') +
+              sheetItem('x2', '\u00d72 longer', '') + sheetItem('h2', '\u00f72 shorter', '') + sheetItem('quant', '\u229e Quantize', 'starts + lengths to the grid'));
+            return;
+          }
+          if (t.closest('.v2-fs-tf') && LF) {
+            fullSheet('Transform', sheetItem('rev', '\u2194 Reverse', 'last note first') + sheetItem('shuf', '\u2928 Shuffle', 'same starts, pitches mixed') +
+              sheetItem('rot', '\u21bb Rotate', 'each pitch moves to the next note') + sheetItem('inv', '\u21c5 Next inversion', 'lowest note up an octave') +
+              sheetItem('arpU', '\u266a Arpeggiate up', 'a chord spread out, low to high') + sheetItem('arpD', '\u266a Arpeggiate down', 'high to low') +
+              sheetItem('quant', '\u229e Quantize', 'snap to the grid') + sheetItem('rep2', '\u29c9 Repeat', 'a copy after it') + sheetItem('rep4', '\u29c9 Repeat \u00d73', 'three copies after it'));
+            return;
+          }
+          if (t.closest('.v2-fs-nt') && LF) { fullNoteSheet(E, 'Sound'); return; }
+          if (t.closest('.v2-fsrules') && LF) {
+            fullSheet('Select', sheetItem('sel:all', 'All notes', '') + sheetItem('sel:none', 'None', '') + sheetItem('sel:inv', 'Invert', 'everything not selected') +
+              sheetItem('sel:n2', 'Every 2nd', 'by onset') + sheetItem('sel:n3', 'Every 3rd', 'by onset') + sheetItem('sel:n4', 'Every 4th', 'by onset') +
+              sheetItem('sel:chord', 'Chords', 'notes that start together') + sheetItem('sel:beat', 'On the beat', 'starts on a quarter note'));
+            return;
+          }
+          const ntab = t.closest('.v2-ntab');
+          if (ntab && LF) { fullNoteSheet(E, ntab.getAttribute('data-tab')); return; }
+          // ▦ compose buttons
+          const fco = t.closest('.v2-fco');
+          if (fco && LF) { FULL.oct = clamp((FULL.oct | 0) + (fco.getAttribute('data-o') | 0), 1, 7); refreshFull(E); fullSay('Keyboard octave ' + FULL.oct + ' \u2014 C' + FULL.oct + ' to B' + FULL.oct); return; }
+          if (t.closest('.v2-fcgen') && LF) { compGenSheet(E); return; }
+          if (t.closest('.v2-fcwrap') && LF) {
+            if (!FULL.wrap || !FULL.wrap.on) { FULL.wrap = { on: true, ms: [] }; refreshFull(E); fullSay('Wrap \u2014 play the notes to collect, then press Wrap again.'); return; }
+            if (!FULL.wrap.ms.length) { FULL.wrap = null; refreshFull(E); fullSay('Wrap off \u2014 nothing collected.'); return; }
+            const d = fullSheet('Wrap \u2014 ' + FULL.wrap.ms.map(noteName).join(' '),
+              sheetItem('wrap:stack', '\u266b Stack', 'a chord at the cursor') + sheetItem('wrap:run', '\u29c9 Run', 'one after another, inside one step') + sheetItem('wrap:discard', '\u2715 Discard', ''));
+            return;
+          }
+          if (t.closest('.v2-fcwraps') && LF) {
+            const ws = compSavedWraps(); FULL.wrapsList = ws;
+            fullSheet('Saved wraps', ws.length ? ws.map((w, i) => sheetItem('wraps:' + i, w.name, (w.shape === 'run' ? '\u29c9 run \u00b7 ' : '\u266b ') + w.ms.map(noteName).join(' '))).join('')
+              : '<p class="v2-nsoon">No saved wraps yet \u2014 make one with Wrap, or save one from the Grid view.</p>');
+            return;
+          }
+          if (t.closest('.v2-fcstep') && LF) { FULL.step = !FULL.step; if (FULL.step) FULL.perf = false; refreshFull(E);
+            fullSay(FULL.step ? '\u270e Step on \u2014 each key writes at the teal cursor.' : 'Step off \u2014 keys only audition.'); return; }
+          if (t.closest('.v2-fcperf') && LF) { FULL.perf = !FULL.perf; if (FULL.perf) FULL.step = false; refreshFull(E);
+            fullSay(FULL.perf ? (E.timer ? '\u25cf Perf \u2014 play along; notes land where you play them.' : '\u25cf Perf armed \u2014 press \u25b6 on the transport, then play along.') : 'Perf off.'); return; }
+          if (t.closest('.v2-fcrest') && LF) { compAdvance(E, LF, compStep(LF)); FULL.chordWin = null; compCommit(E, LF);
+            fullSay('Rest \u2014 cursor \u2192 ' + compPos(LF, Math.min(FULL.cur, 0.99999))); return; }
+          if (t.closest('.v2-fcbar') && LF) {
+            const bf = Math.max(0.0625, LF.part.bars || 1), nb = (Math.floor(FULL.cur * bf + 1e-6) + 1) / bf;
+            compAdvance(E, LF, Math.min(1, nb) - FULL.cur); FULL.chordWin = null; compCommit(E, LF);
+            fullSay('\u2938 Bar \u2014 cursor \u2192 ' + compPos(LF, Math.min(FULL.cur, 0.99999))); return; }
+          if (t.closest('.v2-fullgroup')) { fullGroup(E); return; }
           if (t.closest('.v2-fulllegbtn') || t.closest('.v2-lgclose')) { fullLegend(E); return; }
         }
         const wrb = t.closest('.v2-writebtn');
@@ -27449,10 +28699,39 @@
           // things, which is the tab-reorder lesson.
           if (cvz._dragged && Date.now() - cvz._dragged < 500) { cvz._dragged = 0; return; }
           const ctx = layerOf(cvz); if (!ctx) return;
-          if (vmRefuse(cvz)) return;   // another part's record is drawn — read-only
           const r = cvz.getBoundingClientRect();
           const px = (ev.clientX != null ? ev.clientX : 0) - r.left;
           const py = (ev.clientY != null ? ev.clientY : 0) - r.top;
+          // ▭ THE CARD'S THUMBNAIL (2026-10-05, user: "encapsulate more and make it more
+          // clean to switch back and forth"). Two answers, by where you tap:
+          //   the RULER  → pick a bar / chord for 🎲 to re-roll (a take action, so it
+          //                stays beside the take bar — the one card gesture that survived);
+          //   anywhere else → ⤢ Editor, opened at the bar you tapped.
+          // Every editing gesture (draw, select, drag, the piano) lives in the editor.
+          if (!cvz.closest('.v2-full') && !cvz.closest('.v2-partsteps')) {
+            const LT = ctx.L, geoT = cvz._barsGeo;
+            const inRulerT = !!geoT && py <= ((cvz._pitchGeo && cvz._pitchGeo.top) || 15);
+            if (inRulerT) {
+              if (vmRefuse(cvz)) return;   // another part's record is drawn — read-only
+              if (LT.part.kind === 'recorded' && !(LT.part.notes || []).length) return;
+              const reg = regAtTap(cvz, geoT, px, py);
+              if (!reg) return;
+              if (!BSEL || BSEL.id !== (LT.id | 0) || BSEL.sig !== bselSig(LT)) {
+                BSEL = { id: LT.id | 0, sig: bselSig(LT), bars: new Map() };
+              }
+              if (BSEL.bars.has(reg.key)) BSEL.bars.delete(reg.key);
+              else BSEL.bars.set(reg.key, reg.nm);
+              const cS = document.querySelector('.v2-layer[data-v2id="' + (LT.id | 0) + '"]') || ctx.card;
+              try { drawPartViz(cS, LT, E); } catch (e) {}
+              return;
+            }
+            const plT = cvz._plotGeo;
+            const barT = (geoT && plT && geoT.w > 0)
+              ? Math.max(0, Math.floor((geoT.bar0 || 0) + (px - (plT.x0 || 0)) / geoT.w * (geoT.vbars || geoT.barsF || 1))) : 0;
+            openFullDraw(E, ctx, { bar: barT });
+            return;
+          }
+          if (vmRefuse(cvz)) return;   // another part's record is drawn — read-only
           // A TAP ON THE DRAWN PIANO MOVES THE SELECTED NOTE TO THAT KEY.
           // Pitch had one control — a ± stepper over 0..127 — which is the
           // tap-to-cycle mistake at 128 values, with a keyboard naming every
@@ -27655,6 +28934,13 @@
               const R2 = V2.draftCommit(E, ctx.L);
               if (R2) { try { v2TakeHeard(E, R2); } catch (e) {} ctx.L = R2; }
               try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+            }
+            // ◫ GENERATE, OPENED ON THE STRETCH (2026-10-05, user: the re-roll panel should be
+            // "like the latest Generate menu"). The old per-bar panel (`BARPOP`) is retired:
+            // Generate's bar scope writes the same per-bar store (`ruleb`) through `setBarRule`.
+            if (typeof window._genV2Open === 'function') {
+              window._genV2Open(E, ctx.L, { scope: { bars: selBarsN.slice(), nm: bselLabel(selN) } });
+              return;
             }
             BARPOP = { id: ctx.L.id | 0, bars: selBarsN.slice(), nm: bselLabel(selN) };
             try { barpopSync(ctx.card, ctx.L); } catch (e) {}
@@ -28461,6 +29747,21 @@
               // \u21ba RESTORE \u2014 above Remove, and asking first: it destroys every
               // setting and the notes, which is exactly the press people mean
               // to make deliberately and never by accident.
+              { label: (V2.formOf(ctx.L) === 'steps' ? '\u21c4 Convert to a Roll layer\u2026' : '\u21c4 Convert to a Pattern layer\u2026'), fn: () => setTimeout(() => {
+                  const lid = ctx.L.id, toSteps = V2.formOf(ctx.L) !== 'steps';
+                  window.uiConfirm(toSteps
+                    ? 'Convert \u201c' + ctx.L.name + '\u201d to a Pattern layer?\n\nWhat it plays now is snapped onto the step grid. Its notes stay stored, so converting back keeps them.'
+                    : 'Convert \u201c' + ctx.L.name + '\u201d to a Roll layer?\n\nWhat the pattern plays is written down as notes you can edit in the roll.').then((ok) => {
+                    if (!ok) return;
+                    const L2 = ((E.getCfg().layers) || []).find((x) => x && x.id === lid); if (!L2) return;
+                    if (!convertFormFn(E, L2, toSteps ? 'steps' : 'roll')) return;
+                    try { if (E.timer && _ambLiveApplyOK(E) && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('v2:' + (lid | 0), Tone.now()); } catch (e) {}
+                    try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + (lid | 0)]; } catch (e) {}
+                    try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+                    try { if (typeof showToast === 'function') showToast('\u21c4 \u201c' + L2.name + '\u201d is a ' + (toSteps ? 'Pattern' : 'Roll') + ' layer now.', { ms: 3500 }); } catch (e) {}
+                    h._sig = ''; V2.render(E);
+                  });
+                }, 0) },
               { label: '\u21ba Restore to default\u2026', fn: () => setTimeout(() => {
                   // NON-BLOCKING (window.uiConfirm); re-resolved by id on the answer
                   const lid = ctx.L.id;

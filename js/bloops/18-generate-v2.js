@@ -225,6 +225,8 @@
     'part.pitch.octaves': { def: 1, what: 'How many octaves a run covers.', lo: 'one octave', hi: 'four octaves' },
     'chg.am': { def: 100, what: 'How much of the material each change touches. The rest is kept.', lo: 'nothing changes', hi: 'all of it changes', gate: (L) => (((L.chg || {}).ev | 0) > 0 ? null : 'needs Evolve'), long: 'Turn Evolve up first.' },
     'part.transpose': { what: 'Moves every written note up or down.', lo: 'two octaves down', hi: 'two octaves up' },
+    'part.ops.arp': { what: 'Spreads each chord (or note) into a run through its tones: this many notes in each hit’s time.', lo: 'off', hi: '16 notes a hit' },
+    'part.ops.scale': { def: 100, what: 'Fits the notes into a share of their span, lengths included. Past 100% they run on into what follows.', lo: 'squeezed into a tenth', hi: 'stretched to twice' },
     phrasing: { what: 'From even notes to shaped figures.', lo: 'even', hi: 'shaped figures' },
     twist: { what: 'From a steady flow to bursts.', lo: 'steady', hi: 'bursts' },
   };
@@ -263,6 +265,11 @@
         S_('part.pitch.roam', 'Roam', 0, 100, 1, '', 'voice:synth;pitch:fixed,stack,chord'), S_('part.pitch.randomness', 'Scatter', 0, 100, 1, '', 'voice:synth;pitch:series'),
         S_('part.pitch.drift', 'Pitch vary', 0, 100, 1, '', 'voice:synth;pitch:fixed,series,walk,chance')]],
       ['Chords', [S_('part.pitch.voices', 'Notes at once', 1, 9, 0, '', 'voice:synth;pitch:chord,stack,mixed'), S_('part.pitch.inv', 'Inversion', -12, 12, 0, '', 'voice:synth;pitch:chord,stack'),
+        // RECOLOUR (2026-10-05) — were only in the old per-bar re-roll panel; the part has them too
+        C_('part.pitch.qual', 'Chord', [['', 'The change’s own'], ['maj', 'Major'], ['min', 'Minor'], ['dim', 'Diminished °'], ['dim7', 'Diminished 7th °7'], ['aug', 'Augmented +'], ['sus2', 'Sus2'], ['sus4', 'Sus4']], 'voice:synth',
+          { what: 'Recolours the chords it plays — or keeps each change’s own.', gate: (L) => (/^(drawn|grid)$/.test(pk(L) || '') ? 'not for written pitches' : null) }),
+        C_('part.pitch.ext', 'Extension', [['', 'None'], ['6', '6th'], ['7', '7th ♭7'], ['maj7', 'Major 7th ♮7'], ['9', '9th'], ['11', '11th'], ['13', '13th']], 'voice:synth',
+          { what: 'Stacks a 6th, 7th, 9th… on top of each chord.', gate: (L) => (/^(drawn|grid)$/.test(pk(L) || '') ? 'not for written pitches' : null) }),
         S_('part.pitch.spread', 'Spread', 0, 3, 0, '', 'voice:synth;pitch:chord'), S_('part.pitch.variety', 'Variety', 0, 100, 1, '', 'voice:synth;pitch:chord'),
         C_('part.pitch.chordMode', 'Voicing', [['', 'Simple', 'Stack the tones.'], ['chaos', 'Chaos'], ['chords', 'Chords'], ['chordsplus', 'Chords+'], ['monk', 'Monk']], 'voice:synth;pitch:chord', { what: 'How the chord’s notes are arranged.' }),
         C_('part.pitch.feel', 'Voicing feel', [['', 'In order', 'The same voicing each pass.'], ['stochastic', 'Stochastic', 'A new voicing each pass.']], 'voice:synth;pitch:chord', { what: 'Whether the voicing stays the same or changes each pass.' }),
@@ -288,12 +295,21 @@
         S_('flourish.amount', '✦ Flourish', 0, 100, 1), S_('flourish.wild', 'Flourish size', 0, 100),
         C_('flourish.where', 'Flourish where', [['', 'Anywhere'], ['end', 'Phrase ends'], ['chg', 'Into a change']], '', { what: 'Where a flourish is most likely.' }),
         C_('breath.pair', 'Pair them', [['', 'Independent'], ['fill', 'Flourish, then rest'], ['enter', 'Rest, then a flourish']], '', { what: 'A fill and the silence after it can be one gesture.' })]],
+      // ⟳ / ⬡ OPERATIONS (2026-10-05) — run on what the rules made; for the whole part
+      // (`part.ops`) or, opened on a bar, for that stretch
+      ['Operations', [S_('part.ops.arp', '⟳ Arpeggiate', 0, 16),
+        C_('part.ops.arpDir', 'Arp direction', [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down']], '', { def: 'up', what: 'Which way the arpeggio runs.', gate: (L) => (((+getPath(L, 'part.ops.arp')) | 0) > 0 ? null : 'needs Arpeggiate') }),
+        S_('part.ops.scale', '⬡ Scale', 10, 200, 0, '%')]],
       ['Change over time', [S_('chg.ev', 'Evolve (passes)', 0, 64), S_('chg.am', 'How much', 0, 100, 0, '%'),
         C_('chg.clock', 'Against', [['', 'Passes of this part'], ['round', 'Rounds of the arrangement']], '', { what: 'What a pass counts. With no progression, the layer’s own cycle is the pass.' }),
         S_('part.rhythm.vary', 'Vary', 0, 100, 1, '', 'rhythm:euclid,drawn'),
         S_('phrasing', 'Phrasing', 0, 100, 1), S_('twist', 'Twist', 0, 100, 1)]],
     ] },
     { id: 'more', label: 'More', secs: [
+      // ◈ CHARACTER — a named set of rules, for the whole part or (opened on a bar) that stretch
+      ['Character', [C_('__char', 'Character', () => [['', G && G.scope ? '— the part’s own rules' : '— none']].concat((V2.presets || []).map((pr) => [pr.id, pr.label])), '', {
+        what: 'A named set of rules. Picking one writes them; change any control afterwards to tune it.',
+        get: (L) => { try { if (G && G.scope) return (V2.charState(G.E, layer(), G.scope.bars[0]) || {}).id || ''; return (V2.presetState(L) || {}).id || ''; } catch (e) { return ''; } } })]],
       ['Answer another layer', [C_('part.answer.src', 'Answer', (L) => [['', 'Off', 'Plays on its own.']].concat(((G && G.E && G.E.getCfg().layers) || []).filter((x) => x && x.id !== L.id).map((x) => [String(x.id | 0), x.name || ('Layer ' + (x.id | 0))])), '', {
           what: 'Plays off another layer: this one is filtered against what that one plays.', get: (L) => String(((L.part.answer || {}).src | 0) || ''),
           set: (L, k) => { if (!k) delete L.part.answer; else L.part.answer = Object.assign({ mode: 'gaps' }, L.part.answer || {}, { src: +k }); } }),
@@ -319,7 +335,65 @@
     try { V2.render(E); } catch (e) {}
   }
   function snapNow() { const L = layer(); return L ? JSON.stringify(L) : null; }
+  // ◫ OPENED ON A BAR (2026-10-05, user: the re-roll panel should be "like the latest
+  // Generate menu"). `G.scope = {bars, nm}` and every control reads a VIEW: the layer
+  // with that stretch's EFFECTIVE rules (`V2.barRules`, the part's with the bar's own on
+  // top) as its part. An edit runs on the view and only the fields that changed are
+  // written back through `V2.setBarRule` — which stores just what DIFFERS from the part,
+  // so a value set back to the part's is dropped. A field a bar cannot hold is reported.
+  const scoped = () => !!(G && G.scope && G.scope.bars && G.scope.bars.length);
+  const GRPS = ['rhythm', 'pitch', 'shape', 'ops'];
+  function viewOf(R) {
+    if (!scoped() || !R || !R.part) return R;
+    const v = clone(R), br = V2.barRules(R.part, G.scope.bars[0]) || {};
+    GRPS.forEach((g) => { v.part[g] = clone(br[g] || {}); });
+    if (!Object.keys(v.part.ops).length) delete v.part.ops;
+    delete v.part.ruleb; delete v.part.takeb;
+    if (br.own) delete v.part.mat;            // a stretch with rules of its own is named by them
+    return v;
+  }
+  function scopable(path) {
+    if (path === '__char') return true;
+    const m = /^part\.(rhythm|pitch|shape|ops)\.([A-Za-z0-9]+)$/.exec(String(path || ''));
+    return !!(m && ((V2.barFields || {})[m[1]] || {})[m[2]]);
+  }
+  const SCOPE_QUIET = { move: 1 };            // Movement's own bookkeeping: the kind carries it
+  function scopeWrite(R, a, b) {
+    const F = V2.barFields || {}, bars = G.scope.bars, lost = [];
+    const J = (x) => JSON.stringify(x === undefined ? null : x);
+    GRPS.forEach((g) => {
+      const A = (a.part && a.part[g]) || {}, B = (b.part && b.part[g]) || {};
+      new Set(Object.keys(A).concat(Object.keys(B))).forEach((f) => {
+        if (J(A[f]) === J(B[f])) return;
+        if (!(F[g] && F[g][f])) { if (!SCOPE_QUIET[f]) { const c = ctlOf('part.' + g + '.' + f); lost.push(c ? c.label : f); } return; }
+        let v = B[f];
+        if (v === undefined) {
+          const base = (R.part[g] || {})[f];
+          if (base !== undefined) { V2.setBarRule(R, bars, g, f, base); return; }
+          bars.forEach((k) => { const ov = R.part.ruleb && R.part.ruleb[String(k)]; if (ov && ov[g]) { delete ov[g][f]; if (!Object.keys(ov[g]).length) delete ov[g]; } });
+          return;
+        }
+        if (typeof v === 'boolean') v = v ? 1 : 0;
+        if (!V2.setBarRule(R, bars, g, f, v) && J((R.part[g] || {})[f]) !== J(v)) { const c = ctlOf('part.' + g + '.' + f); lost.push(c ? c.label : f); }
+      });
+    });
+    const top = (x) => { const o = clone(x); delete o.part; return JSON.stringify(o); };
+    if (top(a) !== top(b)) lost.push('settings outside the rules');
+    return lost;
+  }
   function edit(fn, note) {
+    if (!scoped()) { editReal(fn, note); return; }
+    const R = layer(); if (!R) return;
+    const before = JSON.stringify(R), v = viewOf(R), v0 = clone(v);
+    try { fn(v); } catch (e) { try { console.warn('[genV2]', e); } catch (x) {} }
+    let lost = [];
+    try { lost = scopeWrite(R, v0, v); } catch (e) { try { console.warn('[genV2 scope]', e); } catch (x) {} }
+    persist();
+    if (snapNow() !== before) { G.hist.push(before); G.pick = -1; }
+    G.note = lost.length ? ('Only the whole part can set ' + lost.join(', ') + ' — switch to Whole part above to change ' + (lost.length > 1 ? 'them' : 'it') + '.') : (note !== undefined ? note : G.note);
+    paint();
+  }
+  function editReal(fn, note) {
     const L = layer(); if (!L) return;
     const before = JSON.stringify(L);
     try { fn(L); } catch (e) { try { console.warn('[genV2]', e); } catch (x) {} }
@@ -434,7 +508,7 @@
     const sig = (ns) => ns.map((n) => Math.round(n.at * 1000) + ':' + Math.round(midiOf(n.freq))).join(',');
     const inBar = (L2, ns, cyc) => { const bs = cyc / barsOf(L2); return ns.filter((n) => n.at >= bi * bs - 1e-6 && n.at < (bi + 1) * bs - 1e-6).length; };
     const before = sig(notesNow(L).ns);
-    edit((L2) => {
+    editReal((L2) => {
       const p = L2.part, key = V2.regBarKey(bi);
       p.takeb = Object.assign({}, p.takeb || {});
       let cur = Number.isFinite(p.takeb[key]) ? p.takeb[key] : ((V2.takeOf ? V2.takeOf(L2) : (p.take | 0)) | 0);
@@ -454,7 +528,7 @@
       // NOTHING RANDOM HERE: the same rules give the same bar. Move its hits to new
       // steps instead (a seeded rotation of this bar), and say so — never a silent no-op.
       G.hist.pop();   // the no-op pin is not worth an undo step
-      edit((L3) => {
+      editReal((L3) => {
         // the PATTERN, not the notes heard: with rests/breath/flourish on, the heard
         // notes have holes, and drawing those in would make the silence permanent
         const bare = JSON.parse(JSON.stringify(L3)); delete bare.restProb; delete bare.breath; delete bare.flourish; delete bare.ghosts;
@@ -593,7 +667,8 @@
     if (!G || !G.root) return;
     const L = layer();
     if (!L) { close(false); return; }
-    const sk = styleOf(L), sty = STYLES.find((s) => s.k === sk);
+    // ◫ the CONTROLS read the stretch's view when opened on a bar; the picture is the real part
+    const V = viewOf(L), sk = styleOf(V), sty = STYLES.find((s) => s.k === sk);
     const live = L.part && L.part.kind === 'live';
     const { ns, cyc } = notesNow(L);
     const bars = barsOf(L), nb = Math.max(1, Math.ceil(bars));
@@ -603,6 +678,15 @@
       + '<div class="g2-hint">for <b style="color:#ece8f8">' + esc(L.name || ('Layer ' + L.id)) + '</b></div></div>'
       + '<button type="button" class="g2-btn" data-a="cancel" aria-label="' + (G.fresh ? 'Remove this new layer and close' : 'Cancel and close') + '" style="width:44px;padding:0">✕</button></div>';
     h += '<div class="g2-body">';
+    // ◫ WHAT THIS EDITS — the whole part, or the stretch it was opened on
+    if (G.scopeFrom) {
+      const own = scoped() && V2.barHasOwn(L, G.scope.bars);
+      h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-cap">For</span><span class="g2-seg" role="group" aria-label="What this edits">'
+        + '<button type="button" data-a="scope" data-k="part" class="' + (scoped() ? '' : 'on') + '" aria-pressed="' + !scoped() + '">Whole part</button>'
+        + '<button type="button" data-a="scope" data-k="bar" class="' + (scoped() ? 'on' : '') + '" aria-pressed="' + scoped() + '">' + esc(G.scopeFrom.nm) + '</button></span>'
+        + (scoped() ? (own ? '<span class="g2-setn">its own rules</span><button type="button" class="g2-rsall" data-a="scopereset">↺ Back to the part’s</button>'
+          : '<span class="g2-hint">takes the part’s rules — change anything to give it its own</span>') : '') + '</div>';
+    }
     // 1. STYLE (collapsed once chosen)
     if (!G.styleOpen && sty) {
       h += '<div style="display:flex;align-items:center;gap:10px"><span class="g2-cap">Style</span>'
@@ -634,6 +718,11 @@
     // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
     const info = G.rollMode === 'info' || !live;
     h += '<div class="g2-roll" style="height:' + rollH + 'px">';
+    // ◫ the stretch being edited, marked on the whole part
+    if (scoped()) G.scope.bars.forEach((k) => {
+      const rg = V2.regParse(k); if (!rg) return; const tot = (V2.regSlots || 48) * bars;
+      h += '<div style="position:absolute;top:0;bottom:0;pointer-events:none;z-index:1;box-sizing:border-box;left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + (rg.a / tot).toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + ((rg.b - rg.a) / tot).toFixed(4) + ');background:rgba(94,234,212,.08);border:1px solid #2dd4bf;border-radius:4px"></div>';
+    });
     // the key column + row shading
     for (let m = hi; m >= lo; m--) {
       const y = yOf(m), blk = isBlack(m);
@@ -706,7 +795,7 @@
     h += '<div class="g2-tabs" role="tablist">' + TABS.map((t) => {
       const ctls = (t.secs || []).reduce((a, s) => a.concat(s[1]), []);
       const dice = ctls.some((c) => c.dice);
-      const nCh = ctls.filter((c) => (c.choice ? !!getPath(L, c.path) : valOf(L, c) !== defOf(c)) && c.path !== 'instrument.register').length;
+      const nCh = ctls.filter((c) => (c.choice ? !!getPath(V, c.path) : valOf(V, c) !== defOf(c)) && c.path !== 'instrument.register').length;
       return '<button type="button" role="tab" class="g2-tab' + (G.tab === t.id ? ' on' : '') + '" data-a="tab" data-t="' + t.id + '" aria-selected="' + (G.tab === t.id) + '">' + esc(t.label)
         + '<span style="display:flex;gap:3px;height:14px;align-items:center">' + (dice ? '<span style="display:inline-flex;color:#5eead4">' + DIE + '</span>' : '')
         + (nCh ? '<span style="min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#a78bfa;color:#160f2e;font-size:11px;font-weight:800;line-height:16px;text-align:center">' + nCh + '</span>' : '') + '</span></button>';
@@ -722,16 +811,16 @@
     } else {
       // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
       // Movement), with the finer controls for the same topic beneath it
-      if (G.tab === 'rhythm') h += rhythmHTML(L);
-      if (G.tab === 'pitch') h += movementHTML(L);
-      h += tabHTML(L, TABS.find((t) => t.id === G.tab));
+      if (G.tab === 'rhythm') h += scoped() ? scopedRhythmHTML(V) : rhythmHTML(L);
+      if (G.tab === 'pitch') h += movementHTML(V);
+      h += tabHTML(V, TABS.find((t) => t.id === G.tab));
     }
     h += '</div>';
     // footer
     h += '<div class="g2-foot"><button type="button" class="g2-btn" data-a="take"' + (live ? '' : ' disabled') + '>🎲 New take</button>'
       + '<button type="button" class="g2-btn" data-a="preview" aria-label="Preview" style="width:48px;padding:0">▶</button>'
       + '<button type="button" class="g2-btn pri" data-a="done">Done</button></div>';
-    if (G.dial) h += dialPopHTML(L);
+    if (G.dial) h += dialPopHTML(V);
     const sc = G.root.querySelector('.g2-body'), top = sc ? sc.scrollTop : 0;
     G.box.innerHTML = h;
     const sc2 = G.root.querySelector('.g2-body'); if (sc2) sc2.scrollTop = top;
@@ -940,9 +1029,26 @@
     return h;
   }
 
+  // ◫ A STRETCH'S RHYTHM — the rule's own numbers (the Step grid is a whole-part pattern)
+  function scopedRhythmHTML(L) {
+    const r = (L.part || {}).rhythm || {};
+    const row = (lab, inner) => '<div class="g2-ctl"><span class="g2-lab">' + lab + '</span><span class="g2-r">' + inner + '</span></div>';
+    const sq = (k, lab, aria) => '<button type="button" class="g2-btn g2-sq" data-a="srh" data-k="' + k + '" aria-label="' + aria + '">' + lab + '</button>';
+    let h = '<div class="g2-stack">';
+    if (r.kind === 'euclid') {
+      h += row('Hits', '<b class="g2-num">' + (r.pulses | 0) + '</b>' + sq('p-', '−', 'Fewer hits') + sq('p+', '+', 'More hits'));
+      h += row('Steps', '<b class="g2-num">' + ((r.steps | 0) || 16) + '</b>' + sq('s-', '−', 'Fewer steps') + sq('s+', '+', 'More steps'));
+      h += row('Shift', sq('r-', '◀', 'Shift earlier') + sq('r+', '▶', 'Shift later'));
+    } else if (r.kind === 'pulse') {
+      h += row('Hits', '<b class="g2-num">' + ((r.n | 0) || 4) + '</b>' + sq('n-', '−', 'Fewer hits') + sq('n+', '+', 'More hits'));
+    } else {
+      h += '<div class="g2-hint">This rhythm has no hit count of its own — pick a Rhythm type below, or switch to Whole part for the step grid.</div>';
+    }
+    return h + '</div>';
+  }
   function tabHTML(L, t) {
     let h = '';
-    if (t.id === 'more') {
+    if (t.id === 'more' && !scoped()) {   // (the layer's harmony rule is whole-layer)
       h += harmHTML(L);
     }
     if (false) {
@@ -964,7 +1070,7 @@
       h += '</div></div>';
     });
     if (hidden) h += '<button type="button" class="g2-rsall" data-a="showall" style="align-self:flex-start;margin:0">' + (G.showAll ? 'Hide the ' + hidden + ' settings that don’t apply' : 'Show all settings (' + hidden + ' more don’t apply to this layer)') + '</button>';
-    if (t.id === 'more') h += classicHTML(L);
+    if (t.id === 'more' && !scoped()) h += classicHTML(L);
     return h;
   }
   // WHAT IS STILL ONLY IN THE CLASSIC PANEL: custom rows with no tile yet. Named,
@@ -1001,7 +1107,7 @@
   }
   // a tile: name, a small gauge (or the chosen option), 🎲 if a re-roll changes it
   function tileHTML(L, c) {
-    const m = metaOf(c), why = (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
+    const m = metaOf(c), why = (scoped() && !scopable(c.path) ? 'whole part only' : null) || (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
     if (c.choice) {
       const k = choiceGet(L, c), o = optsOf(L, c).find((x) => x[0] === k), lab = (c.show && c.show(L)) || (o ? o[1] : (k || 'Off'));
       const set = k !== String(c.def ?? '') && k !== '' && !(c.path === 'part.rhythm.kind' || c.path === 'part.pitch.kind');
@@ -1048,7 +1154,7 @@
   function dialPopHTML(L) {
     if (G.dial === '__euc') return eucPopHTML(L);
     const c = ctlOf(G.dial); if (!c) return '';
-    const m = metaOf(c), why = (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
+    const m = metaOf(c), why = (scoped() && !scopable(c.path) ? 'whole part only' : null) || (c.gate ? c.gate(L) : null) || (m.gate ? m.gate(L) : null) || (whenOK(L, c.w) ? null : 'not for this layer');
     let h = '<div class="g2-scrim" data-a="dialx"><div class="g2-pop" role="dialog" aria-modal="true" aria-label="' + esc(c.label) + '" data-stop="1">';
     h += '<div class="g2-pophd"><b>' + esc(c.label) + '</b>' + (c.dice ? '<span class="g2-bdg d">' + DIE + 're-rolls</span>' : '') + (why ? '<span class="g2-bdg na">' + esc(why) + '</span>' : '')
       + '<button type="button" class="g2-btn" data-a="dialx" aria-label="Close" style="margin-left:auto;width:40px;min-height:40px;padding:0">✕</button></div>';
@@ -1092,8 +1198,49 @@
     if (a === 'styleopen') { G.styleOpen = true; paint(); return; }
     if (a === 'styleclose') { G.styleOpen = false; paint(); return; }
     if (a === 'tab') { G.tab = b.getAttribute('data-t'); paint(); return; }
+    // ◫ SCOPE — the whole part, or the stretch the sheet was opened on
+    if (a === 'scope') { G.scope = (b.getAttribute('data-k') === 'bar') ? G.scopeFrom : null; G.note = ''; G.rollNote = ''; G.dial = null; paint(); return; }
+    if (a === 'scopereset' && scoped()) { editReal((R) => { V2.resetBars(R, G.scope.bars); }, G.scope.nm + ' takes the part’s rules again.'); return; }
+    if (a === 'take' && scoped()) {
+      // a STRETCH'S OWN TAKE (`ruleb[k].take`, an offset on the part's) — playback hears it
+      editReal((R) => { R.part.ruleb = R.part.ruleb || {}; G.scope.bars.forEach((k) => { const o = R.part.ruleb[String(k)] || (R.part.ruleb[String(k)] = {}); o.take = (o.take | 0) + 1; }); },
+        'A new take of ' + G.scope.nm + ' — the rest of the part kept its notes.'); return;
+    }
+    if (a === 'srh') {
+      const k = b.getAttribute('data-k');
+      edit((V) => { const r = V.part.rhythm = Object.assign({}, V.part.rhythm), st = Math.max(2, (r.steps | 0) || 16);
+        if (k === 'p-' || k === 'p+') r.pulses = clamp((r.pulses | 0) + (k === 'p+' ? 1 : -1), 1, st);
+        if (k === 's-' || k === 's+') { r.steps = clamp(st + (k === 's+' ? 1 : -1), 2, 64); r.pulses = clamp(r.pulses | 0, 1, r.steps); }
+        if (k === 'r-' || k === 'r+') r.rotate = (((r.rotate | 0) + (k === 'r+' ? -1 : 1)) % st + st) % st;   // +1 moves the hits earlier
+        if (k === 'n-' || k === 'n+') r.n = clamp(((r.n | 0) || 4) + (k === 'n+' ? 1 : -1), 1, 64);
+      }, ''); return;
+    }
+    if (a === 'dchoose' && G.dial === '__char') {
+      const k = b.getAttribute('data-k');
+      if (scoped()) editReal((R) => { V2.setBarChar(E, R, G.scope.bars.slice(), k || ''); }, k ? '' : G.scope.nm + ' takes the part’s rules again.');
+      else editReal((R) => { if (k) V2.applyPreset(E, R, k); else delete R.part.preset; }, '');
+      return;
+    }
+    if (a === 'dial' && scoped() && !scopable(b.getAttribute('data-p'))) {
+      const c = ctlOf(b.getAttribute('data-p'));
+      G.note = (c ? c.label : 'That') + ' is set for the whole part — switch to Whole part above to change it.'; paint(); return;
+    }
     if (a === 'undo') { const j = G.hist.pop(); restore(j); G.note = 'Undone.'; G.rollNote = ''; paint(); return; }
     if (a === 'preview') { try { V2.preview(E, layer()); } catch (e) {} return; }
+    if (a === 'style' && scoped()) {
+      // ◫ A STYLE FOR ONE STRETCH: the style is built on a scratch copy and its rules
+      // become the stretch's own (only what differs from the part is stored)
+      const s = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!s) return;
+      editReal((R) => {
+        const t = clone(R); s.make(E, t);
+        G.scope.bars.forEach((k) => { const o = R.part.ruleb && R.part.ruleb[String(k)]; if (o) { delete o.rhythm; delete o.pitch; delete o.shape; delete o.char; } });
+        const F = V2.barFields || {};
+        ['rhythm', 'pitch', 'shape'].forEach((g) => Object.keys(F[g] || {}).forEach((f) => {
+          const v = ((t.part || {})[g] || {})[f]; if (v !== undefined) V2.setBarRule(R, G.scope.bars, g, f, typeof v === 'boolean' ? (v ? 1 : 0) : v);
+        }));
+      }, G.scope.nm + ' plays as ' + s.name + ' now — the rest of the part keeps its own.');
+      G.styleOpen = false; G.rollNote = ''; paint(); return;
+    }
     if (a === 'style') {
       const s = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!s) return;
       const was = styleOf(layer());
@@ -1157,7 +1304,7 @@
     if (a === 'hold') { const n = +b.getAttribute('data-n'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape); if (n > 0) L.part.shape.holdSteps = n; else delete L.part.shape.holdSteps; }, ''); return; }
     if (a === 'jump' || a === 'dial') { G.dial = b.getAttribute('data-p'); G.dialV = NaN; paint(); const d = G.box.querySelector('.g2-dial, .g2-chs button'); if (d) try { d.focus({ preventScroll: true }); } catch (e) {} return; }
     if (a === 'dialx') { if (b.classList.contains('g2-scrim') && ev.target !== b) return; G.dial = null; G.dialV = NaN; paint(); return; }
-    if (a === 'dstep') { const c = ctlOf(G.dial), L = layer(); if (c && L) commitDial(G.dial, valOf(L, c) + (+b.getAttribute('data-d')) * dialStep(c)); return; }
+    if (a === 'dstep') { const c = ctlOf(G.dial), L = viewOf(layer()); if (c && L) commitDial(G.dial, valOf(L, c) + (+b.getAttribute('data-d')) * dialStep(c)); return; }
     if (a === 'ddef') { const c = ctlOf(G.dial); if (c) edit((L) => { const ks = c.path.split('.'), last = ks.pop(), o = ks.reduce((x, k) => (x ? x[k] : x), L); if (o) delete o[last]; }, ''); return; }
     if (a === 'dchoose') { const k = b.getAttribute('data-k'), c = ctlOf(G.dial); if (c) edit((L) => choiceSet(L, c, k), ''); return; }
     if (a === 'eucp') { const pz = eucPresets()[+b.getAttribute('data-i')]; if (pz) edit((L) => applyPreset(L, pz), pz.name + (pz.pat ? ' — written onto the Step grid (your rule is kept).' : '.')); return; }
@@ -1292,7 +1439,8 @@
     root.style.setProperty('display', 'flex', 'important');
     root.innerHTML = '<div class="g2" role="dialog" aria-modal="true" aria-label="Generate V2"></div>';
     document.body.appendChild(root);
-    G = { E, id: L.id, fresh: !!(opts && opts.fresh), snap: JSON.stringify(L), hist: [], styleOpen: !styleOf(L), tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
+    const sc0 = (opts && opts.scope && Array.isArray(opts.scope.bars) && opts.scope.bars.length) ? { bars: opts.scope.bars.map(String), nm: String(opts.scope.nm || 'This stretch').replace(/^./, (c) => c.toUpperCase()) } : null;
+    G = { E, id: L.id, fresh: !!(opts && opts.fresh), scope: sc0, scopeFrom: sc0, snap: JSON.stringify(L), hist: [], styleOpen: !sc0 && !styleOf(L), tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
     // THE DIAL: drag round it (the angle from its centre is the value). It repaints
     // only itself while you drag and commits once on release — one undo step.
@@ -1316,7 +1464,7 @@
     root.addEventListener('pointerup', endDrag); root.addEventListener('pointercancel', endDrag);
     root.addEventListener('keydown', (ev) => {
       const svg = ev.target.closest && ev.target.closest('.g2-dial'); if (!svg || !G) return;
-      const c = ctlOf(G.dial), L = layer(); if (!c || !L) return;
+      const c = ctlOf(G.dial), L = viewOf(layer()); if (!c || !L) return;
       const d = (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') ? 1 : ((ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') ? -1 : 0);
       if (d) { ev.preventDefault(); commitDial(G.dial, valOf(L, c) + d * dialStep(c)); const s2 = G.box.querySelector('.g2-dial'); if (s2) s2.focus({ preventScroll: true }); }
       if (ev.key === 'Escape') { G.dial = null; paint(); }

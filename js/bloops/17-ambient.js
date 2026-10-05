@@ -60657,7 +60657,9 @@
           // layer model v2 — an instrument and a part. `v2:from` reads an EXISTING
           // v1 layer as pieces (non-destructive: the original is left alone), so
           // the model can be tried on real material instead of from scratch.
-          ['Build your own', [['v2', 'Layer'], ['v2from', 'From a layer…']]],
+          // ROLL OR PATTERN IS THE LAYER'S TYPE (2026-10-05): chosen here, changed
+          // later only with the card's ⋯ ▸ ⇄ Convert.
+          ['Build your own', [['v2', 'Roll layer'], ['v2pat', 'Pattern layer'], ['v2from', 'From a layer…']]],
           ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture']]],
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
           ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass']]],
@@ -60678,9 +60680,11 @@
             // layer?" sheet repeated Generate V2's own style grid. The layer is made empty
             // (`addDefault`, so per-part binding is unchanged), then the sheet opens on its
             // style grid; "Keep it empty" is the old Empty, ✕ removes the layer again.
-            if (type === 'v2') { actions.push({ label: name, fn: () => setTimeout(() => {
+            if (type === 'v2' || type === 'v2pat') { actions.push({ label: name, fn: () => setTimeout(() => {
               let L0 = null;
               try { L0 = window._v2.addDefault(E); } catch (e) {}
+              // a PATTERN layer is the same layer made in the other form
+              if (L0 && type === 'v2pat' && window._v2.convertForm) { try { window._v2.convertForm(E, L0, 'steps'); E.getCfg(); } catch (e) {} }
               if (L0 && typeof window._genV2Open === 'function') { try { window._genV2Open(E, L0, { fresh: true }); } catch (e) {} }
             }, 0) }); return; }
             // IMPORT — pick an existing v1 layer and read it as v2 pieces. A

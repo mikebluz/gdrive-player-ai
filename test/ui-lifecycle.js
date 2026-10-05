@@ -3047,8 +3047,8 @@ const ok = (name, cond, detail) => {
       secClosed: !document.querySelector('.v2-secpop-wrap') };
     if (pop && acts) {
       const r = pop.getBoundingClientRect(), ra = acts.getBoundingClientRect();
-      // the way OUT is the drawing head's ▦ Composing ▾ (✍ Write), kept on screen
-      const done = card().querySelector('.v2-vizhead .v2-writebtn');
+      // the way OUT is the full-screen sheet's own Done (▦ Compose is a sheet now)
+      const done = card().querySelector('.v2-comphead .v2-compdone');
       const rd = done.getBoundingClientRect();
       // RESTATED with the embed: the editor is the card's body now, so
       // "takes the whole screen" is no longer a thing it can do — it simply
@@ -3370,11 +3370,11 @@ const ok = (name, cond, detail) => {
       // ✍ WRITE ▾ (2026-10-04) holds ▦ Compose, 🎤 Sing and ⌫ Clear — the ways to
       // write the part — so one control sits where three did, left of the 👁 picker
       // ⤢ (2026-10-04) opens the drawing full size — after ✍ Write, the other door
-      JSON.stringify(['v2-viztog', 'v2-formseg', 'v2-writewrap', 'v2-fullbtn', 'v2-modesel', 'v2-gridsel', 'v2-vnav']) &&
+      JSON.stringify(['v2-viztog', 'v2-fullbtn'])   /* 👁 View / ⊞ Grid / nav moved INTO ⤢ Editor 2026-10-05 — the card is a thumbnail */   /* ✍ Write ▾ retired 2026-10-05: ✎ Edit is the one door */ &&
     vizHeadRun.noWordLabels &&
     // it was 153px of chrome against a 79px canvas — a watchdog, not a target
     vizHeadRun.chromeH < vizHeadRun.canvasH * 1.6 &&
-    vizHeadRun.shown >= 6 && vizHeadRun.bad.length === 0 && vizHeadRun.spill === 0,
+    vizHeadRun.shown >= 2 && vizHeadRun.bad.length === 0 && vizHeadRun.spill === 0,
     JSON.stringify(vizHeadRun));
 
   ok('the drawing folds away — the picture and its navigation go, the take bar and the readout stay',
@@ -13150,8 +13150,7 @@ const ok = (name, cond, detail) => {
     const ge = _bloomGridEdit; if (!ge) return;   // guarded: a failed open must not kill the run
     ge.lane.steps[0].freq = 440; ge.lane.steps[0].label = 'A4'; delete ge.lane.steps[0].chord;
   });
-  await tap('.v2-layer .v2-writebtn'); await zz(150);   // ✍ ▾ ▸ ▦ Close grid
-  e = await tap('.v2-layer .v2-gridbtn');
+  e = await tap('.v2-layer .v2-compdone');              // the compose sheet's Done
   d = await dockState();
   const done = await page.evaluate(() => {
     const p = (_masterEng.getCfg().layers || [])[0].part;
@@ -13185,8 +13184,7 @@ const ok = (name, cond, detail) => {
     return { kind: L.part.kind, a2: (L.part.notes || []).some((n) => n.midi === 45),
              session: (typeof _bloomGridEdit !== 'undefined' && _bloomGridEdit) ? 'OPEN' : null };
   });
-  await tap('.v2-layer .v2-writebtn'); await zz(150);
-  await tap('.v2-layer .v2-gridbtn');
+  await tap('.v2-layer .v2-compdone');
   const closed = await page.evaluate(() => {
     const L = (_masterEng.getCfg().layers || [])[0];
     return { a2: (L.part.notes || []).some((n) => n.midi === 45),

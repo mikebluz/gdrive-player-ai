@@ -18107,7 +18107,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-partviz.v2-full { position: fixed !important; inset: 0 !important; z-index: 10200; margin: 0 !important;
       padding: 0 !important; border-radius: 0 !important; background: #0b0b18; display: flex !important; flex-direction: column;
       overflow: hidden; width: auto !important; max-width: none !important; }
-    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph):not(.v2-fullvthumb):not(.v2-fullhthumb):not(.v2-fulllegend) { display: none !important; }
+    .v2-partviz.v2-full > :not(.v2-fullhead):not(.v2-fullfoot):not(.v2-vizcv):not(.v2-vizph):not(.v2-fullvthumb):not(.v2-fullhthumb):not(.v2-fulllegend):not(.v2-marquee) { display: none !important; }
     .v2-partviz.v2-full > .v2-vizcv { display: block !important; flex: 0 0 auto; width: 100% !important; }
     .v2-fullhead { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: #14142a;
       border-bottom: 1px solid #2d2d3f; padding-top: max(8px, env(safe-area-inset-top)); }
@@ -18155,6 +18155,13 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     .v2-fullbtn.ambient-seg { flex: none; width: auto; min-width: 0; min-height: 36px; padding: 0 12px;
       border-radius: 10px; border: 1px solid #2f8f80; background: #0f2a28; color: #cffaf3;
       font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+    /* the door stands apart, right: Hide … ⤢ Editor */
+    .v2-vizhead > .v2-fullbtn.ambient-seg { margin-left: auto; }
+    /* ⤢ Edit — the thumbnail's door, laid over its bottom-right corner (not the ruler,
+       which still picks bars to re-roll) */
+    .v2-partviz > .v2-fullbtn.v2-thumbbadge { display: block; position: relative; z-index: 1;
+      width: max-content; min-height: 28px; margin: -34px 6px 6px auto; padding: 0 10px;
+      font-size: 0.75rem; border-radius: 8px; background: rgba(15, 42, 40, 0.92); }
     .v2-fullmode { display: inline-flex; flex: none; }
     .v2-fullmode .v2-fullm:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .v2-fullmode .v2-fullm:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-width: 0; }
@@ -18255,3 +18262,90 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
       backdrop-filter: none !important; -webkit-backdrop-filter: none !important; clip-path: none !important; mask: none !important; }
     /* …and it clears the notch and the home indicator */
     .v2-partviz.v2-full { padding-top: env(safe-area-inset-top, 0px) !important; padding-bottom: env(safe-area-inset-bottom, 0px) !important; box-sizing: border-box; }
+    /* THE READOUT NEVER CHANGES THE HEADER'S HEIGHT. A message wrapping to three
+       lines grew the header, the drawing slid down under the finger, and the
+       next tap landed a row off (a double-tap drew a note instead of deleting).
+       Two lines, always; a longer message ends in … and is whole in its title. */
+    .v2-fullread { height: calc(2.6em + 12px); box-sizing: border-box; line-height: 1.3; font-size: 0.8rem;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; align-self: center; }
+    /* …clipped at EXACTLY two lines: a clamp hides overflow at the padding box,
+       so vertical padding showed the top of line three. The breathing room is a
+       transparent border instead (the background fills it), and the outline is
+       a shadow outside it. */
+    .v2-fullread { padding: 0 4px !important; border: 6px solid transparent !important; box-shadow: 0 0 0 1px #2f8f80; height: calc(2.6em + 12px); }
+    .v2-fullgroup { min-height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid #4a5568; background: transparent;
+      color: #e2e8f0; font: 700 0.85rem 'Segoe UI', sans-serif; cursor: pointer; flex: none; white-space: nowrap; }
+    .v2-fullgroup[disabled] { opacity: 0.35; cursor: default; }
+    .v2-lggrp { background: #e2e8f0; border: 1.5px dashed #e2e8f0; background-clip: content-box; padding: 2px; box-sizing: border-box; }
+    .v2-marquee { position: absolute; z-index: 4; pointer-events: none; border: 1.5px dashed #7ef0dc; background: rgba(126,240,220,0.10); border-radius: 3px; }
+    .v2-partviz:not(.v2-full) > .v2-marquee { display: none !important; }
+    .v2-fullgroup.v2-dim, .v2-fullbreak.v2-dim { opacity: 0.45; }
+    /* ▦ COMPOSE, FULL SCREEN — the dock is pinned over the page like ⤢, with its
+       own head (Done + what you are in); the grid content is unchanged. */
+    .v2-comphead { display: none; }
+    .v2-layer.v2-composing .v2-dock { position: fixed !important; inset: 0 !important; z-index: 10200; margin: 0 !important;
+      background: #12121f; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box;
+      padding: env(safe-area-inset-top, 0px) 12px calc(12px + env(safe-area-inset-bottom, 0px)); }
+    .v2-layer.v2-composing .v2-dock > .v2-comphead { display: flex; order: 0; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 3;
+      margin: 0 -12px 8px; padding: 8px 12px; background: #14142a; border-bottom: 1px solid #2d2d4a; }
+    .v2-comphead .v2-compsub { font: 700 0.75rem 'Segoe UI', sans-serif; color: #c9a0ff; overflow-wrap: anywhere; }
+    /* the compose sheet's Done looks like ⤢'s (its own class: `.v2-fulldone`'s handler is ⤢'s) */
+    .v2-compdone { min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #8b5cf6; color: #fff;
+      font: 700 0.9rem 'Segoe UI', sans-serif; cursor: pointer; }
+    /* ▦ COMPOSE = THE ROLL + INPUTS — the keyboard (2 rows of 6 + octave column)
+       and the write row, docked in the ⤢ header */
+    .v2-fullcomp { display: flex; flex-direction: column; gap: 6px; }
+    .v2-fckeys { display: flex; gap: 4px; }
+    .v2-fckgrid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .v2-fckrow { display: flex; gap: 4px; }
+    .v2-fck { flex: 1 1 0; min-width: 0; height: 40px; border: 0; border-radius: 7px; background: var(--kc, #555); color: rgba(0,0,0,.62);
+      font: 800 0.8rem 'Segoe UI', sans-serif; padding: 0; touch-action: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
+    .v2-fck.down { box-shadow: 0 0 0 3px #fff, 0 0 14px #fff; transform: translateY(2px); }
+    .v2-fcoct { flex: 0 0 40px; display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+    .v2-fcoct .v2-fullib { width: 40px; height: 34px; }
+    .v2-fcoct > span { text-align: center; font: 800 0.72rem 'Segoe UI', sans-serif; color: #c9c4ee; line-height: 16px; }
+    .v2-fcrow { display: flex; gap: 6px; }
+    .v2-fcb { flex: 1 1 0; min-width: 0; min-height: 38px; border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #c9c4ee;
+      font: 700 0.82rem 'Segoe UI', sans-serif; white-space: nowrap; cursor: pointer; padding: 0 4px; }
+    .v2-fcperf { color: #ff8a8a; border-color: #6b2a2a; }
+    .v2-fcperf.on { background: #4a1414; color: #fff; border-color: #ff6b6b; box-shadow: 0 0 10px rgba(255,107,107,.45); }
+    .v2-fcstep.on { background: #0f2a28; color: #cffaf3; border-color: #2f8f80; }
+    .v2-fcbar { color: #d6bcfa; }
+    /* ⤢ THE SELECTION BAR — swaps with the map at the SAME height (the footer
+       is fixed), so the drawing never moves when a selection appears */
+    .v2-partviz.v2-full > .v2-fullfoot { min-height: 186px; box-sizing: border-box; }   /* = map + selection bar, so neither state moves the grid */
+    .v2-fullsel { display: none; flex-direction: column; gap: 6px; flex: 1 1 auto; }
+    .v2-partviz.v2-full.v2-hassel .v2-fullsel { display: flex; }
+    /* the MAP STAYS (2026-10-05, user: "where did the map go") — thinner, above the bar;
+       only the pager row (bar label + zoom) gives way, so the footer keeps its height */
+    .v2-partviz.v2-full.v2-hassel .v2-fullpager { display: none; }
+    .v2-partviz.v2-full.v2-hassel .v2-fullmap { height: 28px; }
+    .v2-fslab { font: 700 0.8rem 'Segoe UI', sans-serif; color: #3fc7b4; overflow-wrap: anywhere;
+      /* a FIXED line: ♯/♭ fall back to a taller font and grew the bar, shifting the grid above it */
+      line-height: 18px; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .v2-fsrow { display: flex; gap: 6px; }
+    .v2-fsb { flex: 1 1 0; min-width: 0; min-height: 40px; border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #c9c4ee;
+      font: 700 0.82rem 'Segoe UI', sans-serif; white-space: nowrap; cursor: pointer; padding: 0 4px; touch-action: manipulation; }
+    .v2-fs-tf { color: #f5c27a; } .v2-fs-nt { color: #7ef0dc; } .v2-fs-del { color: #ff9c9c; }
+    .v2-fullsheet { bottom: 150px; }
+    .v2-fsitem { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 4px; border: 0; border-bottom: 1px solid #26264a; background: transparent;
+      color: #ece8f8; font: 600 0.9rem 'Segoe UI', sans-serif; text-align: left; width: 100%; box-sizing: border-box; cursor: pointer; }
+    .v2-fsitem > i { margin-left: auto; font-style: normal; font-weight: 400; font-size: 0.75rem; color: #8d8ab0; text-align: right; overflow-wrap: anywhere; }
+    .v2-ntabs { display: flex; gap: 6px; }
+    .v2-ntab { flex: 1; min-height: 34px; border-radius: 10px; border: 1px solid #2d2d3f; background: #11111f; color: #c9c4ee; font: 700 0.82rem 'Segoe UI', sans-serif; cursor: pointer; }
+    .v2-ntab.on { background: #2a2350; border-color: #8b6be0; color: #fff; }
+    .v2-nrow { display: flex; align-items: center; gap: 10px; min-height: 42px; border-bottom: 1px solid #26264a; }
+    .v2-nrow > span { width: 72px; flex: none; font: 600 0.78rem 'Segoe UI', sans-serif; color: #a9a6c7; }
+    .v2-nrow > input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: #7ef0dc; }
+    .v2-nrow > b { width: 104px; flex: none; text-align: right; font: 700 0.78rem 'Segoe UI', sans-serif; color: #e6e3f5; }
+    .v2-nrow select { flex: 1 1 auto; min-width: 0; }
+    .v2-nsoon { color: #8d8ab0; font-size: 0.8rem; }
+    .v2-fcgen { color: #f5c27a; } .v2-fcwrap { color: #f0a2d0; } .v2-fcwraps { color: #a9a6c7; }
+    .v2-fcwrap.on { background: #3a1430; border-color: #f0a2d0; color: #fff; }
+    .v2-genpat { margin: 6px 0; font: 700 1rem 'Segoe UI', sans-serif; letter-spacing: .1em; color: #f5c27a; text-align: center; overflow-wrap: anywhere; }
+    .v2-fsitem.v2-fsdanger > span { color: #ff9c9c; }
+    .v2-fullundo.v2-dim, .v2-fullredo.v2-dim { opacity: 0.35; }
+    .v2-fullundo, .v2-fullredo { font-size: 1.1rem; }
+    /* the layer's TYPE, stated (no longer a Roll ⇄ Pattern switch) */
+    .v2-formbadge { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 8px;
+      font: 700 0.78rem 'Segoe UI', sans-serif; color: #a9a6c7; background: rgba(159,122,234,0.08); white-space: nowrap; }

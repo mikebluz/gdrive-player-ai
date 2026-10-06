@@ -11394,6 +11394,9 @@
           V2.GRIDS.map(([v, lab]) => '<option value="' + v + '"' +
             (v === V2.gridPerBar(L) ? ' selected' : '') + '>' + lab + '</option>').join('') +
         '</select></label>' +
+        // ⤢ THE PATTERN EDITOR (2026-10-06) — full screen, `18-pattern-editor.js`. Its own
+        // class: `.v2-fullbtn` is the ROLL editor's door and would open the wrong one.
+        '<button type="button" class="ambient-seg v2-patedit" aria-label="Open the pattern editor" title="Edit the pattern full screen \u2014 bigger steps, a piano or drum lanes, \u2328 Compose">\u2922 Editor</button>' +
       '</div>' +
       '<span class="v2-vizlab v2-stepslab ambient-hint"></span>' +
       // ── WHAT A TAP EDITS (2026-09-22) ────────────────────────────────
@@ -11433,9 +11436,13 @@
         : '') +
       (kit
         ? '<div class="v2-stepsgrid v2-stepslanes"' + pAttr + '>' + lanesHtml(L) + '</div>'
-        : ((L.part.pitch || {}).kind === 'grid'
-          ? '<div class="v2-stepsgrid v2-stepsrows"' + pAttr + '>' + gridRowsHtml(L) + '</div>'
-          : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>')) +
+        // ▭ A PITCHED PATTERN shows the EDITOR'S LANES (2026-10-06, user: a row per note
+        // here and lanes there "seems inconsistent") — read-only; a tap opens the editor
+        : (V2.patternThumbHtml
+          ? '<div class="v2-stepsgrid v2-stepsthumb"' + pAttr + '>' + V2.patternThumbHtml(L) + '</div>'
+          : ((L.part.pitch || {}).kind === 'grid'
+            ? '<div class="v2-stepsgrid v2-stepsrows"' + pAttr + '>' + gridRowsHtml(L) + '</div>'
+            : '<div class="v2-stepsgrid"' + pAttr + '>' + stepBlocksHtml(L) + '</div>'))) +
     '</div>';
   }
   // …AND WHAT THE SEQUENCER'S READOUT SAYS. The roll's line names the record
@@ -11552,12 +11559,12 @@
     lab.style.color = on ? '' : '#f6ad55';
     let cfgS = null; try { cfgS = _cfgOf(); } catch (e) {}
     lab.textContent = !on
-      ? 'empty \u2014 this layer is silent. ' + (kit ? 'Tap a lane\u2019s steps.' : 'Raise How many, or tap steps.')
+      ? 'empty \u2014 this layer is silent. ' + (kit ? 'Tap a lane\u2019s steps.' : 'Tap the picture to write a pattern.')
       : (liveTxt(L, cfgS) + ' \u00b7 ' +
          on + (kit ? ' hits' : ' of ' + st) + ' \u00b7 ' + (Math.round(bars * 100) / 100) +
          ' bar' + (bars === 1 ? '' : 's') + ' \u00b7 ' + gname +
          (edited ? ' \u00b7 yours' : ' \u00b7 from the rules') +
-         tapTxt(L, ' \u00b7 tap a step to toggle it'));
+         tapTxt(L, kit ? ' \u00b7 tap a step to toggle it' : ' \u00b7 tap the picture to edit it'));
     liveBadge(lab);
   }
   // ── HOW OFTEN THE NOTES ARE RE-DECIDED: ONE BUTTON, ON THE FACE ───────
@@ -11875,6 +11882,17 @@
   // four branches (section-bound parts, part repeats, salted lengths, the
   // passes grid) and re-deriving edges beside it is exactly how the Scheduler
   // lane once came to lie about the harmony.
+  // THE CHANGES OVER ONE STOPPED CYCLE of a layer, as cycle fractions — for pictures
+  // that lay a part out change by change (the Pattern card's rows, 2026-10-06)
+  try {
+    V2.changeSpans = (E, L) => {
+      const cfg = E.getCfg(); let cyc = 0;
+      try { cyc = V2.cycleSec(L, cfg); } catch (e) { cyc = 0; }
+      let at = 0;
+      try { at = chordAnchor(E, cfg, L, false, 0); } catch (e) { at = 0; }
+      return chordMarks(E, cfg, at, cyc);
+    };
+  } catch (e) {}
   function chordMarks(E, cfg, t0, cyc) {
     if (typeof _ambChordSpanAt !== 'function' || !(cyc > 0)) return null;
     if (!cfg || !cfg.prog || !cfg.prog.on) return null;
@@ -15910,6 +15928,33 @@
     return true;
   }
   try { V2.convertForm = (E, L, want) => convertFormFn(E, L, want); } catch (e) {}
+  // ▦ A GENERATED PATTERN IS BAKED ONTO ITS GRID (2026-10-06, user: a new Pattern layer's
+  // Generate "should also be branched on Roll/Pattern"). A Pattern plays its STEP GRID
+  // (`rhythm.cells` / kit `rhythm.lanes`), so a Style picked on one wrote rules that
+  // nothing played — measured: Bass and Beat on a new Pattern layer made 0 notes. The
+  // rules stay the source (every Generate tile keeps working); after each edit the
+  // rhythm they make is written onto the grid: a pitched layer's ONSETS become its
+  // cells (its pitch rule still decides each step's note), a kit's ♦ Beat becomes lanes.
+  function bakeStepsFn(E, L) {
+    const P = L && L.part; if (!P || P.form !== 'steps' || P.kind !== 'live') return false;
+    try { E.getCfg(); } catch (e) {}
+    const r = P.rhythm || (P.rhythm = {});
+    const cells = Math.max(1, (r.steps | 0) || V2.gridCells(L));
+    if ((L.instrument || {}).voice === 'kit') {
+      const seed = V2.beatToLanes ? V2.beatToLanes(L, cells) : null;
+      if (seed) r.lanes = seed.lanes;
+      return !!seed;
+    }
+    const R = JSON.parse(JSON.stringify(L)); delete R.part.form;
+    const cfg = E.getCfg(), cyc = V2.cycleSec(R, cfg);
+    let ns = [];
+    try { ns = V2.withEdit(() => V2.withTake(V2.pinOf(R), () => V2.notesFor(R, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: 0, cycleSec: cyc }))) || []; } catch (e) { ns = []; }
+    const on = new Array(cells).fill(0);
+    ns.forEach((n) => { if (n && n.freq > 0 && n.at >= 0 && n.at < cyc) on[clamp(Math.round(n.at / cyc * cells), 0, cells - 1)] = 1; });
+    r.cells = on;
+    return true;
+  }
+  try { V2.bakeSteps = (E, L) => bakeStepsFn(E, L); } catch (e) {}
   function fullLegend(E) {
     const L = _fullLayer(E), card = _fullCard(); if (!L || !card) return;
     const host = card.querySelector('.v2-partviz.v2-full'); if (!host) return;

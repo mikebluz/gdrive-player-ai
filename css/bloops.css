@@ -18349,3 +18349,6 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
     /* the layer's TYPE, stated (no longer a Roll ⇄ Pattern switch) */
     .v2-formbadge { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 8px;
       font: 700 0.78rem 'Segoe UI', sans-serif; color: #a9a6c7; background: rgba(159,122,234,0.08); white-space: nowrap; }
+/* ⤢ the PATTERN editor's door — the Roll's ⤢ Editor look, its own class (2026-10-06) */
+.v2-patedit.ambient-seg { flex: none; width: auto; min-width: 0; min-height: 36px; padding: 0 12px; margin-left: auto;
+  border-radius: 10px; border: 1px solid #2f8f80; background: #0f2a28; color: #cffaf3; font-weight: 700; font-size: 0.85rem; white-space: nowrap; }

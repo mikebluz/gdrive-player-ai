@@ -330,6 +330,8 @@
   function persist() {
     const E = G.E;
     try { E.getCfg(); } catch (e) {}
+    // ▦ a PATTERN layer plays its grid — write what the rules make onto it
+    try { const L0 = layer(); if (L0 && V2.bakeSteps) V2.bakeSteps(E, L0); } catch (e) {}
     try { if (E._v2Phase && _ambLiveApplyOK(E)) delete E._v2Phase['v2:' + G.id]; } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     try { V2.render(E); } catch (e) {}
@@ -716,7 +718,11 @@
     const col = sty ? sty.col : '#a78bfa';
     const yOf = (m) => TOP + (hi - m) * rowH;
     // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
-    const info = G.rollMode === 'info' || !live;
+    // ▦ A PATTERN LAYER is drawn as its STEP GRID (2026-10-06): the roll is built and
+    // then swapped for the grid picture, so the tap-a-bar re-roll still works on both
+    const isPat = !!(V2.formOf && V2.formOf(L) === 'steps');
+    const info = !isPat && (G.rollMode === 'info' || !live);
+    const hRoll0 = h.length;
     h += '<div class="g2-roll" style="height:' + rollH + 'px">';
     // ◫ the stretch being edited, marked on the whole part
     if (scoped()) G.scope.bars.forEach((k) => {
@@ -782,12 +788,13 @@
     });
     if (!ns.length) h += '<div class="g2-hint" style="position:absolute;inset:0;left:' + KEYW + 'px;display:flex;align-items:center;justify-content:center">' + (live ? 'Silent — these rules make no notes.' : 'Empty — pick a style to generate.') + '</div>';
     h += '</div>';
+    if (isPat) h = h.slice(0, hRoll0) + patPrevHTML(L, ns, cyc, live, col);
     // the mode switch shares the line under the picture — its own row was mostly air
     h += '<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#a9a6c7;flex-wrap:wrap">'
-      + (live ? '<span class="g2-seg" role="group" aria-label="Tapping the picture">'
+      + (live && !isPat ? '<span class="g2-seg" role="group" aria-label="Tapping the picture">'
         + '<button type="button" data-a="rollmode" data-k="reroll" class="' + (!info ? 'on' : '') + '" aria-pressed="' + !info + '" title="Tap a bar to re-roll it">🎲 Re-roll</button>'
         + '<button type="button" data-a="rollmode" data-k="info" class="' + (info ? 'on' : '') + '" aria-pressed="' + info + '" title="Tap a note to see what it is">ⓘ Info</button></span>' : '')
-      + '<span>' + ns.length + ' notes · ' + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (offN ? ' · <span style="color:#f5b04a">' + offN + ' off the grid</span>' : '') + '</span>'
+      + '<span>' + ns.length + (isPat ? ' hits · ' : ' notes · ') + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (offN ? ' · <span style="color:#f5b04a">' + offN + ' off the grid</span>' : '') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';
     if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf, homes[G.pick]);
     if (G.rollNote) h += '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6">' + esc(G.rollNote) + '</div>';
@@ -826,6 +833,39 @@
     const sc2 = G.root.querySelector('.g2-body'); if (sc2) sc2.scrollTop = top;
   }
 
+  // ▦ THE PATTERN PICTURE: one row per pitch it plays (or per drum lane), one cell per
+  // step, bars set apart; the bar numbers are the tap-to-re-roll targets, as on the roll
+  function patPrevHTML(L, ns, cyc, live, col) {
+    const r = (L.part || {}).rhythm || {}, cells = Math.max(1, r.steps | 0), nb = Math.max(1, Math.round(barsOf(L)));
+    const spb = Math.max(1, Math.round(cells / nb)), kit = (L.instrument || {}).voice === 'kit';
+    const NM = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    let rows = [];
+    if (kit) {
+      (r.lanes || []).forEach((ln, li) => { if ((ln || []).some(Boolean)) rows.push({ nm: (V2.LANE_NAMES || [])[li] || ('Lane ' + (li + 1)), on: Array.from({ length: cells }, (_, k) => !!(ln || [])[k]) }); });
+    } else {
+      const by = {};
+      ns.forEach((n) => { const m = Math.round(midiOf(n.freq)), k = clamp(Math.round(n.at / cyc * cells), 0, cells - 1); (by[m] = by[m] || new Array(cells).fill(false))[k] = true; });
+      rows = Object.keys(by).map(Number).sort((a, b) => b - a).map((m) => ({ nm: NM[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1), on: by[m] }));
+    }
+    const colsT = KEYW + 'px repeat(' + cells + ',minmax(0,1fr))';
+    let h = '<div class="g2-roll" style="height:auto;padding:6px 8px 10px 0;display:flex;flex-direction:column;gap:3px">';
+    h += '<div style="display:grid;grid-template-columns:' + KEYW + 'px repeat(' + nb + ',minmax(0,1fr));height:22px"><span></span>';
+    for (let b = 0; b < nb; b++) {
+      h += live ? '<button type="button" data-a="bar" data-b="' + b + '" aria-label="Re-roll bar ' + (b + 1) + '" style="border:0;border-left:1px solid #2a2a46;background:' + (G.flash === b ? 'rgba(167,139,250,.18)' : 'transparent') + ';color:#8d8ab0;font-size:11px;text-align:left;padding:0 0 0 5px">' + (b + 1) + '</button>'
+        : '<span style="border-left:1px solid #2a2a46;color:#8d8ab0;font-size:11px;padding-left:5px">' + (b + 1) + '</span>';
+    }
+    h += '</div>';
+    rows.forEach((rw) => {
+      h += '<div style="display:grid;grid-template-columns:' + colsT + ';column-gap:1px;align-items:center;height:16px">'
+        + '<span style="font-size:10px;font-weight:700;color:#a9a6c7;text-align:right;padding-right:6px;white-space:nowrap;overflow:hidden">' + esc(rw.nm) + '</span>';
+      for (let k = 0; k < cells; k++) {
+        h += '<span style="height:12px;border-radius:2px;' + (k && k % spb === 0 ? 'margin-left:3px;' : '') + 'background:' + (rw.on[k] ? col : ((Math.floor((k % spb) / Math.max(1, spb / 4)) % 2) ? '#1c1c33' : '#24243e')) + '"></span>';
+      }
+      h += '</div>';
+    });
+    if (!rows.length) h += '<div class="g2-hint" style="padding:22px 0;text-align:center">' + (live ? 'Silent — these rules make no hits.' : 'Empty — pick a style to generate a pattern.') + '</div>';
+    return h + '</div>';
+  }
   function movementHTML(L) {
     let h = '';
     // MOVEMENT — the selected option is a card holding its own setting
@@ -927,13 +967,27 @@
   }
   function rhythmHTML(L) {
     let h = '';
-    const p = L.part, r = p.rhythm || {}, mine = isMine(r), sn = styleName(L);
+    const p = L.part, r = p.rhythm || {}, sn = styleName(L);
+    let mine = isMine(r);
     const { spb, nb, tot, lit } = partHits(L);
     const bpb = (spb % 4 === 0) ? spb / 4 : (spb % 3 === 0 ? 3 : spb);
     h += '<div class="g2-stack">';
     // WHERE THE RHYTHM COMES FROM: the style's take (generated, bent by the
     // wobbles) or the Step grid (uniform, written by you); the other is kept
-    h += '<div class="g2-ctl"><b style="grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Rhythm from<span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
+    // ▦ A PATTERN LAYER HAS NO "RHYTHM FROM" (2026-10-06, user: "redundant for a Pattern
+    // layer … split at the Roll/Pattern type level"). Its grid IS where the rhythm goes —
+    // the style's rule is baked onto it after every edit (`V2.bakeSteps`) — so only the
+    // rule's own controls show. A layer left on the old Step grid gets a way back.
+    const pat = !!(V2.formOf && V2.formOf(L) === 'steps');
+    // a DRUM pattern's rhythm is its ♦ Beat lanes — the Drums controls below shape it
+    if (pat && (L.instrument || {}).voice === 'kit') return h + '</div>';
+    if (pat && r.kind === 'fig') mine = false;           // a named Figure is a rule here, not a hand-written grid
+    if (pat && mine) {
+      h += '<div class="g2-hint">This pattern’s rhythm was written by hand. Its steps are edited on the layer’s grid.</div>'
+        + (ruleOf(L) ? '<button type="button" class="g2-btn" data-a="rsrc" data-k="rule" style="align-self:flex-start;min-height:38px">↺ Use ' + esc(sn) + '’s rule again</button>' : '');
+      return h + '</div>';
+    }
+    if (!pat) h += '<div class="g2-ctl"><b style="grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Rhythm from<span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
       + '<button type="button" data-a="rsrc" data-k="rule" class="' + (!mine ? 'on' : '') + '" aria-pressed="' + !mine + '">🎲 ' + esc(sn) + '’s take</button>'
       + '<button type="button" data-a="rsrc" data-k="mine" class="' + (mine ? 'on' : '') + '" aria-pressed="' + mine + '">▦ Step grid</button></span></b></div>';
     const row = (lab, inner, id) => '<div class="g2-ctl"' + (id ? ' id="' + id + '"' : '') + '><span class="g2-lab">' + lab + '</span><span class="g2-r">' + inner + '</span></div>';
@@ -971,7 +1025,7 @@
             + '<button type="button" class="g2-btn" data-a="unshift" style="min-height:30px;font-size:12px">Reset</button>');
         h += gridRow;
       }
-      if (r.kind !== 'euclid' && r.kind !== 'pulse') h += '<div class="g2-hint">' + esc(sn) + '’s rhythm has no settings here. Switch to ▦ Step grid to write one.</div>';
+      if (r.kind !== 'euclid' && r.kind !== 'pulse') h += '<div class="g2-hint">' + esc(sn) + '’s rhythm has no settings here.' + (pat ? '' : ' Switch to ▦ Step grid to write one.') + '</div>';
     } else {
       // ▦ STEP GRID — uniform: every hit on a step, every hit the same length
       const loose = !r.straight;
@@ -1246,7 +1300,9 @@
       const was = styleOf(layer());
       const dressIt = G.fresh && !G.dressed;
       const p0 = layer().part || {}, mine0 = isMine(p0.rhythm) ? clone(p0.rhythm) : (isMine(p0.rhythmAlt) ? clone(p0.rhythmAlt) : null);
-      edit((L) => { if (dressIt) dress(E, L, s); s.make(E, L); if (mine0 && !isMine(L.part.rhythm)) L.part.rhythmAlt = mine0; else if (!mine0) delete L.part.rhythmAlt; }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
+      // LEAVING ♦ BEAT LEAVES THE DRUM KIT (2026-10-06): Beat switches the voice to the kit and
+      // nothing switched it back, so every pitched style picked after it played 0 notes
+      edit((L) => { if (s.k !== 'beat' && L.instrument && L.instrument.voice === 'kit') L.instrument.voice = 'synth'; if (dressIt) dress(E, L, s); s.make(E, L); if (mine0 && !isMine(L.part.rhythm)) L.part.rhythmAlt = mine0; else if (!mine0) delete L.part.rhythmAlt; }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
       if (dressIt) G.dressed = true;
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }

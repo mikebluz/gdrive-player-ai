@@ -1402,7 +1402,9 @@
           '<select class="ambient-area-select" title="Select the area to view / edit (▶ marks the area playing now)">' + areaOpts + '</select>' +
           '<button type="button" class="ambient-area-btn ambient-area-next" title="Next area (wraps)"' + (s.areas.length < 2 ? ' disabled' : '') + '>›</button>' +
           '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; sticky on scroll"></span>' +
-          '<button type="button" class="ambient-area-btn ambient-orch-clear" title="Delete ALL areas and start over with one empty area" aria-label="Delete all areas">✕</button>' +
+          // ✕ DELETES THE AREA YOU ARE ON, never all of them (2026-10-06, user: "a 'clear all
+          // areas' button is too destructive"). Same action as the ✕ in the body below.
+          '<button type="button" class="ambient-area-btn ambient-orch-clear ambient-area-del" title="Delete this area" aria-label="Delete this area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
           '<button type="button" class="ambient-areas-toggle" title="Show / hide area orchestration" aria-label="Show or hide area orchestration">▾</button>' +
         '</div>' +
         // Collapsible body — two rows: management (clone/rename/delete), then
@@ -1620,8 +1622,7 @@
           if (ok) _ambClearArea(_masterEng);
         });
       });
-      const del = host.querySelector('.ambient-area-del');
-      if (del) del.addEventListener('click', () => {
+      host.querySelectorAll('.ambient-area-del').forEach((del) => del.addEventListener('click', () => {
         if (_ambAreas().length <= 1) return;
         uiConfirm('Delete this area? This can’t be undone.').then((ok) => {
           if (!ok || _ambAreas().length <= 1) return;
@@ -1630,20 +1631,7 @@
           _ambRebuildMaster();
           try { persistWorkspace(); } catch (e) {}
         });
-      });
-      const clr = host.querySelector('.ambient-orch-clear');
-      if (clr) clr.addEventListener('click', () => {
-        uiConfirm('Clear all areas? This deletes every area and starts over with one empty area. This can’t be undone.').then((ok) => {
-          if (!ok) return;
-          // Stop playback first — the engine would otherwise keep generating
-          // against the areas we're about to delete/rebuild (stale state / glitch).
-          if (E.timer) { try { _ambStopGenerator(E); } catch (e) {} }
-          _ambClearAreas();
-          _ambApplyAreaGlobals(masterAmbient);
-          _ambRebuildMaster();
-          try { persistWorkspace(); } catch (e) {}
-        });
-      });
+      }));
       // Orchestration mode — ONE toggle cycling Single → Sequence → Shuffle →
       // Single (folds the old Single/Sequence + Shuffle pair into one control).
       const modeB = host.querySelector('.ambient-orch-mode');
@@ -1740,6 +1728,28 @@
     // `plays × bars` bars before advancing. Switches dip the bloom output to
     // silence, swap the active area, reseed + reconcile mod chains, then ramp back
     // — so the heavy teardown/build is inaudible (a clean section change).
+    // ONE ROUND OF AN AREA'S ARRANGEMENT, in seconds — walked change by change until the
+    // engine's own round counter (`_ambIterIndexAt(…,'round',…)`) ticks, so a part's plays,
+    // its chance, hangs and the order all count exactly as playback counts them. 0 when
+    // the area has no arrangement (or the walk cannot answer).
+    function _ambArrRoundSec(cfg) {
+      if (!cfg || !cfg.prog || !cfg.prog.on || !Array.isArray(cfg.prog.parts) || !cfg.prog.parts.length) return 0;
+      const E = (typeof _masterEng !== 'undefined' && _masterEng) ? _masterEng : null;
+      if (!E || typeof _ambChordSpanAt !== 'function' || typeof _ambIterIndexAt !== 'function') return 0;
+      const a = Number.isFinite(E._progAnchor) ? E._progAnchor : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
+      let t = a + 1e-4, r0 = null;
+      for (let i = 0; i < 1024; i++) {
+        let sp = null;
+        try { sp = _ambChordSpanAt(E, cfg, t); } catch (e) { return 0; }
+        if (!sp || !(sp.end > sp.start)) return 0;
+        let r = -1;
+        try { r = _ambIterIndexAt(E, cfg, 'round', sp.start + 1e-4); } catch (e) { return 0; }
+        if (r0 == null) r0 = r;
+        else if (r !== r0) return Math.max(0, sp.start - a);
+        t = sp.end + 1e-4;
+      }
+      return 0;
+    }
     function _ambAreaDurSec(cfg, playsOverride) {
       if (!cfg) return 8;
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
@@ -1756,6 +1766,15 @@
       const secCyc = (cfg.playsUnit !== 'bars') ? _ambSectionCycleBars(cfg) : 0;
       const bars  = (secCyc > 0) ? secCyc : Math.max(1, cfg.bars | 0);
       const plays = Number.isFinite(playsOverride) ? Math.max(1, playsOverride | 0) : Math.max(1, cfg.plays | 0);
+      // AN AREA WITH AN ARRANGEMENT LASTS ITS ARRANGEMENT (2026-10-06): this used `cfg.bars`
+      // (the old area length, 4) and cut a 26-bar arrangement after 4 bars — reported as
+      // "plays fine for a few bars, then … everything but beat cuts out": Area 2 (one Beat
+      // layer) took over mid-song, then handed back, every time round.
+      if (secCyc <= 0 && cfg.playsUnit !== 'bars') {
+        let rs = 0;
+        try { rs = _ambArrRoundSec(cfg); } catch (e) { rs = 0; }
+        if (rs > 0) return Math.max(0.25, rs * plays);
+      }
       // Bar Lock now HONORS the manual `bars` (a hard override of the natural unit),
       // so one play = `bars` bars whether locked or not.
       return Math.max(0.25, bars * plays * barSec);

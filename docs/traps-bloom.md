@@ -527,6 +527,8 @@
   drawing's choke call too. **Compare change edges only after snapping to the 1/48-bar grid** — a strike
   mark on the bar line and a bisected boundary 1e-5 past it were both kept, doubling the chord.
 
+- **Area sequence length (`_ambAreaDurSec`):** an area with an arrangement lasts one ROUND of it (`_ambArrRoundSec`, which walks the changes until `_ambIterIndexAt(…,'round')` ticks). It must not use `cfg.bars`. Using `cfg.bars` handed a 26-bar song to the next area after 4 bars, reported as "everything but beat cuts out". To diagnose "layers stop after a pass", check whether the v2 tick's `cfg.layers` changed (an area switch) before suspecting the emitter.
+
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
 - **⊞ RESOLUTION MOVES WHICHEVER PATTERN IS THE MATERIAL, and a kit has two.** The

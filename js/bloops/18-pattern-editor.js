@@ -26,7 +26,7 @@
   const NOTE = '#5b93e0';
   const LANEH = 46;                                     // a lane's height
 
-  let P = null;   // { E, id, root, mode, c0 (first step on screen), cur, oct, hist:{u,r}, shade, say }
+  let P = null;   // { E, id, root, mode, cur, oct, hist:{u,r}, say, lanes, pins, sel, want, followCur }
   const layer = () => (P && P.E && (P.E.getCfg().layers || []).find((x) => x && x.id === P.id)) || null;
   const isKit = (L) => ((L && L.instrument) || {}).voice === 'kit';
   const cellsOf = (L) => Math.max(1, ((L.part.rhythm || {}).steps | 0) || V2.gridCells(L));
@@ -120,9 +120,6 @@
     if (!P) return;
     const L = layer(); if (!L) { close(); return; }
     const kit = isKit(L), cells = cellsOf(L), spb = spbOf(L), nb = barsOf(L), page = pageOf(L);
-    P.c0 = clamp(Math.floor(P.c0 / page) * page, 0, Math.max(0, Math.ceil(cells / page) * page - page));
-    const c0 = P.c0, cols = Math.min(cells - c0, page);
-    const cw = 100 / Math.max(1, cols);
     let keyName = '';
     try { keyName = (V2.keyLabelAt && V2.keyLabelAt(P.E, P.E.getCfg(), 0)) || ''; } catch (e) {}
     let spc = null;
@@ -156,74 +153,84 @@
       h += '<div class="pe-crow"><button type="button" class="pe-cb" data-pe="rest">Rest ▸</button><button type="button" class="pe-cb" data-pe="back">◂ Back</button>'
         + '<button type="button" class="pe-cb" data-pe="nbar">⤸ Bar</button><button type="button" class="pe-cb pe-del" data-pe="clrstep" aria-label="Clear this step">⌫ Clear</button></div></div>';
     }
-    // ruler
-    h += '<div class="pe-ruler"><span class="pe-gut' + (kit ? ' kit' : '') + '"></span><div class="pe-rcols">';
-    for (let k = 0; k < cols; k++) {
-      const st = c0 + k, inBar = st % spb, bar = Math.floor(st / spb) + 1, q = Math.max(1, spb / 4);
-      const lab = inBar === 0 ? '<b>' + bar + '</b>' : (inBar % q === 0 && cw * (q) > 8 ? '<i>' + bar + '.' + (inBar / q + 1) + '</i>' : '');
-      h += '<span class="pe-rc' + (inBar === 0 ? ' bar' : (inBar % q === 0 ? ' beat' : '')) + '" style="width:' + cw + '%">' + lab + '</span>';
-    }
-    if (P.mode === 'compose' && P.cur >= c0 && P.cur < c0 + cols) h += '<span class="pe-curtri" style="left:' + ((P.cur - c0 + 0.5) * cw) + '%"></span>';
-    h += '</div></div>';
-    // the grid — LANES of step chips (v1's lane strip): a row is a voice for a pitched
-    // pattern, a drum for a kit. A chip that sounds names its note; a hold is joined chips.
+    // ── THE GRID, ONE BLOCK PER CHANGE (2026-10-06, user: "lay out the Pattern editor one
+    // row per change too") — or per bar with no changes, the card's own layout, scrolling
+    // DOWN instead of paging sideways. A change longer than a finger-sized row (`page`
+    // steps) wraps onto more rows inside its block; every row shares one step width, so a
+    // step lines up down the page. Each row is its own `.pe-grid` (`data-c0`), and a hold
+    // that crosses a row edge carries on in the next.
     const lanes = kit ? null : laneSplit(pitchedRuns(L));
     const nLanes = kit ? (V2.LANE_NAMES || []).length : Math.max(1, lanes.length, P.want | 0);
     P.lanes = lanes;
-    h += '<div class="pe-body"><div class="pe-gutcol kit">';
-    for (let li = 0; li < nLanes; li++) {
-      h += kit ? '<span class="pe-lane" style="height:' + LANEH + 'px"><i style="background:' + LANE_COL[li % LANE_COL.length] + '"></i>' + esc((V2.LANE_NAMES || [])[li] || '') + '</span>'
-        : '<span class="pe-lane" style="height:' + LANEH + 'px"><i style="background:' + NOTE + '"></i>' + 'Voice ' + (li + 1) + '</span>';
-    }
-    if (!kit) h += '<button type="button" class="pe-addlane" data-pe="addlane">＋ Lane</button>';
-    h += '</div><div class="pe-grid" data-rowh="' + LANEH + '" data-rows="' + nLanes + '" style="height:' + (nLanes * LANEH) + 'px">' + gridBg(nLanes, LANEH, cols, c0, spb, null);
     const lanesK = kit ? lanesOf(L) : null;
-    for (let li = 0; li < nLanes; li++) {
-      const col = kit ? LANE_COL[li % LANE_COL.length] : NOTE;
-      for (let k = 0; k < cols; k++) {
-        const st = c0 + k; let x = 'left:calc(' + (k * cw) + '% + 2px);width:calc(' + cw + '% - 4px);top:' + (li * LANEH + 5) + 'px;height:' + (LANEH - 10) + 'px';
-        let cls = 'pe-st0', lab = '', bg = '';
-        if (kit) {
-          if ((lanesK[li] || [])[st]) {
-            cls = 'pe-st1'; bg = col;
-            const fx = (((L.part.rhythm || {}).cellFx) || {})[li + ':' + st];
-            if (fx && Number.isFinite(fx.c) && fx.c < 100) cls += ' pe-chance';
-            if (fx && fx.t) lab = (fx.t > 0 ? '+' : '') + fx.t;
-            if (P.sel && P.sel.kit && P.sel.li === li && P.sel.col === st) cls += ' pe-sel';
-          }
-        } else {
-          const n = (lanes[li] || []).find((q) => st >= q.s && st < q.s + q.l);
-          if (n) {
-            bg = col;
-            const first = st === n.s || k === 0, last = st === n.s + n.l - 1 || k === cols - 1;
-            // a HOLD is one bar of joined chips: no gap where it continues
-            if (n.l > 1 && !(first && last)) {
-              const L0 = first ? 2 : 0, R0 = last ? 2 : 0;
-              x = 'left:calc(' + (k * cw) + '% + ' + L0 + 'px);width:calc(' + cw + '% - ' + (L0 + R0) + 'px);top:' + (li * LANEH + 5) + 'px;height:' + (LANEH - 10) + 'px';
+    const cw = 100 / page;
+    let segs = null;
+    try { const cm = V2.changeSpans ? V2.changeSpans(P.E, L) : null; if (cm && cm.length > 1) segs = cm.map((c) => ({ a: Math.round(c.f0 * cells), z: Math.round(c.f1 * cells), nm: c.nm })).filter((g) => g.z > g.a); } catch (e) { segs = null; }
+    if (!segs || !segs.length) segs = Array.from({ length: nb }, (_, i) => ({ a: i * spb, z: Math.min(cells, (i + 1) * spb), nm: 'Bar ' + (i + 1) }));
+    const where = (st) => (Math.floor(st / spb) + 1) + '.' + (Math.floor((st % spb) / Math.max(1, spb / 4)) + 1);
+    h += '<div class="pe-body">';
+    segs.forEach((g, gi) => {
+      for (let a0 = g.a; a0 < g.z; a0 += page) {
+        const z0 = Math.min(g.z, a0 + page), cols = z0 - a0;
+        h += '<div class="pe-blk">' + (a0 === g.a ? '<div class="pe-seghd"><b>' + esc(g.nm || ('Change ' + (gi + 1))) + '</b><span>' + where(a0) + '</span></div>' : '<div class="pe-seghd pe-segcont"><span>' + where(a0) + '</span></div>');
+        h += '<div class="pe-segrow"><div class="pe-gutcol' + (kit ? ' kit' : ' v') + '">';
+        for (let li = 0; li < nLanes; li++) {
+          h += kit ? '<span class="pe-lane" style="height:' + LANEH + 'px"><i style="background:' + LANE_COL[li % LANE_COL.length] + '"></i>' + esc((V2.LANE_NAMES || [])[li] || '') + '</span>'
+            : '<span class="pe-lane" style="height:' + LANEH + 'px" title="Voice ' + (li + 1) + '"><i style="background:' + NOTE + '"></i>' + (li + 1) + '</span>';
+        }
+        h += '</div><div class="pe-grid" data-c0="' + a0 + '" data-cols="' + cols + '" data-rows="' + nLanes + '" data-rowh="' + LANEH + '" style="height:' + (nLanes * LANEH) + 'px">' + gridBg(nLanes, LANEH, page, a0, spb, null, null, cols);
+        for (let li = 0; li < nLanes; li++) {
+          const col = kit ? LANE_COL[li % LANE_COL.length] : NOTE;
+          for (let k = 0; k < cols; k++) {
+            const st = a0 + k; let x = 'left:calc(' + (k * cw) + '% + 2px);width:calc(' + cw + '% - 4px);top:' + (li * LANEH + 5) + 'px;height:' + (LANEH - 10) + 'px';
+            let cls = 'pe-st0', lab = '', bg = '';
+            if (kit) {
+              if ((lanesK[li] || [])[st]) {
+                cls = 'pe-st1'; bg = col;
+                const fx = (((L.part.rhythm || {}).cellFx) || {})[li + ':' + st];
+                if (fx && Number.isFinite(fx.c) && fx.c < 100) cls += ' pe-chance';
+                if (fx && fx.t) lab = (fx.t > 0 ? '+' : '') + fx.t;
+                if (P.sel && P.sel.kit && P.sel.li === li && P.sel.col === st) cls += ' pe-sel';
+              }
+            } else {
+              const n = (lanes[li] || []).find((q) => st >= q.s && st < q.s + q.l);
+              if (n) {
+                bg = col;
+                const first = st === n.s || k === 0, last = st === n.s + n.l - 1 || k === cols - 1;
+                // a HOLD is one bar of joined chips: no gap where it continues
+                if (n.l > 1 && !(first && last)) {
+                  const L0 = first ? 2 : 0, R0 = last ? 2 : 0;
+                  x = 'left:calc(' + (k * cw) + '% + ' + L0 + 'px);width:calc(' + cw + '% - ' + (L0 + R0) + 'px);top:' + (li * LANEH + 5) + 'px;height:' + (LANEH - 10) + 'px';
+                }
+                cls = 'pe-st1' + (n.l > 1 ? (first ? ' cs' : (last ? ' ce' : ' cm')) : '') + (spc && !spc[((n.m % 12) + 12) % 12] ? ' ook' : '');   // outside the key: amber edge
+                if (first) lab = nameOf(n.m) + (st !== n.s ? '…' : '');
+                if (P.sel && !P.sel.kit && P.sel.m === n.m && P.sel.start === n.s) cls += ' pe-sel';
+              }
             }
-            cls = 'pe-st1' + (n.l > 1 ? (first ? ' cs' : (last ? ' ce' : ' cm')) : '') + (spc && !spc[((n.m % 12) + 12) % 12] ? ' ook' : '');   // outside the key: amber edge
-            if (first) lab = nameOf(n.m) + (st !== n.s ? '…' : '');
-            if (P.sel && !P.sel.kit && P.sel.m === n.m && P.sel.start === n.s) cls += ' pe-sel';
+            h += '<span class="pe-st ' + cls + '" style="' + x + (bg ? ';background:' + bg : '') + '">' + esc(lab) + '</span>';
           }
         }
-        h += '<span class="pe-st ' + cls + '" style="' + x + (bg ? ';background:' + bg : '') + '">' + esc(lab) + '</span>';
+        if (P.mode === 'compose' && P.cur >= a0 && P.cur < z0) h += '<span class="pe-cursor" style="left:' + ((P.cur - a0) * cw) + '%;width:' + cw + '%"></span>';
+        h += '</div></div></div>';
       }
-    }
-    if (P.mode === 'compose' && P.cur >= c0 && P.cur < c0 + cols) h += '<span class="pe-cursor" style="left:' + ((P.cur - c0) * cw) + '%;width:' + cw + '%"></span>';
-    h += '</div></div>';
+    });
+    if (!kit) h += '<button type="button" class="pe-addlane" data-pe="addlane">＋ Lane</button>';
+    h += '</div>';
     // ── THE STEP PANEL: the selected step's own controls ──
     if (P.mode === 'edit') h += stepPanelHTML(L, kit);
     else if (P.sel) P.sel = null;
-    // the foot: where you are
-    const bA = Math.floor(c0 / spb) + 1, bZ = Math.floor((c0 + cols - 1) / spb) + 1;
-    h += '<div class="pe-foot"><button type="button" class="pe-ib" data-pe="page" data-d="-1" aria-label="Earlier steps"' + (c0 > 0 ? '' : ' disabled') + '>◀</button>'
-      + '<span class="pe-where">' + (cols >= cells ? 'All ' + nb + ' bar' + (nb === 1 ? '' : 's') : (bZ > bA ? 'Bars ' + bA + '–' + bZ + ' of ' + nb : 'Bar ' + bA + ' of ' + nb + (cols < spb ? ' · steps ' + (c0 % spb + 1) + '–' + ((c0 + cols - 1) % spb + 1) : '')))
-      + (P.say ? ' · <b>' + esc(P.say) + '</b>' : '') + '</span>'
-      + '<button type="button" class="pe-ib" data-pe="page" data-d="1" aria-label="Later steps"' + (c0 + cols < cells ? '' : ' disabled') + '>▶</button></div>';
+    // the foot: what just happened
+    h += '<div class="pe-foot"><span class="pe-where">' + nb + ' bar' + (nb === 1 ? '' : 's') + ' · ' + spb + ' steps a bar' + (P.say ? ' · <b>' + esc(P.say) + '</b>' : '') + '</span></div>';
     const sc = P.root.querySelector('.pe-body'), top = sc ? sc.scrollTop : null;
     P.root.innerHTML = '<div class="pe">' + h + '</div>';
     const sc2 = P.root.querySelector('.pe-body');
     if (sc2 && top != null) sc2.scrollTop = top;
+    // the compose cursor stays in view as it walks down the page
+    if (P.mode === 'compose' && P.followCur) {
+      P.followCur = false;
+      const cu = P.root.querySelector('.pe-cursor');
+      if (cu && sc2) { const r1 = cu.getBoundingClientRect(), r0 = sc2.getBoundingClientRect(); if (r1.top < r0.top || r1.bottom > r0.bottom) sc2.scrollTop += (r1.top - r0.top) - sc2.clientHeight / 3; }
+    }
   }
   // ✎ ONE STEP (2026-10-06, user: "user needs to be able to edit individual steps (notes,
   // length, etc)"). A tap on a sounding chip SELECTS it; this panel edits it. Pitched: its
@@ -279,14 +286,15 @@
     } else { P.sel = null; P.say = nameOf(s0.m) + ' removed'; }
     commit(L);
   }
-  function gridBg(n, rh, cols, c0, spb, shade, ms) {   // (shade / ms: unused by lanes, kept for the row tint)
+  function gridBg(n, rh, cols, c0, spb, shade, ms, used) {   // (shade / ms: unused by lanes, kept for the row tint)
     let s = '';
+    const wPct = (Number.isFinite(used) ? used / cols : 1) * 100;   // a short last row tints only its own steps
     for (let i = 0; i < n; i++) {
       const cls = shade ? (shade[i] === 'out' ? ' out' : ' in') : (ms && isBlack(ms[i]) ? ' blk' : (!ms && i % 2 ? ' alt' : ''));
-      s += '<span class="pe-row' + cls + '" style="top:' + (i * rh) + 'px;height:' + rh + 'px"></span>';
+      s += '<span class="pe-row' + cls + '" style="top:' + (i * rh) + 'px;height:' + rh + 'px;right:auto;width:' + wPct + '%"></span>';
     }
     const q = Math.max(1, spb / 4);
-    for (let k = 1; k < cols; k++) {
+    for (let k = 1; k < (Number.isFinite(used) ? used : cols); k++) {
       const st = c0 + k;
       s += '<span class="pe-vl' + (st % spb === 0 ? ' bar' : (st % q === 0 ? ' beat' : '')) + '" style="left:' + (k / cols * 100) + '%"></span>';
     }
@@ -294,14 +302,23 @@
   }
 
   // ── where a pointer is, in steps and rows ───────────────────────────────────
-  function cellAt(ev) {
-    const g = P.root.querySelector('.pe-grid'); if (!g) return null;
+  // the ROW under the pointer (by height, so a hold dragged down a row edge carries on),
+  // else the one the gesture started in; a point past a short row's last step is nothing
+  function cellAt(ev, g0) {
     const L = layer(); if (!L) return null;
-    const r = g.getBoundingClientRect(), cells = cellsOf(L), c0 = P.c0, cols = Math.min(cells - c0, pageOf(L));
+    let g = null;
+    const gs = [...P.root.querySelectorAll('.pe-grid')];
+    for (let i = 0; i < gs.length; i++) { const r = gs[i].getBoundingClientRect(); if (ev.clientY >= r.top && ev.clientY < r.bottom) { g = gs[i]; break; } }
+    if (!g) g = g0 || (ev.target && ev.target.closest && ev.target.closest('.pe-grid'));
+    if (!g) return null;
+    const r = g.getBoundingClientRect(), page = pageOf(L);
+    const c0 = +g.getAttribute('data-c0') || 0, cols = +g.getAttribute('data-cols') || page;
     const rh = +g.getAttribute('data-rowh') || LANEH, nr = +g.getAttribute('data-rows') || 1;
-    const col = clamp(Math.floor((ev.clientX - r.left) / Math.max(1, r.width) * cols), 0, cols - 1) + c0;
+    const k = Math.floor((ev.clientX - r.left) / Math.max(1, r.width) * page);
+    if (k >= cols && !g0) return null;
+    const col = clamp(k, 0, cols - 1) + c0;
     const ri = clamp(Math.floor((ev.clientY - r.top) / rh), 0, nr - 1);
-    return { col, ri };
+    return { col, ri, g };
   }
 
   // ── THE LANES, worked out from the rows (nothing new is stored) ─────────────
@@ -359,11 +376,12 @@
   }
 
   // ── ✎ DRAW: tap = on/off · drag ↕ = pitch · drag → = hold (kit: paint) ───────
-  let DR = null;
+  let DR = null, DRG = null;
   function onDown(ev) {
     if (!P || !ev.target.closest('.pe-grid')) return;
     const L = layer(); if (!L) return;
     const at = cellAt(ev); if (!at) return;
+    DRG = at.g;          // the row the gesture started in (a drag may leave it)
     if (P.mode === 'compose') { P.cur = at.col; P.say = 'cursor → step ' + (at.col % spbOf(L) + 1) + ' of bar ' + (Math.floor(at.col / spbOf(L)) + 1); paint(); return; }
     // ◎ EDIT (2026-10-06, user: "clicking steps should add/remove note events, there
     // should be a separate Edit mode to edit each step"): a tap SELECTS a sounding step
@@ -421,7 +439,7 @@
     if (!DR || !P) return;
     const L = layer(); if (!L) return;
     if (DR.kit) {
-      const at = cellAt(ev); if (!at || at.col === DR.last) return;
+      const at = cellAt(ev, DRG); if (!at || at.col === DR.last) return;
       const row = lanesOf(L)[DR.ri];
       const a = Math.min(DR.last, at.col), z = Math.max(DR.last, at.col);
       for (let k = a; k <= z; k++) row[k] = DR.val;
@@ -434,7 +452,7 @@
       if (want !== DR.m) { const pl = P.pins[DR.m + ':' + DR.start]; delete P.pins[DR.m + ':' + DR.start]; moveRun(L, DR.m, want, DR.start); if (Number.isFinite(pl)) P.pins[want + ':' + DR.start] = pl; DR.m = want; DR.moved = true; hear(L, want); P.say = nameOf(want) + ' at step ' + (DR.start + 1); paintLite(); }
       return;
     }
-    const at = cellAt(ev); if (!at) return;
+    const at = cellAt(ev, DRG); if (!at) return;
     const len = Math.max(1, at.col - DR.start + 1), run = runOf(L, DR.m, DR.start);
     if (run && len !== run[1]) { run[1] = len; DR.moved = true; P.say = nameOf(DR.m) + ' holds ' + len + ' step' + (len === 1 ? '' : 's'); paintLite(); }
   }
@@ -457,7 +475,7 @@
 
   // ── ⌨ COMPOSE ───────────────────────────────────────────────────────────────
   function advance(L, n) { const cells = cellsOf(L); P.cur = ((P.cur + n) % cells + cells) % cells; follow(L); }
-  function follow(L) { const pg = pageOf(L); if (P.cur < P.c0 || P.cur >= P.c0 + pg) P.c0 = Math.floor(P.cur / pg) * pg; }
+  function follow() { P.followCur = true; }
   let chordAt = 0, chordCol = -1;
   function writeAtCursor(L, fn) {
     const now = Date.now(), together = now - chordAt < 90 && chordCol >= 0;
@@ -504,7 +522,6 @@
       commit(L); return;
     }
     if (a === 'addlane') { P.want = Math.max(P.want | 0, (P.lanes || []).length) + 1; P.say = 'a new lane — tap a step in it'; paint(); return; }
-    if (a === 'page') { P.c0 += (+b.getAttribute('data-d')) * pageOf(L); paint(); return; }
     if (a === 'oct') { P.oct = clamp(P.oct + (+b.getAttribute('data-d')), 1, 7); paint(); return; }
     if (a === 'rest') { advance(L, 1); P.say = 'rest'; paint(); return; }
     if (a === 'back') { advance(L, -1); paint(); return; }
@@ -576,7 +593,12 @@
   .pe-rc.beat::before{content:'';position:absolute;left:0;bottom:0;height:7px;border-left:1px solid rgba(200,190,240,.4)}
   .pe-rc b{position:absolute;left:4px;top:6px;font-size:13px;color:#ece8f8}.pe-rc i{position:absolute;left:3px;top:9px;font:600 9.5px 'Segoe UI',sans-serif;color:#8d8ab0;font-style:normal}
   .pe-curtri{position:absolute;bottom:0;width:0;height:0;margin-left:-7px;border-left:7px solid transparent;border-right:7px solid transparent;border-top:9px solid #7ef0dc}
-  .pe-body{flex:1;min-height:0;overflow-y:auto;display:flex;overscroll-behavior:contain}
+  .pe-body{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:4px 0 10px;overscroll-behavior:contain}
+  .pe-blk{display:flex;flex-direction:column;flex:none}
+  .pe-seghd{display:flex;align-items:baseline;gap:8px;padding:8px 10px 3px}.pe-seghd b{font:800 14px 'Segoe UI',sans-serif;color:#c9a0ff}.pe-seghd span{font:600 11px 'Segoe UI',sans-serif;color:#8d8ab0}
+  .pe-seghd.pe-segcont{padding-top:2px}
+  .pe-segrow{display:flex}
+  .pe-gutcol.v{flex-basis:30px;background:#14142a;border-right:1px solid #2d2d4a}.pe-gutcol.v .pe-lane{padding:0 4px;justify-content:center;font-size:11px;color:#a9a6c7}.pe-gutcol.v .pe-lane i{display:none}
   .pe-gutcol{flex:0 0 52px;display:flex;flex-direction:column;background:#f4f2f8;align-self:flex-start}
   .pe-gutcol.kit{flex-basis:92px;background:#14142a;border-right:1px solid #2d2d4a}
   .pe-pk{position:relative;flex:none;box-sizing:border-box;border-bottom:1px solid rgba(20,20,35,.12)}
@@ -681,7 +703,7 @@
     root.className = 'sm-overlay pe-ov';
     root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', 'Pattern editor');
     document.body.appendChild(root);
-    P = { E, id: L.id, root, mode: 'draw', c0: 0, cur: 0, oct: clamp(((L.instrument && L.instrument.register) | 0) || 4, 1, 7), hist: { u: [], r: [] }, say: '', want: 0, pins: {}, sel: null };
+    P = { E, id: L.id, root, mode: 'draw', cur: 0, oct: clamp(((L.instrument && L.instrument.register) | 0) || 4, 1, 7), hist: { u: [], r: [] }, say: '', want: 0, pins: {}, sel: null };
     root.addEventListener('click', onClick);
     root.addEventListener('change', onChange);
     root.addEventListener('pointerdown', onDown);

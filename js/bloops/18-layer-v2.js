@@ -21653,9 +21653,17 @@
           '<div class="ambient-ctrl"><label>Bus mix</label>' +
             '<button type="button" class="ambient-seg v2-busedit" title="This bus’s level, its sends into the shared FX, and their ramps — every layer on the bus at once">✎ Edit bus</button>' +
             '<span class="ambient-hint">level · sends · ramps</span></div>' +
-          sl(L, 'space', 'Width', num(L.space, 0), -100, 100, 'spread, or position in Pan mode') +
+          // STEREO FIRST, THEN ITS ONE CONTROL (2026-10-06, user: "need pan controls in v2
+          // layer mix controls"). `space` means two things by mode — how WIDE in Spread, WHERE
+          // in Pan — so each mode gets its own row and its own words (label-only: the store
+          // stays `space`). In Pan it read "Width 100" and sat hard right.
           sel(L, 'panMode', 'Stereo', L.panMode || 'spread',
               [['spread', 'Spread — widen'], ['pan', 'Pan — place it']]) +
+          sl(L, 'space', 'Width', Math.max(0, num(L.space, 0)), 0, 100, 'how wide each note scatters · 0 = mono', 'stereo:spread') +
+          (typeof _ambSl === 'function'
+            ? tag(_ambSl('Pan', 'v2-' + L.id + '-panpos', -100, 100, num(L.space, 0), '−100 left · 0 centre · +100 right'), 'ambient-sl', 'space', 'stereo:pan')
+                .replace('<div ', '<div data-v2u="left ← 0 → right" ')
+            : '') +
           // SPATIALIZE — a per-note pan SEQUENCE, distinct from Width (a static
           // spread). Applied inside `_ambCapSink`, which v2 already installs per
           // layer, so like the trance gate it worked already and needed only a
@@ -21979,6 +21987,7 @@
       // them from the chord resolver as it is
       saltrel: (((p.pitch && p.pitch.kind) === 'chord') ? !!L.followSalt : true) ? 'on' : 'off',
       spat: (L.spat && L.spat.on) ? 'on' : 'off',
+      stereo: L.panMode === 'pan' ? 'pan' : 'spread',   // which of Width / Pan the Mix shows
       rhythm: (p.rhythm && p.rhythm.kind) || '',
       // THE MATERIAL'S FORM. What it scopes is deliberately small — the grid's
       // own rows and the note list's own — because every pitch rule, shape and
@@ -22500,7 +22509,9 @@
         const bits = ['level: ' + num(L.level, 70)];
         if (num(L.revSend, 0) > 0) bits.push('reverb: ' + num(L.revSend, 0));
         if (L.bus && L.bus !== 'a') bits.push('bus: ' + String(L.bus).toUpperCase());
-        if (num(L.space, 0) !== 0) bits.push('width: ' + num(L.space, 0));
+        // the SAME word as the control on screen: Pan names a place, Spread a width
+        if (L.panMode === 'pan') { const pv = num(L.space, 0); bits.push('pan: ' + (pv === 0 ? 'centre' : (pv < 0 ? 'L ' + (-pv) : 'R ' + pv))); }
+        else if (num(L.space, 0) !== 0) bits.push('width: ' + num(L.space, 0));
         if (now.spat === 'on') bits.push('moving');
         // (♫ Mod's `mod: vca+…` bit went to the FX summary with the rows, 2026-09-26)
         // \u21d7 \u2026and the ramps, which are a tab of this group now. A folded group
@@ -25912,6 +25923,13 @@
         const prevSteps = (path === 'part.rhythm.steps')
           ? Math.max(1, (ctx.L.part.rhythm || {}).steps | 0) : 0;
         setPath(ctx.L, path, (f.tagName === 'SELECT' || f.type === 'text') ? raw : (parseFloat(raw) || 0));
+        // ⇆ CHANGING STEREO RE-SEATS `space`: Pan starts CENTRED (a width of 100 read as
+        // hard right), and Spread comes back full width from a centred pan
+        if (path === 'panMode') {
+          if (raw === 'pan') ctx.L.space = 0;
+          else if ((ctx.L.space | 0) <= 0) ctx.L.space = 100;
+          try { (ctx.card || document).querySelectorAll('.v2-f[data-f="space"]').forEach((el3) => { el3.value = String(ctx.L.space); const r3 = document.getElementById(el3.id + '-v'); if (r3 && typeof _ambSlReadout === 'function') r3.textContent = _ambSlReadout(el3.id, ctx.L.space); }); } catch (e) {}
+        }
         if (path === 'part.bars') { try { V2.applyBarsMode(ctx.L, prevBars); } catch (e) {} }
         // MOVING THE GRID MOVES THE GROOVE — the pulses are counts per bar, so
         // without this the beat plays at exactly the same speed on a finer
@@ -26051,6 +26069,21 @@
         // …ONLY ON THE PLAYING AREA. Layer ids are per-area, so `v2:<id>` here can
         // be ANOTHER area's sounding chain while you edit this one mid-play — the
         // edit is stored and applies when this area next plays (`_ambLiveApplyOK`).
+        // …AND SAYS SO when it is held (2026-10-06, user: "live edit of Mix space params not
+        // taking effect as play happens, have to stop and start again"). With areas in
+        // Sequence, the area on screen is often not the one sounding; the edit is stored
+        // and heard when this area plays — silently, it read as broken. Once per area per play.
+        if ((/^(revSend|space|panMode|cutoff|reso|wetOnly|level|bus)$/.test(path) ||
+            /^(delay|dist|chorus|phaser|autopan|glitch|spat|eq)\./.test(path)) && E.timer && !_ambLiveApplyOK(E)) {
+          try {
+            const ai = (typeof _ambActiveAreaIdx === 'function') ? _ambActiveAreaIdx() : -1, pi = E._playIdx | 0;
+            const tag = ai + ':' + pi + ':' + (E._t0 || 0);
+            if (V2._heldNote !== tag && typeof showToast === 'function') {
+              V2._heldNote = tag;
+              showToast('Saved — you’ll hear it when Area ' + (ai + 1) + ' plays. Area ' + (pi + 1) + ' is playing now.', { ms: 4200 });
+            }
+          } catch (e) {}
+        }
         if ((/^(revSend|space|panMode|cutoff|reso|wetOnly)$/.test(path) ||
             /^(delay|dist|chorus|phaser|autopan|glitch|spat|eq)\./.test(path)) && _ambLiveApplyOK(E)) {
           const k2 = 'v2:' + ctx.L.id;

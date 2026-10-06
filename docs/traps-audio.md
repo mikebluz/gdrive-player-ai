@@ -96,6 +96,11 @@ Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core 
 - **Any DSP change must keep `node test/golden-render.js` green** (83 bit-exact sections); an
   intentional audio change re-baselines with `--update` IN THE SAME COMMIT. `dsp/build.sh` runs the
   gate after every build. Check the blast radius: only the sections you meant to move should drift.
+- **A design layer that sounds "doubled"/brighter only beside another layer = per-voice state landing
+  on the wrong voice.** `note_ex` once read `NOTE_CURSOR` BEFORE `note()`, so the design (filter, sub,
+  routes) went to the PREVIOUS voice; all-design scenes hid it, an interleaved plain drum note exposed
+  it (fixed 2026-10-06). Diagnose by tapping each layer's slot (`E.mod[k].core.tap(analyser)`) with
+  the layer alone vs beside the other — note payloads that match while the spectrum moves = engine state.
 - **Calibrate against RECORDED node output, never derive from Tone internals** (proven wrong
   repeatedly). Known engine truths: native lowpass/highpass biquad Q is in dB; `Tone.LFO/Signal.connect`
   ZEROES the destination param; cycle-member DelayNodes keep true delay with the quantum penalty on the

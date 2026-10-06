@@ -527,9 +527,14 @@ pub extern "C" fn note_ex(
     a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32, tag: u32,
 ) {
     unsafe {
-        let idx_before = NOTE_CURSOR;
         note(slot, kind, freq, vel, pan, t_start, dur, a, d, s, r, detune, p0, tag);
-        let i = idx_before; // note() stored the voice index here
+        // Read the cursor AFTER note(): it is the voice note() just allocated.
+        // Reading it before gave the PREVIOUS note's voice — the design (filter,
+        // sub, mod routes) landed on whatever played last, and this voice rang
+        // raw. Masked while every note was a design note with the same patch;
+        // a plain note in between (a drum layer) exposed it as a "phantom",
+        // unfiltered copy of the design layer's line.
+        let i = NOTE_CURSOR;
         let v = &mut VOICES[i];
         let q = &PARAMS;
         let flags = q[0] as u32;

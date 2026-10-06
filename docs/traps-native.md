@@ -358,3 +358,5 @@
   jumps (2% cut the Play-then-lock reserve 118 → 14 ms; a 400 ms target failed 4 lock scenarios).
   The user chose PRIME = TARGET_VIS = 850 ms: ~0.9 s to sound, 0 splices after Play, NAMED by the
   starting modal — which until then existed only on the MSE path, so the phone showed nothing.
+
+- **A context can report `running` with its clock FROZEN, and suspend→resume cannot wake it.** This happens after the battery release lets iOS suspend the app. In the 2026-10-06 flight, `ct` sat at 179.88 through ten revives. `reviveAudio` now saves and `location.reload()`s after 2 failed revives, at most once a minute. A second freeze inside that minute shows "close and reopen" (`__bloopsFrozenStuck`).

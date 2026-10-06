@@ -88,6 +88,7 @@
     } catch (e) {}
   };
   setInterval(_flush, 20000);
+  try { window.__bloopsFlushFlight = _flush; } catch (e) {}   // a reload flushes first (the frozen-engine restart)
   // KEEP THE PREVIOUS SESSION. Every launch overwrote the log, so a report
   // made after reopening the app arrived with the evidence already gone —
   // the glitchy session is almost always the one BEFORE the current launch.
@@ -298,7 +299,7 @@
           const T = [
             ['Starting the music…', 'Filling the audio buffer first, so playback stays smooth — even if the phone locks.'],
             ['Waking the audio engine…', 'The phone paused its audio while the app was idle. Bringing it back.'],
-            ['Audio didn\u2019t start', 'The phone\u2019s audio engine isn\u2019t responding. Retry, or Stop and press Play again.'],
+            ['Audio didn\u2019t start', (window.__bloopsFrozenStuck ? 'The phone\u2019s audio engine is stuck. Close Bloops and open it again — your work is saved.' : 'The phone\u2019s audio engine isn\u2019t responding. Retry, or Stop and press Play again.')],
           ][n] || [];
           try { msgEl.textContent = T[0]; hintEl.textContent = T[1]; actsEl.style.display = (n === 2) ? 'flex' : 'none'; } catch (e) {}
           log('starting-modal stage ' + n + ' (' + T[0] + ')');
@@ -1490,6 +1491,7 @@
     // the state. Revival: re-arm the keep-alive (the thing iOS keeps us alive
     // for), stand every hold down, and cycle the contexts suspend → resume,
     // logging whether the clock moved — the outcome is itself the diagnostic.
+    let reviveFails = 0;
     reviveAudio = (why) => {
       const ct0 = raw.currentTime;
       log('REVIVE [' + why + '] ctx=' + raw.state + ' ct=' + ct0.toFixed(2)
@@ -1501,6 +1503,21 @@
       const check = (step) => setTimeout(() => {
         const moved = raw.currentTime > ct0 + 0.05;
         log('REVIVE ' + step + ': ct ' + ct0.toFixed(2) + ' → ' + raw.currentTime.toFixed(2) + ' (' + (moved ? 'RUNNING' : 'still frozen') + ')');
+        // A FROZEN ENGINE SUSPEND/RESUME CANNOT WAKE GETS A FRESH ONE (2026-10-06, flight:
+        // after the battery release iOS left ct pinned at 179.88 through ten revives and the
+        // starting modal sat on "Audio didn't start"). Only a new AudioContext helps, and the
+        // whole graph hangs off it — so the app SAVES and RELOADS, once a minute at most, and
+        // only while visible. A reload inside that minute stays put and the modal says why.
+        if (moved) { reviveFails = 0; return; }
+        if (++reviveFails < 2 || document.visibilityState !== 'visible') return;
+        let last = 0;
+        try { last = +(sessionStorage.getItem('bloopsFrozenReloadAt') || 0); } catch (e) {}
+        if (Date.now() - last < 60000) { log('REVIVE failed again after a reload — leaving it to the user'); try { window.__bloopsFrozenStuck = true; } catch (e) {} return; }
+        log('REVIVE failed ' + reviveFails + 'x — saving and reloading for a fresh audio engine');
+        try { sessionStorage.setItem('bloopsFrozenReloadAt', String(Date.now())); } catch (e) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        try { if (typeof window.__bloopsFlushFlight === 'function') window.__bloopsFlushFlight(); } catch (e) {}
+        setTimeout(() => { try { location.reload(); } catch (e) {} }, 400);
       }, 700);
       try {
         Promise.resolve(raw.state === 'running' ? raw.suspend() : null)

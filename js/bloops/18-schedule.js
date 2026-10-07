@@ -34,6 +34,15 @@
     return el._st;
   }
 
+  // ↻ A LAYER'S BANK ROTATION (`L.bankPlay`, set here or in its Bank tab) — what a
+  // pass plays where the Phrase grid maps nothing. Live names only (a deleted take
+  // drops out of the count the way it drops out of playback).
+  function rotOf(L) {
+    const q = L && L.bankPlay;
+    if (!q || !q.on || !Array.isArray(q.names)) return 0;
+    const live = new Set(bankNames());
+    return q.names.filter((nm) => live.has(nm)).length;
+  }
   function bankNames() {
     try {
       if (typeof savedSequences === 'undefined' || !Array.isArray(savedSequences)) return [];
@@ -245,12 +254,17 @@
         }
         if (st.mode === 'phrase') {
           const res = has(_ambPartSeqResolve) ? _ambPartSeqResolve(L, r.pi, P.c, x.k) : { name: '', from: '' };
-          const inh = res.from && res.from !== 'cell';
-          const face = res.gen ? '\u26a1 gen' : ((res.spec && has(_ambPsqLabel)) ? _ambPsqLabel(res.spec) : (res.name || 'generated'));
-          const cls = (res.name || res.gen) ? 'ph' : 'phgen';
+          // NOTHING MAPPED + a ↻ rotation = the layer's next banked take plays here
+          const rot = (!res.name && !res.gen) ? rotOf(L) : 0;
+          const inh = (res.from && res.from !== 'cell') || rot > 0;
+          const face = res.gen ? '\u26a1 gen' : rot ? '\u21bb in turn'
+            : ((res.spec && has(_ambPsqLabel)) ? _ambPsqLabel(res.spec) : (res.name || 'generated'));
+          const cls = (res.name || res.gen || rot) ? 'ph' : 'phgen';
           return '<button type="button" class="sch-cell ' + cls + (inh ? ' inh' : '') + '" style="' + size + '"' + attrs +
-            ' title="' + esc(where + ' \u2014 ' + (res.name ? ('plays ' + res.name) : 'plays its own generated part') +
-              (inh ? (' (set on the whole ' + res.from + ')') : '')) + '">' + (inh ? '\u21b3 ' : '') + esc(face) + '</button>';
+            ' title="' + esc(where + ' \u2014 ' + (res.name ? ('plays ' + res.name)
+              : rot ? ('plays the next of its ' + rot + ' banked take' + (rot === 1 ? '' : 's') + ' (\u21bb rotation \u2014 its options, or its Bank tab)')
+              : 'plays its own generated part') +
+              ((res.from && res.from !== 'cell') ? (' (set on the whole ' + res.from + ')') : '')) + '">' + (inh ? '\u21b3 ' : '') + esc(face) + '</button>';
         }
         const own = has(_ambChordPassGet) ? _ambChordPassGet(L, P.c, abs) : null;
         const dflt = has(_ambMaskRead) ? _ambMaskRead(L, 'chord', abs) : 100;
@@ -400,6 +414,7 @@
     return '<button type="button" class="sch-rowlab' + (st.open === row.key ? ' on' : '') + '" data-sch="opt:' + esc(row.key) + '"' +
       ' title="' + esc(row.label + ' \u2014 options') + '"><b>' + esc(row.label) + '</b>' +
       (row.L.gateMode === 'mute' ? '<span class="sch-note sch-mute">mute</span>' : '') +
+      (rotOf(row.L) ? '<span class="sch-note" title="Plays its banked takes in turn where nothing is mapped">\u21bb ' + rotOf(row.L) + '</span>' : '') +
       (note ? '<span class="sch-note">' + esc(note) + '</span>' : '') + '</button>';
   }
   function optionsHtml(E, cfg, st, rows) {
@@ -409,6 +424,18 @@
       (title ? ' title="' + esc(title) + '"' : '') + (dis ? ' disabled' : '') + '>' + lab + '</button>';
     let h = '<div class="sch-opts" role="group" aria-label="' + esc(row.label) + ' options">' +
       '<div class="sch-optshead"><b>' + esc(row.label) + '</b><button type="button" class="ambient-seg" data-sch="opt:' + k + '" aria-label="Close">\u2715</button></div>';
+    // ↻ BANK ROTATION — the layer's banked takes, one per pass, wherever the Phrase
+    // grid maps nothing (a mapped cell always wins). Which takes: its Bank tab.
+    if (row.key.indexOf('v2:') === 0) {
+      const q = L.bankPlay || {}, on = !!q.on, n = rotOf(L);
+      const own = (() => { try { return (savedSequences || []).filter((x) => x && Number.isFinite(x.from) && (x.from | 0) === (L.id | 0)).length; } catch (e) { return 0; } })();
+      h += '<div class="sch-optrow"><span class="sch-lbl">Bank rotation</span>' +
+        btn(!on, 'bkp:off', 'Off', 'Unmapped passes play the layer\u2019s own part') +
+        btn(on && q.order !== 'shuffle', 'bkp:turn', '\u21bb In order', 'Unmapped passes play its banked takes one after another', !own && !(q.names || []).length) +
+        btn(on && q.order === 'shuffle', 'bkp:shuffle', '\u21bb Shuffled', 'A fresh order of its banked takes each round', !own && !(q.names || []).length) +
+        '<span class="ambient-hint">' + (on ? (n + ' take' + (n === 1 ? '' : 's') + ' in turn \u2014 pick which in the layer\u2019s Bank tab; a mapped cell always wins')
+          : own ? (own + ' take' + (own === 1 ? '' : 's') + ' banked for it') : 'no takes banked for it yet \u2014 \ud83c\udfb2 Fill bank in its Bank tab') + '</span></div>';
+    }
     const mute = L.gateMode === 'mute';
     h += '<div class="sch-optrow"><span class="sch-lbl">When a cell is off</span>' +
       btn(!mute, 'gm:skip', 'Skip', 'The notes there are never made \u2014 nothing is captured, nothing sounds') +
@@ -479,6 +506,19 @@
   function applyOption(E, el, cfg, act, key, arg) {
     const L = has(_ambLayerByKey) ? _ambLayerByKey(E, key) : null; if (!L) return;
     if (act === 'gm') { if (arg === 'mute') L.gateMode = 'mute'; else delete L.gateMode; layerCommit(E, key, 'reanchor'); return; }
+    if (act === 'bkp') {
+      const q = Object.assign({ names: [] }, L.bankPlay || {});
+      if (arg === 'off') q.on = 0;
+      else {
+        if (!(q.names || []).length) {
+          try { q.names = (savedSequences || []).filter((x) => x && Number.isFinite(x.from) && (x.from | 0) === (L.id | 0)).map((x) => x.name); } catch (e) { q.names = []; }
+        }
+        if (!q.names.length) return;
+        q.on = 1; if (arg === 'shuffle') q.order = 'shuffle'; else delete q.order;
+      }
+      L.bankPlay = q;
+      layerCommit(E, key, 'reanchor'); v2Refresh(E, key); return;
+    }
     if (act === 'when') { L.when = arg; layerCommit(E, key, 'reanchor'); return; }
     if (act === 'ev') {
       if (!L.write || typeof L.write !== 'object') L.write = { on: true, bars: 2, times: 4 };
@@ -658,6 +698,12 @@
     render(E);
   }
 
+  // A v2 CARD READS THE PHRASE MAPPING AND THE ROTATION (its Bank tab tags each take
+  // "▦ Part" and shows ↻) — repaint it when either changes here
+  function v2Refresh(E, key) {
+    if (!key || String(key).indexOf('v2:') !== 0) return;
+    try { const hv = document.getElementById('bloom-v2-layers'); if (hv) hv._sig = ''; if (window._v2 && window._v2.render) window._v2.render(E); } catch (e) {}
+  }
   function paintPlays(E, el, cfg, key, pass, k) {
     const st = stOf(el);
     const ranges = _ambGridRanges(cfg) || [], r = ranges[st.part]; if (!r) return;
@@ -702,6 +748,7 @@
     const same = JSON.stringify(cur) === JSON.stringify(want);
     _ambPartSeqCellSet(L, r.pi, cellKey, (want == null || same) ? null : want);
     commit(E, key);
+    v2Refresh(E, key);
   }
   function paintSalt(E, el, cfg, key, k) {
     const st = stOf(el);
@@ -820,7 +867,7 @@
       }
       if (a[0] === 'opt') { const key = a.slice(1).join(':'); st.open = (st.open === key) ? '' : key; el._sig = ''; render(E); return; }
       // option actions — data-sch="<act>:<arg>:<layer key>", the key last because it may hold ':'
-      if (a[0] === 'gm' || a[0] === 'when' || a[0] === 'ev' || a[0] === 'ugmode' || a[0] === 'win' || a[0] === 'place' || a[0] === 'sec') { applyOption(E, el, cfg, a[0], a.slice(2).join(':'), a[1]); return; }
+      if (a[0] === 'gm' || a[0] === 'bkp' || a[0] === 'when' || a[0] === 'ev' || a[0] === 'ugmode' || a[0] === 'win' || a[0] === 'place' || a[0] === 'sec') { applyOption(E, el, cfg, a[0], a.slice(2).join(':'), a[1]); return; }
       if (a[0] === 'ugclear') { applyOption(E, el, cfg, 'ugclear', a.slice(1).join(':')); return; }
       if (a[0] === 'ugdiv' || a[0] === 'ugslice') { const arg = a.pop(); applyOption(E, el, cfg, a[0], a.slice(1).join(':'), arg); return; }
       if (a[0] === 'units') { st.units = Math.max(2, Math.min(32, (st.units | 0) + (a[1] | 0))); el._sig = ''; render(E); return; }

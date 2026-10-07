@@ -15164,7 +15164,81 @@
       // CAPPED AT 3 FOR NOW (user, 2026-09-26). 1 is "never double", which `dub` already
       // says, so it prunes to absent and there is one representation of "no stack".
       if (Number.isFinite(q.maxV) && (q.maxV | 0) > 1) q.maxV = Math.max(2, Math.min(3, q.maxV | 0)); else delete q.maxV;
+      // ✦ MADE BY GENERATE — `gen = { m, sig }`: the mode it was built in and the steps
+      // it built. ABSENT BY DEFAULT. While the steps still equal `sig` the set is
+      // Generate's to rebuild (a Style pick re-derives it from the new sound); the
+      // first hand edit makes it the user's, with no flag to clear.
+      if (q.gen && typeof q.gen === 'object' && /^(bars|chg|part)$/.test(q.gen.m)) q.gen = { m: q.gen.m, sig: String(q.gen.sig || '') };
+      else delete q.gen;
       return !!q.steps.length;
+    }
+    // ── RELATED SOUNDS ──────────────────────────────────────────────────
+    // What "vary the sound over time" reaches for: the current sound's own family
+    // (Design patches count as one family — `toneFamilyFor` files them under
+    // "other" beside the noises), sustaining with sustaining so a held chord is not
+    // handed a pluck. Never noise or drums. Deterministic from `seed`.
+    function _ambToneRelated(cur, seed, n) {
+      const fam = (v) => (v.indexOf('user:') === 0 ? 'user' : (typeof toneFamilyFor === 'function' ? toneFamilyFor(v) : 'other'));
+      const c0 = (typeof cur === 'string' && cur) ? cur : 'triangle';
+      // A DRUM DESIGN is a Design patch too (`user:d-…`, or one built on a kick /
+      // metal / noise voice) — it shares the family label, never the job.
+      const drumy = (v) => {
+        if (v.indexOf('user:d-') === 0) return true;
+        if (v.indexOf('user:') !== 0) return false;
+        try {
+          const up = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(v) : null;
+          const base = up && ((up.osc && up.osc.type) || up.type || up.baseType || (up.params && up.params.type));
+          return typeof base === 'string' && /^(kick|metal|noise)/.test(base);
+        } catch (e) { return false; }
+      };
+      const all = _ambToneOptions().map(o => o && o.value).filter(v => typeof v === 'string' && v && v !== c0 &&
+        v.indexOf('noise') !== 0 && fam(v) !== 'drums' && !drumy(v));
+      const f0 = fam(c0), sus = _ambToneSustains(c0);
+      let pool = all.filter(v => fam(v) === f0 && _ambToneSustains(v) === sus);
+      if (pool.length < n) pool = pool.concat(all.filter(v => fam(v) === f0 && pool.indexOf(v) < 0));
+      if (pool.length < n) pool = pool.concat(all.filter(v => fam(v) === 'synths' && _ambToneSustains(v) === sus && pool.indexOf(v) < 0));
+      const out = []; let st = ((seed | 0) >>> 0) || 1;
+      while (out.length < n && pool.length) { st = (Math.imul(st, 1103515245) + 12345) >>> 0; out.push(pool.splice(st % pool.length, 1)[0]); }
+      return out;
+    }
+    // ── A TONE SET BUILT FOR YOU ────────────────────────────────────────
+    // `mode`: 'bars' (three sounds, 4 bars each) · 'chg' (one per chord change) ·
+    // 'part' (a sound per arrangement part). Voice 1 is ALWAYS '' — the layer's own
+    // Tone — so the set follows whatever sound the layer is given later. `cfg` is
+    // only read for 'part' (pass the RAW cfg: a getCfg here would orphan `inst`).
+    // Returns the set, or null when the mode has nothing to map to.
+    function _ambToneSetBuild(inst, mode, cfg) {
+      if (!inst) return null;
+      const cur = (inst.instrument && typeof inst.instrument === 'object') ? inst.instrument.tone : inst.tone;
+      const prev = inst.toneSeq || {};
+      const seed = (((inst.id | 0) + 1) * 40503) ^ ((prev.take | 0) * 7919);
+      const rel = _ambToneRelated(cur, seed, 2);
+      const voices = [''].concat(rel);
+      let steps;
+      if (mode === 'part') {
+        let pis = [];
+        try { (_ambGridRanges(cfg) || []).forEach(rg => { if (pis.indexOf(rg.pi | 0) < 0) pis.push(rg.pi | 0); }); } catch (e) { pis = []; }
+        if (pis.length < 2) return null;
+        steps = pis.slice(0, 8).map((pi, i) => ({ tone: voices[i % voices.length], unit: 'part', part: pi }));
+      } else if (mode === 'chg') {
+        steps = voices.map(t => ({ tone: t, unit: 'chg', bars: 1 }));
+      } else {
+        mode = 'bars';
+        steps = voices.map(t => ({ tone: t, bars: 4 }));
+      }
+      const q = { on: 1, steps: steps };
+      if (prev.cut) q.cut = 1;
+      _ambToneSeqCoerce(q);
+      q.gen = { m: mode, sig: JSON.stringify(q.steps) };
+      return q;
+    }
+    // Which generated mode the layer's set still IS ('bars'/'chg'/'part'), 'own'
+    // for a set someone wrote or edited, '' for none playing.
+    function _ambToneSetGenOf(inst) {
+      const q = inst && inst.toneSeq;
+      if (!q || !q.on || !Array.isArray(q.steps) || q.steps.length < 2) return '';
+      if (q.gen && q.gen.sig === JSON.stringify(q.steps)) return q.gen.m;
+      return 'own';
     }
     function _ambTsqUnit(st) {
       const u = st && st.unit;
@@ -25290,6 +25364,11 @@
           // nothing is silent (nobody said what to play), a layer that resolved
           // to GENERATE was told exactly what to do.
           if (_r && _r.gen) { _ambPartSeqGenerate(E, key); return; }
+          // A v2 LAYER PLAYS A WHOLE-PHRASE CELL ITSELF (and, where nothing is mapped,
+          // its ↻ bank rotation instead of silence) — losslessly, through its own
+          // pipeline; see `schedLayer` in 18-layer-v2. Handing it back is the same act
+          // as ⚡ generate: no freeze, the layer's emitter answers.
+          if (key.indexOf('v2:') === 0 && typeof window._v2PsqOwn === 'function' && window._v2PsqOwn(L, _r)) { _ambPartSeqGenerate(E, key); return; }
           _ambPsqGenClear(E, key);
           spec = _r && _r.spec;
           scope = (_r && _r.from) || '';
@@ -51924,6 +52003,17 @@
            (!on ? 'off — the single Tone above plays' : clock) +
            ((on && dub > 0 && stk) ? ' · doubling' : '') +
            ((on && cut) ? ' · cutting held notes' : ''));
+      // ＋ AN EMPTY SET IS ONE DOOR, not a blank form: an Off switch over "no voices
+      // yet" and a bare Add read as an unfinished feature. One press builds a working
+      // set (this sound + two related ones, 4 bars each) that the rows below tune.
+      if (!n) {
+        return '<div class="tsq-head">' +
+          '<button type="button" class="ambient-seg ambient-toneseq-start" ' +
+            'title="Build a set: this layer\u2019s sound plus two related ones, 4 bars each. Change any of it afterwards.">' +
+            '＋ Vary the sound over time</button>' +
+          '<span class="ambient-hint tsq-sum">One sound plays now. This swaps between it and two related sounds — Generate\u2019s Sound changes can do it per change or per part.</span>' +
+        '</div>';
+      }
       let h = '<div class="tsq-head">' +
         '<button type="button" class="ambient-seg ambient-toneseq-onoff' + (on ? ' active' : '') +
           '" title="Play the voices below instead of the single Tone above. Off = the Tone above.">' +
@@ -60201,12 +60291,15 @@
               try { _ambPerfRecToggle(E, rkey); } catch (e) {}
               return;
             }
-            const tq = ev.target && ev.target.closest && ev.target.closest('.ambient-toneseq-onoff, .ambient-toneseq-add, .ambient-toneseq-del, .ambient-toneseq-cut');
+            const tq = ev.target && ev.target.closest && ev.target.closest('.ambient-toneseq-onoff, .ambient-toneseq-add, .ambient-toneseq-del, .ambient-toneseq-cut, .ambient-toneseq-start');
             if (tq && hostEl.contains(tq)) {
               const box = tq.closest('.ambient-toneseq-box'); const tkey = _ambCardKey(tq.closest('.ambient-layer'));
               if (!box || !tkey) return;
               _E = E; const Lt = _ambLayerByKey(E, tkey); if (!Lt) return;
-              if (tq.classList.contains('ambient-toneseq-add')) {
+              if (tq.classList.contains('ambient-toneseq-start')) {
+                const q2 = _ambToneSetBuild(Lt, 'bars', null);
+                if (q2) Lt.toneSeq = q2;
+              } else if (tq.classList.contains('ambient-toneseq-add')) {
                 if (!Lt.toneSeq || !Array.isArray(Lt.toneSeq.steps)) Lt.toneSeq = { on: 1, steps: [] };
                 if (Lt.toneSeq.steps.length < 8) Lt.toneSeq.steps.push({ tone: Lt.tone || '', bars: 4 });
                 Lt.toneSeq.on = 1;

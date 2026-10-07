@@ -531,6 +531,26 @@
 
 ### Bloom: the v2 layer model (`cfg.layers`, `js/bloops/18-layer-v2.js`)
 
+- **♯ Tweaks is gone (2026-10-06) — look for its rows elsewhere.** Layer-wide Feel / Ratchet /
+  Odds / Size / Spread / per-pass dice are ✦ Generate tiles (Feel + the basic dice also in its
+  written-notes view); per-note values are the Roll **Note ▾** sheet (`noteTargets`: Selected or
+  ♪ All notes) and the Pattern step panel (Apply to: step / all steps / whole lane). Cycle · Bars ·
+  Speed are a section with NO row button, opened by `V2.openTime` from the editors' and Generate's
+  heads. A sheet over a body overlay needs `top` (z 10360) AND an unfolded card — a folded card
+  hides its sheets, measured as a 0×0 wrap "behind" the editor.
+- **A bank entry is two formats (2026-10-06).** v2 saves (`bankEntry`) keep the lossy `steps`
+  (▦ Schedule's phrase mapping and v1 read them) AND lossless `notes` + `bars` + `take` + `from`;
+  `phraseToNotes` prefers `notes`. **What a v2 pass plays** (`schedLayer` in `emit`): the ▦ Schedule
+  Phrase cell → else ↻ `L.bankPlay` → else the part. A WHOLE-phrase part/pass cell and the ↻
+  fallback are played by v2 itself (lossless, its own sound) — `_ambPartSeqSync` hands those back
+  via `window._v2PsqOwn` + `_ambPartSeqGenerate`; chord cells and slices stay on the freeze path
+  (step-quantized). A phrase loops at its own length, never stretched. Drawing / Preview still
+  show the part itself. A `<select>` on the card
+  must be in the `change`→`input` forward list or iOS (no `input` on selects) never commits it.
+- **Pattern per-step Level / Ratchet are `timing.svel` / `timing.srat`, keyed by STEP INDEX** like
+  `timing.odds`, and `stepFxStage` stamps them by rounding each onset back to its cell — so it runs
+  BEFORE `timingStage` (swing/lean/⇠⇢ `n.nudge` would move the onset off its cell).
+
 - **⊞ RESOLUTION MOVES WHICHEVER PATTERN IS THE MATERIAL, and a kit has two.** The
   emitter is `lanes = beatLanes(…) || p.rhythm.lanes` — so `beat.per` is read in ONE of
   three states, and in the other two the drawn cells play and the knob changed a stored

@@ -86,6 +86,13 @@
 
   // ── history and commit ──────────────────────────────────────────────────────
   function snap(L) { return JSON.stringify(L.part); }
+  // every step a note starts on — the drawn rows, else the rhythm's own onset list
+  function onsetSteps(L) {
+    const rw = (L.part.pitch && L.part.pitch.kind === 'grid' && L.part.pitch.rows) || {}, out = new Set();
+    Object.keys(rw).forEach((k) => ((rw[k] && rw[k].c) || []).forEach((r) => out.add(r[0] | 0)));
+    if (!out.size) ((L.part.rhythm && L.part.rhythm.cells) || []).forEach((c, i) => { if (c) out.add(i); });
+    return [...out].sort((a, b) => a - b);
+  }
   function beginEdit(L) { P.hist.u.push(snap(L)); if (P.hist.u.length > 80) P.hist.u.shift(); P.hist.r = []; }
   function commit(L) {
     const E = P.E;
@@ -128,6 +135,8 @@
     // header
     h += '<div class="pe-head"><button type="button" class="pe-done" data-pe="done">Done</button>'
       + '<span class="pe-title"><b>' + esc(L.name || ('Layer ' + L.id)) + '</b><small>▦ Pattern' + (kit ? ' · drums' : (keyName ? ' · Key: ' + esc(keyName) : '')) + '</small></span>'
+      // ⏱ TIME — the part's Cycle · Bars · Speed (♯ Tweaks' old Time rows), over this editor
+      + '<button type="button" class="pe-ib" data-pe="time" aria-label="Length and speed" title="Length & speed — Cycle, Bars, Speed">⏱</button>'
       + '<button type="button" class="pe-ib' + (P.hist.u.length ? '' : ' pe-dim') + '" data-pe="undo" aria-label="Undo">↶</button>'
       + '<button type="button" class="pe-ib' + (P.hist.r.length ? '' : ' pe-dim') + '" data-pe="redo" aria-label="Redo">↷</button>'
       + '<button type="button" class="pe-ib pe-play" data-pe="play" aria-label="Preview">▶</button></div>';
@@ -248,6 +257,11 @@
     const b = (a, lab, aria, extra) => '<button type="button" class="pe-sb' + (extra || '') + '" data-pe="' + a + '"' + (aria ? ' aria-label="' + aria + '"' : '') + '>' + lab + '</button>';
     let h = '<div class="pe-step"><div class="pe-sthead"><b>' + esc(kit ? ((V2.LANE_NAMES || [])[s0.li] || 'Drum') : nameOf(s0.m)) + '</b><span>' + where + '</span>'
       + b('sx', '✕', 'Done with this step', ' pe-sx') + '</div>';
+    // APPLY TO — this step, or every step at once (♯ Tweaks' old layer-wide values,
+    // per step). Drums: the whole LANE, since each lane is its own instrument.
+    h += '<div class="pe-strow"><span>Apply to</span><div class="pe-seg" role="group" aria-label="Apply to">'
+      + '<button type="button" data-pe="pscope" data-k="one" class="' + (P.allSteps ? '' : 'on') + '" aria-pressed="' + !P.allSteps + '">' + (kit ? 'This hit' : 'This step') + '</button>'
+      + '<button type="button" data-pe="pscope" data-k="all" class="' + (P.allSteps ? 'on' : '') + '" aria-pressed="' + !!P.allSteps + '">' + (kit ? 'Whole lane' : 'All steps') + '</button></div></div>';
     if (kit) {
       const fx = (((L.part.rhythm || {}).cellFx) || {})[s0.li + ':' + s0.col] || {}, c = Number.isFinite(fx.c) ? fx.c : 100, t = fx.t | 0;
       h += '<div class="pe-strow"><span>Plays</span>' + [100, 75, 50, 25].map((v) => '<button type="button" class="pe-sb pe-seg1' + (c === v ? ' on' : '') + '" data-pe="kchance" data-v="' + v + '">' + (v === 100 ? 'always' : v + '%') + '</button>').join('') + '</div>'
@@ -260,6 +274,14 @@
         + '<div class="pe-strow"><span>Length</span>' + b('slen', '−', 'Shorter', '" data-d="-1') + '<b class="pe-num">' + run[1] + ' step' + (run[1] === 1 ? '' : 's') + '</b>' + b('slen', '+', 'Longer', '" data-d="1') + '</div>'
         + '<div class="pe-strow"><span>Move</span>' + b('smove', '◀', 'A step earlier', '" data-d="-1') + b('smove', '▶', 'A step later', '" data-d="1')
         + b('sdup', '⧉ Dup', 'Copy it to right after itself') + b('sdel', '🗑', 'Remove it', ' pe-del') + '</div>';
+      // ▦ THE STEP'S OWN PLAYS · LEVEL · RATCHET — `timing.odds` / `svel` / `srat`
+      const tm = L.part.timing || {}, k0 = String(s0.start);
+      const pc = Number.isFinite((tm.odds || {})[k0]) ? tm.odds[k0] : 100;
+      const lv = Number.isFinite((tm.svel || {})[k0]) ? tm.svel[k0] : 100;
+      const rt = Number.isFinite((tm.srat || {})[k0]) ? tm.srat[k0] : 1;
+      h += '<div class="pe-strow"><span>Plays</span>' + [100, 75, 50, 25].map((v) => '<button type="button" class="pe-sb pe-seg1' + (pc === v ? ' on' : '') + '" data-pe="schance" data-v="' + v + '">' + v + '%</button>').join('') + '</div>'
+        + '<div class="pe-strow"><span>Level</span>' + b('svel', '−', 'Quieter', '" data-d="-10') + '<b class="pe-num">' + lv + '%</b>' + b('svel', '+', 'Louder', '" data-d="10') + '</div>'
+        + '<div class="pe-strow"><span>Ratchet</span>' + [1, 2, 3, 4].map((v) => '<button type="button" class="pe-sb pe-seg1' + (rt === v ? ' on' : '') + '" data-pe="srat" data-v="' + v + '">×' + v + '</button>').join('') + '</div>';
     }
     return h + '</div>';
   }
@@ -491,6 +513,7 @@
     const b = ev.target.closest && ev.target.closest('[data-pe]'); if (!b || !P) return;
     const a = b.getAttribute('data-pe'), L = layer(); if (!L) return;
     if (a === 'done') { close(); return; }
+    if (a === 'time') { if (V2.openTime) V2.openTime(P.E, L, () => { if (P) paint(); }); return; }
     if (a === 'undo') { histStep(-1); return; }
     if (a === 'redo') { histStep(1); return; }
     if (a === 'play') { try { V2.preview(P.E, L); } catch (e) {} return; }
@@ -512,13 +535,35 @@
       if (P.sel && P.sel.kit) { beginEdit(L); lanesOf(L)[P.sel.li][P.sel.col] = 0; P.say = (V2.LANE_NAMES || [])[P.sel.li] + ' removed'; P.sel = null; commit(L); return; }
       editSel(L, () => ({ remove: true })); return;
     }
+    if (a === 'pscope') { P.allSteps = b.getAttribute('data-k') === 'all'; paint(); return; }
     if (a === 'kchance' || a === 'ktune') {
       const s0 = P.sel; if (!s0 || !s0.kit) return;
       beginEdit(L);
-      const r = L.part.rhythm, k = s0.li + ':' + s0.col, fx = Object.assign({}, (r.cellFx || {})[k] || {});
-      if (a === 'kchance') { const v = +b.getAttribute('data-v'); if (v >= 100) delete fx.c; else fx.c = v; }
-      else { const t = clamp((fx.t | 0) + (+b.getAttribute('data-d')), -24, 24); if (t) fx.t = t; else delete fx.t; }
-      r.cellFx = Object.assign({}, r.cellFx || {}); if (Object.keys(fx).length) r.cellFx[k] = fx; else delete r.cellFx[k];
+      const r = L.part.rhythm, k = s0.li + ':' + s0.col, fx0 = (r.cellFx || {})[k] || {};
+      // the VALUE comes from the selected hit; Whole lane writes it to every hit in the lane
+      const cv = a === 'kchance' ? +b.getAttribute('data-v') : clamp((fx0.t | 0) + (+b.getAttribute('data-d')), -24, 24);
+      const row = lanesOf(L)[s0.li] || [];
+      const cols = P.allSteps ? row.map((x, ci) => (x ? ci : -1)).filter((ci) => ci >= 0) : [s0.col];
+      r.cellFx = Object.assign({}, r.cellFx || {});
+      cols.forEach((ci) => {
+        const kk = s0.li + ':' + ci, fx = Object.assign({}, r.cellFx[kk] || {});
+        if (a === 'kchance') { if (cv >= 100) delete fx.c; else fx.c = cv; } else { if (cv) fx.t = cv; else delete fx.t; }
+        if (Object.keys(fx).length) r.cellFx[kk] = fx; else delete r.cellFx[kk];
+      });
+      if (P.allSteps) P.say = 'Whole ' + ((V2.LANE_NAMES || [])[s0.li] || 'lane') + ' lane · ' + cols.length + ' hits';
+      commit(L); return;
+    }
+    if (a === 'schance' || a === 'svel' || a === 'srat') {
+      const s0 = P.sel; if (!s0 || s0.kit) return;
+      beginEdit(L);
+      const p = L.part, tm = (p.timing && typeof p.timing === 'object') ? p.timing : (p.timing = {});
+      const key = a === 'schance' ? 'odds' : a, m = (tm[key] && typeof tm[key] === 'object') ? tm[key] : (tm[key] = {});
+      const k0 = String(s0.start);
+      const v = a === 'svel' ? clamp((Number.isFinite(m[k0]) ? m[k0] : 100) + (+b.getAttribute('data-d')), 0, 200) : +b.getAttribute('data-v');
+      // ALL STEPS = every step a note starts on; the normalizer prunes the "no change" value
+      const steps = P.allSteps ? onsetSteps(L) : [s0.start];
+      steps.forEach((st) => { m[String(st)] = v; });
+      if (P.allSteps) P.say = 'All ' + steps.length + ' steps';
       commit(L); return;
     }
     if (a === 'addlane') { P.want = Math.max(P.want | 0, (P.lanes || []).length) + 1; P.say = 'a new lane — tap a step in it'; paint(); return; }

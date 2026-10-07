@@ -475,16 +475,12 @@ const ok = (name, cond, detail) => {
   ok('layer menu opens', !e && (await state()).menuOpen, e);
   await page.evaluate(() => document.querySelectorAll('.ctx-menu').forEach((m) => m.remove()));
 
-  // ---- STEPPER (must move by exactly one) ---------------------------------
-  // Register lives in the SHEET HEAD now, not in a tab — it is the control you
-  // reach for while listening. Same markup, same document-level ± delegation,
-  // so the check follows it rather than being dropped.
+  // ---- NO REGISTER IN THE INSTRUMENT POPOVER -------------------------------
+  // Removed 2026-10-06: pitch lives in the card's pitch rows, Generate and the
+  // Editor — a Reg ± here did nothing on a Pattern grid (absolute notes).
   await tap('.v2-gototab[data-goto="Instrument"]');
-  const regBefore = (await state()).register;
-  await tap('.v2-pop-xtra .ambient-step-up');
-  s = await state();
-  ok('stepper + moves by exactly 1 (no double-fire)', s.register === regBefore + 1,
-    'was ' + regBefore + ' now ' + s.register);
+  ok('the Instrument popover carries no Register stepper',
+    await page.evaluate(() => !document.querySelector('.v2-secpop [data-f="instrument.register"], .v2-pop [data-f="instrument.register"]')));
 
   // ---- SELECT writes + the gate follows ------------------------------------
   await page.evaluate(() => {
@@ -8444,7 +8440,7 @@ const ok = (name, cond, detail) => {
     const tabs = [...document.querySelectorAll('.v2-pop-tab')].map((t) => t.getAttribute('data-tab'));
     const head = document.querySelector('.v2-secpop-head');
     const reg = head && head.querySelector('[data-f="instrument.register"]');
-    const regBox = reg ? reg.closest('.v2-pop-xtra').getBoundingClientRect() : null;
+    const regBox = reg ? reg.getBoundingClientRect() : null;
     const btns = reg ? [...reg.closest('.ambient-stepper').querySelectorAll('.ambient-step-btn')]
       .map((b2) => Math.round(b2.getBoundingClientRect().height)) : [];
     // the folds start SHUT, and their rows are not on screen until opened
@@ -8469,11 +8465,9 @@ const ok = (name, cond, detail) => {
     instShape.tabs.indexOf('Live') === 0 && instShape.tabs.indexOf('Tone set') > 0 &&
     instShape.tabs.indexOf('Tone type') < 0 && instShape.tabs.indexOf('Envelope') < 0 &&
     instShape.tabs.indexOf('Register') < 0, JSON.stringify(instShape.tabs));
-  ok('Register is a ± in the sheet head, thumb-sized, and gone from the tabs',
-    instShape.regInHead && !instShape.inTabs && instShape.regBtnH.every((h2) => h2 >= 40) &&
-    instShape.regFont >= 16 && instShape.headOverflow <= 0,
-    JSON.stringify({ h: instShape.regBtnH, f: instShape.regFont, w: instShape.regW,
-                     over: instShape.headOverflow, inTabs: instShape.inTabs }));
+  ok('no Register in the Instrument sheet — not in the head, not in the tabs',
+    !instShape.regInHead && !instShape.inTabs && instShape.headOverflow <= 0,
+    JSON.stringify({ over: instShape.headOverflow, inTabs: instShape.inTabs }));
   ok('the envelope is a fold inside Live — shut, opens, shuts again',
     instShape.shut && instShape.open && instShape.shutAgain, JSON.stringify(instShape));
   await page.evaluate(() => { const c = document.querySelector('.v2-pop-close'); if (c) c.click(); });

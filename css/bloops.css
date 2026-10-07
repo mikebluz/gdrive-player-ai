@@ -11621,7 +11621,6 @@
       .v2-pop-head .v2-gototab, .v2-secpop-head .v2-gototab {
         flex: 1 1 calc(33.333% - 4px); min-width: 0; padding: 6px 3px; font-size: 0.72rem;
       }
-      .v2-pop-head .v2-pop-xtra, .v2-secpop-head .v2-pop-xtra { flex: 0 1 auto; margin-left: auto; gap: 5px; }
       /* the per-part trio and the summary keep their own full-width lines below */
       .v2-pop-head .v2-pop-pair, .v2-secpop-head .v2-pop-pair { flex: 1 0 100%; }
       /* every pixel of sheet height goes to the PANE on a phone: taller
@@ -16893,25 +16892,6 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
 @media (max-width: 540px) {
   .v2-pop-head .v2-grpsum, .v2-secpop-head .v2-grpsum { flex: 1 0 100%; text-align: left; }
 }
-/* REGISTER IN THE HEAD — a real ± target on a phone, not a token one. */
-.v2-pop-xtra { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; margin-left: auto; }
-.v2-pop-xtra[hidden] { display: none; }
-.v2-xtra-lab { color: #6b6b8a; font-size: 0.72rem; }
-.v2-pop-xtra .ambient-stepper { display: flex; align-items: stretch; }
-.v2-pop-xtra .ambient-step-btn {
-  width: 40px; min-height: 40px; border: 1px solid #2d2d3f; background: #14141f;
-  color: #d6bcfa; font-size: 1.05rem; line-height: 1; cursor: pointer; touch-action: manipulation;
-}
-.v2-pop-xtra .ambient-step-btn:first-child { border-radius: 10px 0 0 10px; }
-.v2-pop-xtra .ambient-step-btn:last-child { border-radius: 0 10px 10px 0; }
-.v2-pop-xtra .ambient-step-inp {
-  width: 42px; min-height: 40px; border: 1px solid #2d2d3f; border-left: none; border-right: none;
-  background: #0a0a14; color: #e9e9f4; text-align: center;
-  font: 700 16px 'Segoe UI', sans-serif;   /* 16px or iOS zooms on focus */
-  -moz-appearance: textfield; appearance: textfield;
-}
-.v2-pop-xtra .ambient-step-inp::-webkit-outer-spin-button,
-.v2-pop-xtra .ambient-step-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 /* THE ACTIVE MATERIAL — an active MODE, not a subtle tint: the door that made
    the content (stamped, or inferred from the rules' shape) reads as selected
    at a glance, with a ✓ so it cannot be mistaken for a hover state. */
@@ -16944,6 +16924,15 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
 .v2-bankit .v2-bkdel { color: #fc8181; border-color: #4a2b32; }
 .v2-bankit button:hover { border-color: #9f7aea; color: #d6bcfa; }
 .v2-bankit .v2-bkdel:hover { border-color: #fc8181; color: #feb2b2; }
+/* ▶ HEAR · ↻ ROTATION (2026-10-06) — the row's own small square buttons, same chrome */
+.v2-bankit .v2-bkhear, .v2-bankit .v2-bkrot { flex: 0 0 auto; width: 40px; }
+.v2-bankit .v2-bkhear { color: #7ef0dc; }
+.v2-bankit .v2-bkrot { color: #6b6b8a; }
+.v2-bankit .v2-bkrot.on { color: #f6ad55; border-color: #6b4a1f; background: rgba(246,173,85,0.12); }
+.v2-bankit .v2-bkfrom { display: block; color: #6b6b8a; font-weight: 400; font-size: 0.68rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-bankrow .v2-bkothers { align-self: flex-start; }
+.v2-bankit .v2-bkmapped { color: #7ec8f0; }
+.v2-bankrow .v2-bkorder { max-width: 9.5rem; min-width: 0; }
 /* A SUBSECTION INSIDE A TAB. Hidden by a class, never by inline display —
    `applyGate` owns inline display on gated rows, and `.v2-rowoff` is
    !important so an inactive tab still wins over an open subsection. */
@@ -17117,6 +17106,9 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
      from the other direction. */
   z-index: 10250;
 }
+/* ⏱ OPENED OVER AN EDITOR (Roll full view 10200, Pattern editor 10340, Generate
+   10350) — the one sheet that must outrank the surface that asked for it. */
+.v2-secpop-wrap.v2-secpop-top { z-index: 10360; }
 .v2-secpop-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
 .v2-secpop {
   position: relative; display: flex; flex-direction: column;

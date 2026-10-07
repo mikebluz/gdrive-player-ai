@@ -15537,12 +15537,16 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
        so it must not take the 68px a group label takes. */
     .pe-partto-lbl { flex: 0 0 auto; margin: 0 2px; opacity: 0.75; }
 
-    /* A NESTED SECTION HAS TO READ AS NESTED. ▦ Schedule sits inside ▤ Parts now (a
-       pass is a definition of how a part plays), and without this it is a second
-       accordion at the same visual level as its own parent. Indented, with a quieter
-       head and a rule down the left showing what it belongs to. */
+    /* A NESTED SECTION HAS TO READ AS NESTED. ▦ Schedule sits inside ▤ Parts (a pass
+       is a definition of how a part plays). It was indented with a rule down the left
+       — 21px of a phone's width, and read as a stray line (2026-10-07, user: "what's
+       this indentation for"). Now FULL WIDTH: the nesting is said by the head itself,
+       quieter and prefixed with its parent ("▤ Parts › ▦ Schedule"). */
     .ambient-proggrp .ambient-grp-body .ambient-proggrp {
-      margin: 8px 0 2px 10px; padding-left: 10px; border-left: 1px solid #23233a; min-width: 0;
+      margin: 8px 0 2px; min-width: 0;
+    }
+    [id$="proggrp-overview"] .ambient-grp-body .ambient-proggrp > .ambient-grp-head::before {
+      content: '\25A4  Parts \203A  '; color: #6b6b8a; font-weight: 600; white-space: pre;
     }
     .ambient-proggrp .ambient-grp-body .ambient-proggrp > .ambient-grp-head {
       font-size: 0.66rem; color: #8b8baa;
@@ -15643,6 +15647,34 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:novelty"] {
       --vxr: 159,122,234; --vxt: #e9d8fd; font-weight: 700;
     }
+    /* ✺ NOVELTY IS THE META ROW (2026-10-07): full width, name left, what it does right —
+       a different shape from the axis cells so it reads as "sets these", not "one of these". */
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-var-meta {
+      grid-column: 1 / -1; flex-direction: row; justify-content: space-between; gap: 10px;
+      min-height: 48px; padding: 8px 14px; text-align: left;
+    }
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-var-meta > b { white-space: normal; text-align: right; }
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-var-each {
+      grid-column: 1 / -1; margin: -2px 0 -4px; color: #8d8ab0; font-size: 0.72rem;
+    }
+    .ambient-var-now .avn-keep { align-self: flex-start; margin-top: 6px; }
+    /* FIVE AXES, BALANCED (2026-10-07): a 6-track grid so no axis is left alone on a
+       row — wide: Salt · Rubato · Order, then Arc · Groove sharing the second row;
+       phone: two a row, Groove across the last. Master / Novelty / caption span all. */
+    .ambient-pov-varstrip .ambient-pov-varbar { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .ambient-pov-varstrip .ambient-pov-varbar > * { grid-column: span 3; }
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-pov-varmaster,
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-var-meta,
+    .ambient-pov-varstrip .ambient-pov-varbar > .ambient-var-each,
+    .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:groove"] { grid-column: 1 / -1; }
+    @media (min-width: 460px) {
+      .ambient-pov-varstrip .ambient-pov-varbar { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"],
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"],
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"] { grid-column: span 2; }
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:arc"],
+      .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:groove"] { grid-column: span 3; }
+    }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:salt"]    { --vxr: 232,121,249; --vxt: #f6c9ff; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:rubato"]  { --vxr: 90,169,230;  --vxt: #bfe0fb; }
     .ambient-pov-varstrip .ambient-pov-varbar > [data-pov="grp:order"]   { --vxr: 230,163,90;  --vxt: #f7dcbb; }
@@ -15668,25 +15700,37 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
       background: #12121f; color: #cfd2e6; line-height: 1.5;
     }
     .ambient-nov-shape { align-self: flex-start; min-height: 34px; }
-    .ambient-nov-bal { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-    .ambient-nov-bal > .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
-    .ambient-nov-balrow {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
-      padding: 7px 10px; border: 1px solid #23233a; border-radius: 9px; background: #12121f;
-    }
-    .ambient-nov-balrow > label { flex: 0 0 62px; font-size: 0.74rem; font-weight: 600; color: #e2e8f0; }
-    .ambient-nov-balrow > input[type=range] { flex: 1 1 100px; min-width: 90px; min-height: 30px; accent-color: #9f7aea; }
-    /* The caption takes its OWN row so it never competes with the slider for width. */
-    .ambient-nov-asks { flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
-    .ambient-nov-balrow[data-novax="h"] { border-left: 3px solid #9f7aea; }
-    .ambient-nov-balrow[data-novax="t"] { border-left: 3px solid #5aa9e6; }
-    .ambient-nov-balrow[data-novax="f"] { border-left: 3px solid #e6a35a; }
-    .ambient-nov-balrow[data-novax="x"] { border-left: 3px solid #5ac8a0; }
+    /* ▸ SHAPE IT — one disclosure bar, the panel hanging off it (2026-10-07) */
+    .ambient-nov-shapewrap { border: 1px solid #2d2d3f; border-radius: 10px; background: #11111f; min-width: 0; overflow: hidden; }
+    .ambient-nov-shape { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 12px; box-sizing: border-box;
+      border: 0; background: transparent; color: #e2e0f5; font: 600 0.82rem 'Segoe UI', sans-serif; text-align: left; cursor: pointer; touch-action: manipulation; }
+    .ambient-nov-shape:hover { background: rgba(159, 122, 234, 0.08); }
+    .ambient-nov-shcar { flex: 0 0 auto; color: #9f7aea; width: 1em; }
+    .ambient-nov-shlbl { flex: 0 0 auto; }
+    .ambient-nov-shsum { flex: 1 1 auto; min-width: 0; text-align: right; color: #8d8ab0; font-weight: 400; font-size: 0.74rem; overflow-wrap: anywhere; }
+    .ambient-nov-shapewrap.open .ambient-nov-shape { border-bottom: 1px solid #23233a; }
+    .ambient-nov-bal { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 12px 10px; }
+    .ambient-nov-bal[hidden] { display: none; }
+    .ambient-nov-bal > .ambient-hint { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; margin: 0 0 4px; }
+    .ambient-nov-balrow { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-width: 0; padding: 4px 0; }
+    .ambient-nov-balrow > label { flex: 0 0 96px; display: flex; align-items: center; gap: 6px; font-size: 0.76rem; font-weight: 600; color: #e2e8f0; }
+    .ambient-nov-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ax, #9f7aea); flex: 0 0 auto; }
+    .ambient-nov-balrow > input[type=range] { flex: 1 1 100px; min-width: 80px; min-height: 30px; accent-color: var(--ax, #9f7aea); }
+    .ambient-nov-bv { flex: 0 0 3.2em; text-align: right; font-size: 0.72rem; color: #6b6b8a; font-variant-numeric: tabular-nums; }
+    .ambient-nov-bv.lean { color: var(--ax, #9f7aea); font-weight: 700; }
+    /* The caption sits small under its row, never competing with the slider for width. */
+    .ambient-nov-asks { flex: 1 0 100%; padding-left: 14px; font-size: 0.68rem; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+    .ambient-nov-even { align-self: flex-end; margin-top: 4px; }
+    .ambient-nov-even[hidden] { display: none; }
+    .ambient-nov-balrow[data-novax="h"] { --ax: #9f7aea; }
+    .ambient-nov-balrow[data-novax="t"] { --ax: #5aa9e6; }
+    .ambient-nov-balrow[data-novax="f"] { --ax: #e6a35a; }
+    .ambient-nov-balrow[data-novax="x"] { --ax: #5ac8a0; }
     /* A NEW AXIS NEEDS ITS COLOUR IN THE SAME CHANGE, or it is the one row with no
        accent — the same "added to the JS list, missing from the CSS" gap the sheet's
        tab selectors record, and the one place nobody looks. Magenta: clear of the four
        above and of the state colours (green sounding · amber inert · red delete). */
-    .ambient-nov-balrow[data-novax="i"] { border-left: 3px solid #e07aba; }
+    .ambient-nov-balrow[data-novax="i"] { --ax: #e07aba; }
     .ambient-nov-preview {
       display: flex; flex-direction: column; gap: 2px; min-width: 0;
       padding: 9px 10px; border: 1px solid #23233a; border-radius: 10px; background: #0f0f1c;
@@ -16932,6 +16976,11 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
 .v2-bankit .v2-bkfrom { display: block; color: #6b6b8a; font-weight: 400; font-size: 0.68rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v2-bankrow .v2-bkothers { align-self: flex-start; }
 .v2-bankit .v2-bkmapped { color: #7ec8f0; }
+/* ▶ THE TAKE PLAYING NOW — lit in the Bank tab, named above the drawing */
+.v2-bankit.v2-bknow .v2-bkload { border-color: #f6ad55; background: rgba(246,173,85,0.12); color: #fbd38d; }
+.v2-bankit.v2-bknow .v2-bkload::before { content: '\25B6'; color: #f6ad55; font-size: 0.7rem; }
+.v2-nowtake { color: #f6ad55; font-weight: 600; margin: 2px 0 4px; }
+.v2-nowtake[hidden] { display: none; }
 .v2-bankrow .v2-bkorder { max-width: 9.5rem; min-width: 0; }
 /* A SUBSECTION INSIDE A TAB. Hidden by a class, never by inline display —
    `applyGate` owns inline display on gated rows, and `.v2-rowoff` is
@@ -17234,6 +17283,17 @@ select.ambient-select.tsq-partsel { flex: 1 1 auto; width: auto; min-width: 0; }
    house 14px padding, so the head's buttons take 10px — which puts Clear on
    the first line beside View. At phone width the row wraps as it always did. */
 .v2-partviz .v2-vizlab { display: block; min-width: 0; margin: 0 0 4px; font-size: 0.7rem; }
+/* THE READOUT, LAID OUT (2026-10-07) — one row per role instead of one sentence:
+   head (chips + what the part is), fact pills, warning, extras, hint (muted, last).
+   The " · " separators stay in the text for readers and are hidden here. */
+.v2-partviz .v2-vizlab.v2-lx { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 6px; font-size: 0.72rem; line-height: 1.35; }
+.v2-vizlab.v2-lx .v2-lx-sep { display: none; }
+.v2-vizlab.v2-lx .v2-lx-head { flex: 1 1 100%; min-width: 0; color: #e2e0f5; font-size: 0.8rem; font-weight: 600; overflow-wrap: anywhere; }
+.v2-vizlab.v2-lx .v2-lx-facts { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.v2-vizlab.v2-lx .v2-lx-fact { padding: 1px 8px; border: 1px solid #2d2d3f; border-radius: 999px; background: #14142a; color: #a9b4d0; white-space: nowrap; }
+.v2-vizlab.v2-lx .v2-lx-warn { flex: 1 1 100%; color: #f6ad55; overflow-wrap: anywhere; }
+.v2-vizlab.v2-lx .v2-lx-more { flex: 1 1 100%; color: #a0aec0; overflow-wrap: anywhere; }
+.v2-vizlab.v2-lx .v2-lx-hint { flex: 1 1 100%; color: #6b6b8a; font-size: 0.68rem; overflow-wrap: anywhere; }
 /* WATCH or WORK — a two-state preference, so one button that names the state
    it is in. On the label line, because it is about the drawing. */
 .v2-vmode {
@@ -18344,3 +18404,56 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 /* ⤢ the PATTERN editor's door — the Roll's ⤢ Editor look, its own class (2026-10-06) */
 .v2-patedit.ambient-seg { flex: none; width: auto; min-width: 0; min-height: 36px; padding: 0 12px; margin-left: auto;
   border-radius: 10px; border: 1px solid #2f8f80; background: #0f2a28; color: #cffaf3; font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+
+/* ▦ SCHEDULE · PHRASE CELL PICKER (2026-10-07) — what THIS layer plays on a cell:
+   its own takes first. A bottom sheet on a phone, a centred card on a wide screen;
+   the house buttons (.ambient-seg) inside, nothing new. */
+.sch-pick-ov.sm-overlay { position: fixed; inset: 0; z-index: 10330; display: flex !important; align-items: flex-end; justify-content: center; background: transparent; padding: 0; }
+.sch-pick-scrim { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.6); }
+.sch-pick { position: relative; width: min(480px, 100%); max-height: 80vh; overflow-y: auto; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: #11111f; border: 1px solid #2d2d3f; border-radius: 16px 16px 0 0; }
+@media (min-width: 561px) { .sch-pick-ov.sm-overlay { align-items: center; } .sch-pick { border-radius: 16px; } }
+.sch-pick-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #e2e0f5; }
+.sch-pick-head b { min-width: 0; overflow-wrap: anywhere; }
+.sch-pick-for, .sch-pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sch-pick-it { display: flex; gap: 6px; min-width: 0; }
+.sch-pick-it .sch-pick-hear { flex: 0 0 auto; width: 44px; color: #7ef0dc; }
+.sch-pick-it .sch-pick-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; justify-content: flex-start; overflow-wrap: anywhere; }
+.sch-pick-it .sch-pick-name small { color: #6b6b8a; font-weight: 400; }
+.sch-pick-it .sch-pick-name b { margin-left: auto; color: #f6ad55; }
+.sch-pick-it.on .sch-pick-name { border-color: #f6ad55; background: rgba(246, 173, 85, 0.12); }
+.sch-pick-fold { align-self: flex-start; }
+
+/* ▦ PHRASE · LAYERS × PASSES (2026-10-07) — a banked take is a whole pass, so the
+   Phrase grid is one cell per layer per pass (never per chord). */
+.sch-ppgrid { display: grid; grid-template-columns: minmax(64px, max-content) repeat(var(--np, 1), minmax(0, 1fr)); gap: 6px; align-items: stretch; margin: 6px 0; min-width: 0; }
+.sch-ppgrid .sch-pphead { align-self: end; color: #8d8ab0; font: 700 0.72rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; padding: 0 4px; }
+.sch-ppgrid .sch-rowlab { min-width: 0; }
+.sch-ppgrid .sch-cell { min-height: 48px; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 4px 6px; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.sch-ppgrid .sch-cell small { color: #f6ad55; font-size: 0.65rem; font-weight: 600; }
+
+/* ✺ VARIATION · NOW (2026-10-07) — what Variation is doing to the change being heard.
+   A head line (where you are), then one row per variation acting on it. */
+.ambient-var-now { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 2px; padding: 8px 10px; min-width: 0;
+  border: 1px solid #2d2d3f; border-radius: 10px; background: #11111f; font-size: 0.74rem; color: #a0aec0; }
+.ambient-var-now:empty { display: none; }
+.ambient-var-now .avn-head { color: #e2e0f5; font-weight: 700; overflow-wrap: anywhere; }
+.ambient-var-now .avn-row { display: flex; gap: 6px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
+.ambient-var-now .avn-row b { color: #d6bcfa; font-weight: 700; white-space: nowrap; }
+.ambient-var-now .avn-ic { flex: 0 0 1.2em; text-align: center; }
+.ambient-var-now .avn-dim { opacity: 0.6; }
+
+/* ℹ WHY? · WHAT CHANGES EACH PASS (2026-10-07) — one row per control that makes the
+   next pass differ: its name in its own colour, the value as a chip, what it does. */
+.v2-whypass { border-left: 3px solid #f6ad55; padding-left: 8px; }
+.v2-whyprow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 4px 0; min-width: 0; border-bottom: 1px solid rgba(45, 45, 63, 0.6); }
+.v2-whyprow:last-child { border-bottom: 0; }
+.v2-whyprow .v2-whypk { color: var(--hue); font-weight: 800; }
+.v2-whyprow .v2-whypv { color: var(--hue); border: 1px solid var(--hue); border-radius: 999px; padding: 0 8px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+.v2-whyprow .v2-whypw { flex: 1 1 100%; color: #a0aec0; font-size: 0.74rem; overflow-wrap: anywhere; }
+
+.v2-whyunr { margin-top: 6px; opacity: 0.7; }
+.v2-whyunr h5 { margin: 4px 0 2px; color: #8d8ab0; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.v2-whyunrow .v2-whypk { color: #a0aec0; text-decoration: line-through; text-decoration-color: rgba(160,174,192,0.5); }

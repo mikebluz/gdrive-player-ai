@@ -544,8 +544,9 @@
   Phrase cell → else ↻ `L.bankPlay` → else the part. A WHOLE-phrase part/pass cell and the ↻
   fallback are played by v2 itself (lossless, its own sound) — `_ambPartSeqSync` hands those back
   via `window._v2PsqOwn` + `_ambPartSeqGenerate`; chord cells and slices stay on the freeze path
-  (step-quantized). A phrase loops at its own length, never stretched. Drawing / Preview still
-  show the part itself. A `<select>` on the card
+  (step-quantized). A phrase loops at its own length, never stretched. ▦ Schedule → Phrase is
+  LAYERS × PASSES (2026-10-07) and its picker offers only that layer's takes (`from`); per-chord
+  and slice cells are legacy data — still played, flagged on the pass cell, clearable there. A `<select>` on the card
   must be in the `change`→`input` forward list or iOS (no `input` on selects) never commits it.
 - **Pattern per-step Level / Ratchet are `timing.svel` / `timing.srat`, keyed by STEP INDEX** like
   `timing.odds`, and `stepFxStage` stamps them by rounding each onset back to its cell — so it runs

@@ -281,7 +281,7 @@
     if (FROZE[p.froze]) return FROZE[p.froze];
     const n = (p.notes || []).length;
     if (p.made === 'phrase') {
-      return 'the phrase' + (p.from ? ' “' + p.from + '”' : '') + ', from the bank';
+      return 'the take' + (p.from ? ' “' + p.from + '”' : '') + ', from Takes';
     }
     if (p.made === 'take') return 'a take you froze';
     if (p.made === 'compose') return n ? 'notes you drew' : 'empty — ready to draw into';
@@ -309,6 +309,11 @@
     // `tags` — the same reasons as one word each, for the LIVE badge's readout
     // line; `why` keeps the sentences for the line that sits beside the switches.
     const tags = [];
+    // `params` — THE CONTROLS BEHIND EACH REASON, with their current values (2026-10-07,
+    // user: Why? should list "the parameters and their current settings that will cause
+    // the take to change on each pass"). `key` is stable, so a control keeps its colour.
+    const params = [];
+    const P = (key, k, v, what) => params.push({ key: key, k: k, v: String(v), what: what });
     // …AND ONLY WHERE IT CAN ACT. A WRITTEN part plays its stored list, so the
     // rules cannot run again — measured: four consecutive cycles identical with
     // `part.vary` on. Counting it there made the badge say VARIES for a reason
@@ -317,6 +322,7 @@
     // written down").
     if (L.part.vary && L.part.kind !== 'recorded') {
       why.push('the rules run again every cycle'); tags.push('notes');
+      P('evolve', 'Evolve', 'every cycle', 'the rules decide again each pass');
     }
     // EVOLVE IS THE SAME AXIS ON A SLOWER CLOCK. The rules decide again every
     // `ev` passes instead of every cycle — and `vary` is exactly this at ev 1,
@@ -343,24 +349,30 @@
     if (evAny > 0) {
       why.push('Evolve re-decides the rules every ' + evAny + ' pass' + (evAny === 1 ? '' : 'es'));
       tags.push('notes');
+      const amE = (L.chg && L.chg.am != null) ? (L.chg.am | 0) : 100;
+      P('evolve', 'Evolve', 'every ' + evAny + ' pass' + (evAny === 1 ? '' : 'es') + (amE < 100 ? ' \u00b7 ' + amE + '% of it' : ''), 'the rules decide again on that clock');
     }
-    if (pos(L.humanize)) { why.push('Humanize nudges every note'); tags.push('timing'); }
-    if (pos(L.velVar)) { why.push('Vel var moves each note\u2019s level'); tags.push('loudness'); }
+    if (pos(L.humanize)) { why.push('Humanize nudges every note'); tags.push('timing'); P('humanize', 'Humanize', L.humanize, 'nudges every note early or late'); }
+    if (pos(L.velVar)) { why.push('Vel var moves each note\u2019s level'); tags.push('loudness'); P('velVar', 'Vel var', L.velVar, 'moves each note\u2019s level'); }
     // …and the rest that draw PER PASS — traced to their draw sites (2026-09-16):
     // Accent and Strum order from v1's shared stream, Slide/Ornament/Wobble
     // seeded on play time. Each only counts where it can act.
     const pk0 = (L.part.pitch && L.part.pitch.kind) || '';
-    if (pos(L.accent)) { why.push('Accent picks a new pattern'); tags.push('loudness'); }
+    if (pos(L.accent)) { why.push('Accent picks a new pattern'); tags.push('loudness'); P('accent', 'Accent', L.accent, 'leans on different notes'); }
     if (pos(L.strum) && pos(L.strumFidelity) && /^(chord|stack|mixed)$/.test(pk0)) {
-      why.push('Strum order wanders'); tags.push('strum'); }
-    if (pos(L.slide)) { why.push('Slide glides some leaps'); tags.push('glides'); }
-    if (pos(L.ornament)) { why.push('Ornament adds grace notes'); tags.push('ornaments'); }
-    if (pos(L.motion)) { why.push('Wobble detunes each note'); tags.push('pitch'); }
+      why.push('Strum order wanders'); tags.push('strum'); P('strumFidelity', 'Spread wander', L.strumFidelity, 'shuffles which chord note is struck first'); }
+    if (pos(L.slide)) { why.push('Slide glides some leaps'); tags.push('glides'); P('slide', 'Slide', L.slide, 'glides into some leaps'); }
+    if (pos(L.ornament)) { why.push('Ornament adds grace notes'); tags.push('ornaments'); P('ornament', 'Ornament', L.ornament, 'adds grace-note flicks'); }
+    if (pos(L.motion)) { why.push('Wobble detunes each note'); tags.push('pitch'); P('motion', 'Wobble', L.motion, 'detunes each note'); }
     // a mask STRICTLY between 0 and 100 is a probability — 0 and 100 are
     // decisions, and a decision is static
     const anyProb = (m) => !!(m && Array.isArray(m.steps) &&
       m.steps.some((v) => Number.isFinite(v) && v > 0 && v < 100));
-    if (anyProb(L.chordMask) || anyProb(L.sectionMask)) { why.push('a probability decides some passes'); tags.push('chance'); }
+    if (anyProb(L.chordMask) || anyProb(L.sectionMask)) {
+      why.push('a probability decides some passes'); tags.push('chance');
+      const nP = [L.chordMask, L.sectionMask].reduce((n, m) => n + ((m && Array.isArray(m.steps)) ? m.steps.filter((v) => Number.isFinite(v) && v > 0 && v < 100).length : 0), 0);
+      P('chance', 'Chance', nP + ' change' + (nP === 1 ? '' : 's') + ' between 0 and 100%', 'whether it plays there is a coin flip (\u25a6 Schedule \u25b8 Plays)');
+    }
     // ── THE CHANGES THEMSELVES CAN BE LIVE ──────────────────────────────
     // Salt was here alone, and it is one of FOUR area-level dice that make the
     // harmony differ pass to pass — a layer following them plays different
@@ -385,20 +397,61 @@
         const progOn = !!(cfg && cfg.prog && cfg.prog.on && (cfg.prog.chords || []).length);
         if ((progOn && tp.feel === 'stochastic') || (!progOn && tp.chordMode === 'chaos')) {
           why.push('the voicing is re-picked'); tags.push('voicing');
+          P('voicing', progOn ? 'Voicing feel' : 'Voicing', progOn ? 'Stochastic' : 'Chaos', 'the chord\u2019s notes are re-arranged');
         }
       }
     } catch (e) {}
+    // ── ✺ VARIATION THAT REACHES EVERY LAYER (2026-10-07, user: "why does it say
+    // nothing varies yet if Variation is on") ─────────────────────────────────
+    // 🌒 ARC gates every layer in and out over the arc (`_ambSectionGateOK` → the arc
+    // gate, which the v2 emitter runs per note), and 🕺 GROOVE's accent adds to this
+    // layer's own (`accentAmt`) — both change what a pass plays whatever made the notes.
+    try {
+      const pg0 = cfg && cfg.prog;
+      const arcOn = !!(pg0 && pg0.on && ((pg0.arc && (pg0.arc.amount | 0) > 0) ||
+        (Array.isArray(pg0.parts) && pg0.parts.some((x) => x && x.arc && (x.arc.amount | 0) > 0))));
+      if (arcOn) {
+        why.push('Arc thins the layers in and out'); tags.push('presence');
+        P('arc', '\ud83c\udf12 Arc (area)', ((pg0.arc && pg0.arc.shape) || 'build') + ' \u00b7 depth ' + ((pg0.arc && (pg0.arc.amount | 0)) || 'in a part'), 'drops this layer out on some passes and back in on others');
+      }
+      const g0 = (typeof _ambGroove === 'function') ? _ambGroove() : null;
+      if (g0 && (g0.accent | 0) > 0) {
+        why.push('Groove accent picks a new pattern'); tags.push('loudness');
+        P('grooveAccent', '\ud83d\udd7a Groove accent (area)', g0.accent | 0, 'leans on different notes each pass');
+      }
+    } catch (e) {}
     const follows = (L.part.kind !== 'recorded') || harmFollows(L);
+    // …AND WHAT IS ON BUT CANNOT REACH IT, said rather than silently skipped: a
+    // written part played "as written" ignores the chords moving underneath it.
+    const unreached = [];
+    if (!follows) try {
+      const pg1 = cfg && cfg.prog;
+      if (pg1 && pg1.on) {
+        const nw = 'this layer plays its written notes as written \u2014 set \u2726 Generate \u25b8 Chords moving under written notes to follow the chords';
+        if (typeof _ambAnySaltColors === 'function' && _ambAnySaltColors(cfg)) unreached.push({ key: 'salt', k: '\ud83e\uddc2 Salt (area)', what: nw });
+        if (Number.isFinite(pg1.vary) && pg1.vary > 0) unreached.push({ key: 'progVary', k: '\ud83c\udf0a Vary (area)', what: nw });
+        if (Array.isArray(pg1.chords) && pg1.chords.some((c) => c && Array.isArray(c.alts) && c.alts.length)) unreached.push({ key: 'alts', k: 'Alternates', what: nw });
+      }
+    } catch (e) {}
     if (follows) try {
       const pg = cfg && cfg.prog;
       if (pg && pg.on) {
-        if (typeof _ambAnySaltColors === 'function' && _ambAnySaltColors(cfg))
-          { why.push('Salt re-colours the changes'); tags.push('chords'); }
-        if (Number.isFinite(pg.vary) && pg.vary > 0)
-          { why.push('the changes drift each pass'); tags.push('chords'); }
+        if (typeof _ambAnySaltColors === 'function' && _ambAnySaltColors(cfg)) {
+          why.push('Salt re-colours the changes'); tags.push('chords');
+          // the SLIDER's value (what you set), not the engine's derived rate
+          let sc = ''; try { const raw = pg.salt && Number.isFinite(pg.salt.colors) ? (pg.salt.colors | 0) : 0; sc = raw > 0 ? ('colours ' + raw) : 'on in a part'; } catch (e) { sc = 'on'; }
+          P('salt', 'Salt (area)', sc, 're-colours the chords this layer follows');
+        }
+        if (Number.isFinite(pg.vary) && pg.vary > 0) {
+          why.push('the changes drift each pass'); tags.push('chords');
+          P('progVary', '\ud83c\udf0a Vary (area)', pg.vary, 'the chords drift each pass');
+        }
         if (Array.isArray(pg.chords) && pg.chords.some((c) =>
-            c && Array.isArray(c.alts) && c.alts.length))
-          { why.push('a change has alternates'); tags.push('chords'); }
+            c && Array.isArray(c.alts) && c.alts.length)) {
+          why.push('a change has alternates'); tags.push('chords');
+          const nA = pg.chords.filter((c) => c && Array.isArray(c.alts) && c.alts.length).length;
+          P('alts', 'Alternates', nA + ' change' + (nA === 1 ? '' : 's'), 'a change swaps for one of its alternates');
+        }
       }
     } catch (e) {}
     // `tags` name WHAT varies (notes · chance · chords · timing · loudness),
@@ -428,7 +481,7 @@
     // ("we proved it does"), which is what makes it always true.
     const state = (evEff > 0) ? 'evolves' : 'varies';
     return { live: why.length > 0, state, evolve: (evEff > 0) ? { ev: evEff } : null,
-      why, tags: tags.filter((x, i, a) => a.indexOf(x) === i) };
+      why, tags: tags.filter((x, i, a) => a.indexOf(x) === i), params: params, unreached: unreached };
   }
 
   // ── THE MATERIAL'S FORM ─────────────────────────────────────────────────
@@ -7538,15 +7591,21 @@
     if (!q || !q.on || !Array.isArray(q.names) || !q.names.length) return null;
     const ents = q.names.map(bankEntryByName).filter(Boolean);
     const n = ents.length; if (!n) return null;
-    const pass = Math.max(0, ci | 0);
-    let k = pass % n;
-    if (q.order === 'shuffle' && n > 1) {
-      const rnd = (typeof _ambSeededRand === 'function') ? _ambSeededRand((((L.id | 0) + 1) * 2654435761 ^ (Math.floor(pass / n) * 40503)) >>> 0) : Math.random;
-      const ord = ents.map((_, i) => i);
-      for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const tmp = ord[i]; ord[i] = ord[j]; ord[j] = tmp; }
-      k = ord[k];
-    }
-    return entryLayer(L, ents[k], Number.isFinite(cycBars) ? cycBars : Math.max(0.125, +L.part.bars || 1));
+    const pick = (ps) => {
+      let k = ps % n;
+      if (q.order === 'shuffle' && n > 1) {
+        const rnd = (typeof _ambSeededRand === 'function') ? _ambSeededRand((((L.id | 0) + 1) * 2654435761 ^ (Math.floor(ps / n) * 40503)) >>> 0) : Math.random;
+        const ord = ents.map((_, i) => i);
+        for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const tmp = ord[i]; ord[i] = ord[j]; ord[j] = tmp; }
+        k = ord[k];
+      }
+      return k;
+    };
+    const pass = Math.max(0, ci | 0), k = pick(pass);
+    const sh = entryLayer(L, ents[k], Number.isFinite(cycBars) ? cycBars : Math.max(0.125, +L.part.bars || 1));
+    // WHAT CHOSE IT, for the card's "now playing" readout (never read by playback)
+    if (sh) { sh._via = 'rot'; sh._k = (pass % n) + 1; sh._n = n; sh._next = (n > 1) ? String(ents[pick(pass + 1)].name || '') : ''; }
+    return sh;
   }
   // which Schedule answers the v2 layer plays itself (the same test 17-ambient asks)
   function psqOwn(L, r) {
@@ -7561,7 +7620,7 @@
     if (L.partSeqs && cfg && cfg.prog && cfg.prog.on && typeof _ambPartSeqSpecAt === 'function') {
       let r = null;
       try { r = _ambPartSeqSpecAt(E, cfg, L, cur.cs + Math.min(0.05, cur.cyc / 8)); } catch (e) { r = null; }
-      if (r && r.spec && psqOwn(L, r)) { const ent = bankEntryByName(r.spec.n); if (ent) return entryLayer(L, ent, bars); }
+      if (r && r.spec && psqOwn(L, r)) { const ent = bankEntryByName(r.spec.n); const sh = ent ? entryLayer(L, ent, bars) : null; if (sh) { sh._via = 'sched'; return sh; } }
       if (r && (r.spec || r.gen)) return null;        // ⚡ generate = its own part; a slice/chord cell is the freeze's
     }
     return bankPlayLayer(L, cur.idx, bars);
@@ -9507,6 +9566,7 @@
       } catch (e) { return { err: String(e) }; }
     },
     bankPlayLayer: bankPlayLayer,
+    schedLayer: schedLayer,         // what a pass plays (Schedule cell → ↻ rotation → null = the part)
     pinSig: pinSig,
     previewLeftSec: previewLeftSec,
     cycleSec: cycSecOf,
@@ -11066,7 +11126,45 @@
   //
   // EACH SECTION ENDS IN WHAT CAME OUT, measured off the notes. That is the one
   // thing the card cannot show you and the only line here that is not a setting.
+  // ── WHAT CHANGES EACH PASS (2026-10-07) ─────────────────────────────────
+  // The top of ℹ Why?, for every part: with ⏻ Fixed off, each control that will make
+  // the next pass differ, its CURRENT value and what it does — one colour per control,
+  // the same colour every time (`WHY_HUE`), so a control is recognisable at a glance.
+  // The list is `liveness().params` — the same inspection the VARIES badge uses.
+  const WHY_HUE = { evolve: '#b8f24a', humanize: '#f6ad55', velVar: '#f687b3', accent: '#fc8181',
+    strumFidelity: '#b794f4', slide: '#4fd1c5', ornament: '#68d391', motion: '#63b3ed', chance: '#ecc94b',
+    voicing: '#d6bcfa', salt: '#f6e05e', progVary: '#81e6d9', alts: '#fbb6ce', arc: '#9ae6b4', grooveAccent: '#f6a6d3' };
+  function whyPassHtml(E, L) {
+    let lv = null;
+    try { lv = V2.liveness(L, (E && E.getCfg && E.getCfg()) || null); } catch (e) { lv = null; }
+    if (!lv) return '';
+    let h = '<div class="v2-whysec v2-whypass"><h4>What changes each pass</h4>';
+    if (lv.state === 'fixed') return h + '<p class="v2-whyout">\u23fb Fixed is on \u2014 every pass plays this same take. Nothing below can change it until Fixed is off.</p></div>';
+    const ps = lv.params || [];
+    // on, but out of this layer's reach — dimmed, after whatever does act
+    const unr = (lv.unreached || []).length ? ('<div class="v2-whyunr"><h5>On, but doesn\u2019t reach this layer</h5>' +
+      lv.unreached.map((x) => '<div class="v2-whyprow v2-whyunrow"><span class="v2-whypk">' + esc(x.k) + '</span><span class="v2-whypw">' + esc(x.what) + '</span></div>').join('') + '</div>') : '';
+    if (!ps.length) {
+      // SAY WHAT HAPPENS, and only offer what can act here: Evolve re-runs RULES,
+      // so a written or loaded part is never told to turn it up
+      const rec = !!(L && L.part && L.part.kind === 'recorded');
+      return h + '<p class="v2-whyout">Nothing varies \u2014 every pass plays this same take. To change that: \ud83c\udfb2 ' +
+        (rec ? 'Replace with a new take' : 'New take') + ' rolls another, or turn up ' +
+        (rec ? 'Humanize, Vel var or Accent' : 'Humanize, Vel var, Accent or \u27f3 Evolve') + ' in \u2726 Generate.</p>' + unr + '</div>';
+    }
+    h += ps.map((x) => {
+      const hue = WHY_HUE[x.key] || '#a0aec0';
+      return '<div class="v2-whyprow" style="--hue:' + hue + '"><span class="v2-whypk">' + esc(x.k) + '</span>' +
+        '<span class="v2-whypv">' + esc(x.v) + '</span><span class="v2-whypw">' + esc(x.what) + '</span></div>';
+    }).join('');
+    return h + unr + '</div>';
+  }
   function whyHtml(E, L) {
+    let top = '';
+    try { top = whyPassHtml(E, L); } catch (e) { top = ''; }
+    return top + whyHtml0(E, L);
+  }
+  function whyHtml0(E, L) {
     const cfg = (E && E.getCfg && E.getCfg()) || null;
     const p = (L && L.part) || {};
     const r = p.rhythm || {}, t = p.pitch || {}, sh = p.shape || {};
@@ -11088,7 +11186,7 @@
     const rec = p.kind === 'recorded', notes = (p.notes || []);
     if (rec && !notes.length) return lead('Empty — nothing has made any notes yet.');
     if (rec && p.made === 'compose') return lead('✎ Composed by hand in the grid — no rule placed these.');
-    if (rec && p.made === 'phrase') return lead('↓ Adopted whole from the bank — no rule placed these.');
+    if (rec && p.made === 'phrase') return lead('↓ Loaded whole from Takes — no rule placed these.');
     if (rec && p.made === 'sung') return lead('🎤 Sung in and written down — no rule placed these.');
     if (rec && !p.made) return lead('✎ Drawn by hand — no rule placed these.');
 
@@ -11657,6 +11755,38 @@
   // THE BADGE. Every writer sets plain textContent; this lifts the leading
   // LIVE/FIXED into its own span AFTER, so textContent (what every reader and
   // probe sees) is untouched and a new writer only has to call this.
+  // ── THE DRAWING'S READOUT, LAID OUT (2026-10-07, user: "too wall of text … more
+  // legible and clear what each piece of information says"). It was ONE sentence of
+  // ten " · " clauses; it is now pieces with a role each — HEAD (the state chips and
+  // what the part is), FACTS (pills: notes · bars · length · take), WARN (amber, its
+  // own line), MORE (retakes, stages) and HINT (how to act — last, small, muted).
+  // textContent keeps every word and the " · " between them (hidden separators), so
+  // anything reading the line as text reads what it always did.
+  const lxClean = (t) => String(t || '').replace(/^\s*(\u00b7|\u2014)\s*/, '').trim();
+  function labWrite(lab, o) {
+    if (!lab) return;
+    const parts = { head: lxClean(o.head), facts: (o.facts || []).map(lxClean).filter(Boolean),
+                    warn: lxClean(o.warn), more: lxClean(o.more), hint: lxClean(o.hint) };
+    const sig = JSON.stringify(parts);
+    if (lab._lw === sig) return;
+    lab._lw = sig;
+    lab.textContent = '';
+    lab.classList.add('v2-lx');
+    const sep = () => { const x = document.createElement('span'); x.className = 'v2-lx-sep'; x.textContent = ' \u00b7 '; return x; };
+    const add = (cls, txt) => {
+      if (!txt) return null;
+      if (lab.childNodes.length) lab.appendChild(sep());
+      const sp = document.createElement('span'); sp.className = cls; sp.textContent = txt; lab.appendChild(sp); return sp;
+    };
+    const hd = add('v2-lx-head', parts.head); if (hd) liveBadge(hd);
+    if (parts.facts.length) {
+      if (lab.childNodes.length) lab.appendChild(sep());
+      const f = document.createElement('span'); f.className = 'v2-lx-facts';
+      parts.facts.forEach((x, i) => { if (i) f.appendChild(sep()); const c = document.createElement('span'); c.className = 'v2-lx-fact'; c.textContent = x; f.appendChild(c); });
+      lab.appendChild(f);
+    }
+    add('v2-lx-warn', parts.warn); add('v2-lx-more', parts.more); add('v2-lx-hint', parts.hint);
+  }
   function liveBadge(lab) {
     const t = lab && lab.firstChild;
     if (!t || t.nodeType !== 3) return;
@@ -11748,7 +11878,7 @@
     L.chg.ev = clamp(n | 0, 0, 64);
     if (L.chg.ev > 0 && L.chg.am != null && (L.chg.am | 0) <= 0) L.chg.am = 100;  // 0% is "never", by the emitter's rule
   }
-  const clockFace = (n) => '⟳ Evolve: ' + (n > 0 ? ('every ' + (n === 1 ? 'cycle' : n + ' passes')) : 'off — this take repeats');
+  const clockFace = (n) => '⟳ Evolve: ' + (n > 0 ? ('every ' + (n === 1 ? 'cycle' : n + ' passes')) : 'off — no new notes');
   // WHAT ONE "PASS" IS, said on the row (2026-09-19, "is a single Every unit
   // always 1 pass of the current part?"). It is NOT always the layer's own
   // cycle: `chgAt` counts passes of the arrangement PART sounding at that
@@ -11812,12 +11942,22 @@
   const aheadOf = (L) => (L && Number.isFinite(L.ahead)) ? clamp(L.ahead | 0, 0, 7) : 7;
   // ⏻ THE MODE'S OWN FACE. A one-word state on the button, like the Evolve
   // toggle beside it: the face says what it IS, not what pressing would do.
-  const fixFace = (L) => V2.fixed(L)
-    ? '⏻ Fixed — the same take every pass'
-    : '⏻ Fixed: off — free to change';
+  // …AND WHAT "OFF" ACTUALLY MEANS RIGHT NOW (2026-10-07, user: "incongruous"). "free
+  // to change" sat beside "Evolve: off — this take repeats" and a Why? saying nothing
+  // varies: three statements of one fact, two of them wrong. Off now counts the
+  // controls that WILL make the next pass differ — `liveness().params`, the list
+  // ℹ Why? prints — so the face, the tooltip and Why? say the same thing.
+  const varyN = (L) => { try { const lv = V2.liveness(L, _cfgOf()); return (lv && Array.isArray(lv.params)) ? lv.params.length : 0; } catch (e) { return 0; } };
+  const fixFace = (L) => {
+    if (V2.fixed(L)) return '⏻ Fixed — the same take every pass';
+    const n = varyN(L);
+    return n ? ('⏻ Fixed: off — ' + n + (n === 1 ? ' thing varies' : ' things vary') + ' each pass') : '⏻ Fixed: off — nothing varies yet';
+  };
   const FIX_WHY = (L) => V2.fixed(L)
     ? 'This layer plays the same take every pass: the dice are off and the take is pinned. Nothing is lost — every setting keeps its value and comes straight back when you turn this off. The chords still move underneath, so the pitches follow the changes.'
-    : 'This layer is free to change — 🎲 New take rolls another, and ⟳ Evolve can re-decide on a clock. Press to pin it to one take.';
+    : (varyN(L)
+      ? (varyN(L) + ' setting' + (varyN(L) === 1 ? ' makes' : 's make') + ' each pass differ — ℹ Why? lists them. Press to pin this layer to one take; every setting keeps its value.')
+      : ('Nothing is set to vary, so every pass plays this take — 🎲 ' + ((L.part && L.part.kind === 'recorded') ? 'Replace with a new take' : 'New take') + ' rolls another. Fixed pins it once something does vary.'));
   const CLOCK_FIXED = '⏻ Fixed is on, so Evolve cannot act — turn Fixed off to use it. Your setting is kept.';
   function clockSwHtml(L) {
     const frozen = L.part.kind === 'recorded';
@@ -11956,7 +12096,7 @@
       clockSwHtml(L) +
       '<span class="ambient-seg-row v2-takebar">' +
         '<button type="button" class="ambient-seg v2-newtake"' +
-          ' title="Roll this part again — it asks first whether to keep the take you have (save it to the bank) or roll over it. Preview never re-rolls on its own, so what you are hearing stays until you press this.">🎲 New take</button>' +
+          ' title="Roll this part again — it asks first whether to keep the take you have (save it to Takes) or roll over it. Preview never re-rolls on its own, so what you are hearing stays until you press this.">🎲 New take</button>' +
         // TWO STATES, TWO SENTENCES. It read "❄ Re-take live" on a fixed part,
         // which sounds like the way BACK to Generated — it is not (that is the
         // Source select); it discards these notes and locks a fresh roll. And
@@ -12144,6 +12284,66 @@
   // drag redraws on every move — so mid-drag it would hand the finger's index
   // to a different note. A drag redraws exactly as it always did.
   V2.dragging = () => !!DRAG;
+  // ── WHICH BANKED TAKE IS PLAYING (2026-10-07, user: "how does user know which take
+  // in bank is playing") ──────────────────────────────────────────────────────
+  // While the transport runs, the pass you are HEARING (the drawing's own sounding
+  // window) is asked what it plays — `V2.schedLayer`, the emitter's own chooser — and
+  // the answer is stated three ways: the strip above the drawing, the Bank tab's row
+  // (lit), and the drawing itself (which draws that take, not the part). The drawing's
+  // per-cycle redraw is this readout's second writer, so it moves with the music.
+  // Returns the take's layer copy, or null (the part plays as itself).
+  function nowTakeSync(card, L, E, cfg) {
+    let sh = null;
+    try {
+      const stp = E && E.timer && viewSounds(E) && heardPhase(E, 'v2:' + (L.id | 0));
+      const nowT = audibleNow();
+      if (stp && Number.isFinite(stp.startAt) && nowT >= stp.startAt) {
+        const wnd = V2.cycleWindowAt(L, E, cfg, nowT, stp);
+        sh = V2.schedLayer ? V2.schedLayer(E, cfg, L, wnd) : null;
+      }
+    } catch (e) { sh = null; }
+    try {
+      const host = card && card.querySelector('.v2-partviz');
+      let el = card && card.querySelector('.v2-nowtake');
+      if (sh && host && !el) {
+        el = document.createElement('div');
+        el.className = 'ambient-hint v2-nowtake';
+        el.setAttribute('aria-live', 'polite');
+        host.parentNode.insertBefore(el, host);
+      }
+      const nm = sh ? String(sh.part.from || '') : '';
+      if (el) {
+        const txt = !sh ? ''
+          : (sh._via === 'sched'
+            ? ('\u25a6 Now playing \u201c' + nm + '\u201d \u2014 the Schedule maps it to this pass')
+            : ('\u21bb Now playing \u201c' + nm + '\u201d \u00b7 ' + sh._k + ' of ' + sh._n + ' in turn' +
+               (sh._next && sh._next !== nm ? (' \u00b7 next \u201c' + sh._next + '\u201d') : '')));
+        if (el.textContent !== txt) el.textContent = txt;
+        el.hidden = !sh;
+        // STOP IS NOT A REDRAW — so while the strip shows, a light watcher is its
+        // other writer: once the transport is stopped it clears the strip and the
+        // lit row (measured: "Now playing" stayed up after ■ Stop)
+        if (sh && !el._watch) {
+          el._watch = setInterval(() => {
+            let still = false;
+            try { still = !!(E && E.timer) && document.body.contains(el); } catch (e) {}
+            if (still) return;
+            clearInterval(el._watch); el._watch = 0;
+            try { el.hidden = true; el.textContent = ''; } catch (e) {}
+            try { card.querySelectorAll('.v2-bankit.v2-bknow').forEach((it) => it.classList.remove('v2-bknow')); } catch (e) {}
+          }, 500);
+        }
+      }
+      // the Bank tab's row for it, lit (by NAME — the row carries its bank index)
+      card.querySelectorAll('.v2-bankit').forEach((it) => {
+        const bi = it.getAttribute('data-bi') | 0;
+        let on = false;
+        try { on = !!(nm && savedSequences[bi] && savedSequences[bi].name === nm); } catch (e) {}
+        it.classList.toggle('v2-bknow', on);
+      });
+    } catch (e) {}
+    return sh;
+  }
   function drawPartViz(card, L, E) {
     if (E && !DRAG && typeof _ambWithCfgHold === 'function') return _ambWithCfgHold(E, () => drawPartVizRaw(card, L, E));
     return drawPartVizRaw(card, L, E);
@@ -12156,6 +12356,10 @@
     // ▦ STEPS has no canvas — the same entry point paints its readout instead,
     // so every caller that repaints the Content line keeps working unchanged
     // (there are a dozen, and a second entry point is how two surfaces drift).
+    // ▶ the banked take this pass plays, stated (and drawn, below) — before the
+    // ▦ Steps return, so a Pattern layer says it too
+    let nowTake = null;
+    try { nowTake = nowTakeSync(card, L, E, E.getCfg()); } catch (e) { nowTake = null; }
     if (V2.formOf(L) === 'steps') { try { stepsSync(host, L); } catch (e) {} return; }
     const cv = host.querySelector('.v2-vizcv'), lab = host.querySelector('.v2-vizlab');
     if (!cv || !cv.getContext) return;
@@ -12371,8 +12575,9 @@
       // part is sounding at this cycle and plays ITS record — the emitter's own
       // rule. EDIT keeps the pin, which is what lets you work on one part while
       // another one plays.
+      // …and while a BANKED TAKE plays this pass, draw THAT (see `nowTakeSync`)
       const ask = () => (playing
-        ? V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc, pi: wpi })
+        ? V2.notesFor((nowTake || L), { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc, pi: wpi })
         : V2.withTake(V2.pinOf(L), () =>
             V2.notesFor(L, { E, cfg, key: 'v2:' + (L.id | 0), cycleStart: cs, cycleSec: cyc })));
       notes = withPvClocks(() => ((playing && vizMode(L) === 'view') ? ask() : V2.withEdit(ask))) || [];
@@ -13084,10 +13289,9 @@
       try { vizChrome(card, L, E); } catch (e) {}
       g.fillStyle = '#6b6b8a'; g.font = '12px -apple-system, Segoe UI, sans-serif';
       g.fillText('silent for this cycle', GUT + 8, TOP + (h - TOP) / 2 + 4);
-      if (lab) lab.textContent = liveTxt(L, cfg) + ' · ' + barTxt +
-        ((cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
-          ? ' \u2014 \ud83d\udc41 showing another part' : '');
-      liveBadge(lab);
+      labWrite(lab, { head: liveTxt(L, cfg), facts: [barTxt, 'silent this cycle'],
+        more: (cv._drawnPi >= 0 && Number.isFinite(L.partFor) && (cv._drawnPi | 0) !== (L.partFor | 0))
+          ? '\ud83d\udc41 showing another part' : '' });
       return;
     }
     // WHOSE RECORD YOU ARE LOOKING AT, said outright. In 👁 View the picture
@@ -13647,35 +13851,29 @@
         const fixBtn = host.querySelector('.v2-evenfix');
         if (fixBtn) fixBtn.hidden = !unevenTxt;
       } catch (e) {}
-      lab.textContent = liveTxt(L, cfg) + ' · ' +
-        played.length + ' note' + (played.length === 1 ? '' : 's') +
-        (onsetN && onsetN !== played.length
-          ? ' in ' + onsetN + ' onset' + (onsetN === 1 ? '' : 's') : '') + ' · ' + barTxt +
-        ' · ' + (Math.round(cyc * 10) / 10) + 's' + unevenTxt +
-        // NAME THE TAKE. "one take of many" was true and unhelpful — you could
-        // not tell whether the picture had moved. A number you can watch change
-        // is what makes "Preview did not re-roll that" verifiable by eye.
-        // A DOOR NOBODY CAN SEE IS NOT A DOOR. The ruler is two rows and they
-        // now answer two questions, so the hint names BOTH — nothing on a
-        // canvas can carry a tooltip, and the chord band looks like a label
-        // until something says it is a handle.
-        (rec2 ? (bselOf(L) ? ' · re-rolling ' + bselLabel(bselOf(L)) + tapTxt(L, ' — tap a bar' + (cmarks ? ' or a chord' : '') + ' to change which')
-                            : tapTxt(L, ' · tap the drawing to edit it · the ruler picks a bar' + (cmarks ? ' or chord' : '') + ' to re-roll'))
-              : ' · take ' + (drawnTake + 1) +
-                // …the one SOUNDING, when the clock has moved past the pin —
-                // otherwise a moving picture beside a fixed number reads as
-                // a fixed picture
-                ((playing && drawnTake !== (V2.takeOf(L) | 0)) ? ' (sounding — pinned to ' + (V2.takeOf(L) + 1) + ')' : '') +
-                (L.part.takeb ? ' · retaken: ' + regListTxt(L.part.takeb) : '') +
-                // A BAR GENERATING BY ITS OWN RULES IS STATE, and state that can
-                // sit in a closed panel has to be readable from the card (the
-                // drum-solo rule) — otherwise "why is bar 3 different" has no
-                // answer anywhere on screen.
-                (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') +
-                (bselOf(L) ? ' · retaking ' + bselLabel(bselOf(L))
-                           : tapTxt(L, ' · tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it')) +
-                (fromPv ? ' · as previewed' : '')) + thawTxt + xfTxt + ghostTxt + sameTxt + overTxt + otherTxt;
-      liveBadge(lab);
+      // NAME THE TAKE. "one take of many" was true and unhelpful — a number you can
+      // watch change is what makes "Preview did not re-roll that" verifiable by eye.
+      // A DOOR NOBODY CAN SEE IS NOT A DOOR: the ruler is two rows answering two
+      // questions, so the hint names BOTH (a canvas cannot carry a tooltip).
+      const factsL = [played.length + ' note' + (played.length === 1 ? '' : 's') +
+          (onsetN && onsetN !== played.length ? ' in ' + onsetN + ' onset' + (onsetN === 1 ? '' : 's') : ''),
+        barTxt, (Math.round(cyc * 10) / 10) + 's'];
+      let moreL = '', hintL = '';
+      if (rec2) {
+        hintL = bselOf(L) ? ('re-rolling ' + bselLabel(bselOf(L)) + tapTxt(L, ' — tap a bar' + (cmarks ? ' or a chord' : '') + ' to change which'))
+          : tapTxt(L, 'tap the drawing to edit it · the ruler picks a bar' + (cmarks ? ' or chord' : '') + ' to re-roll');
+      } else {
+        // …the one SOUNDING, when the clock has moved past the pin
+        factsL.push('take ' + (drawnTake + 1) +
+          ((playing && drawnTake !== (V2.takeOf(L) | 0)) ? ' (sounding — pinned to ' + (V2.takeOf(L) + 1) + ')' : ''));
+        // A BAR GENERATING BY ITS OWN RULES IS STATE (the drum-solo rule) — readable here
+        moreL = (L.part.takeb ? ' · retaken: ' + regListTxt(L.part.takeb) : '') +
+          (L.part.ruleb ? ' · own rules: ' + regListTxt(L.part.ruleb) : '') + (fromPv ? ' · as previewed' : '');
+        hintL = bselOf(L) ? ('retaking ' + bselLabel(bselOf(L)))
+          : tapTxt(L, 'tap a bar' + (cmarks ? ' or a chord' : '') + ' to retake just it');
+      }
+      moreL = lxClean(moreL) + (thawTxt + xfTxt + ghostTxt + sameTxt + overTxt + otherTxt);
+      labWrite(lab, { head: liveTxt(L, cfg), facts: factsL, warn: unevenTxt, more: moreL, hint: hintL });
     }
     // ♫ A CHORD IS ONE THING — a bar in its colour joins its notes at the onset
     try {
@@ -13939,7 +14137,7 @@
         return { key: 'empty', txt: '\u25cb Empty \u2014 pick a material below, or draw it' };
       }
       if (p.made === 'compose') return { key: 'compose', txt: '\u270e Composed \u2014 the notes you drew' };
-      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From the Bank' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
+      if (p.made === 'phrase') return { key: 'adopt', txt: '\u266a From Takes' + (p.from ? ' \u201c' + p.from + '\u201d' : '') };
       if (p.made === 'take') {
         // LEAD with the material — burying it mid-sentence is why "still not
         // clear what Material we're using" was a fair report of the first cut
@@ -17833,6 +18031,18 @@
   // each pass play the next ↻-marked take (`L.bankPlay`). Reordering stays inside a
   // group — ▴ ▾ swap with the next entry of the SAME group, wherever it sits.
   const BK_OPEN = new Set();          // layer ids whose "other layers" fold is open (UI only)
+  // ▶ HEAR A BANKED TAKE through a layer's own sound, nothing loaded — the Bank tab's
+  // ▶ and ▦ Schedule's cell picker both use this one path
+  V2.hearEntry = function (E, L, name) {
+    let ent = null;
+    try { ent = (savedSequences || []).find((x) => x && x.name === name) || null; } catch (e) { ent = null; }
+    const got = ent && V2.phraseNotes(ent); if (!got || !L || !L.part) return false;
+    const sp = Object.assign({}, L.part, { kind: 'recorded', notes: got.notes, made: 'phrase', transpose: 0,
+      bars: clamp(Math.round((got.beats / 4) * 48) / 48 || 1, 0.125, 64) });
+    delete sp.form; delete sp.reg;
+    try { V2.preview(E, Object.assign({}, L, { part: sp })); } catch (e) { return false; }
+    return true;
+  };
   function bankRowHtml(L) {
     const all = bankList(), id = L.id | 0;
     const mine = all.filter((b2) => b2.from === id), other = all.filter((b2) => b2.from !== id);
@@ -17853,14 +18063,14 @@
         ((on && own) ? '<button type="button" class="v2-bkrot' + (rot.has(b2.name) ? ' on' : '') + '" data-bi="' + b2.i + '" aria-pressed="' + rot.has(b2.name) + '" aria-label="In the rotation" title="In the ↻ rotation — tap to leave it out or bring it back">\u21bb</button>' : '') +
         '<button type="button" class="v2-bkup" data-bi="' + b2.i + '" aria-label="Move up" title="Move up">\u25b4</button>' +
         '<button type="button" class="v2-bkdn" data-bi="' + b2.i + '" aria-label="Move down" title="Move down">\u25be</button>' +
-        '<button type="button" class="v2-bkdel" data-bi="' + b2.i + '" aria-label="Delete" title="Delete from the bank">\u2715</button>' +
+        '<button type="button" class="v2-bkdel" data-bi="' + b2.i + '" aria-label="Delete" title="Delete from Takes">\u2715</button>' +
       '</span>';
     const open = BK_OPEN.has(id);
     const nRot = [...rot].filter((nm) => all.some((b2) => b2.name === nm)).length;
-    return '<div data-v2tab="Bank" class="ambient-ctrl v2-bankrow"><label>Bank</label>' +
+    return '<div data-v2tab="Bank" class="ambient-ctrl v2-bankrow"><label>Takes</label>' +
       '<span class="ambient-seg-row">' +
-        '<button type="button" class="ambient-seg v2-bkfill" title="Roll several different takes of this part\u2019s rules and save each one to the bank \u2014 the part itself is not changed">\ud83c\udfb2 Fill bank\u2026</button>' +
-        '<button type="button" class="ambient-seg v2-bkplay' + (on ? ' active' : '') + '" aria-pressed="' + on + '" title="Each pass plays the next of this layer\u2019s banked takes instead of the part">' +
+        '<button type="button" class="ambient-seg v2-bkfill" title="Roll several different takes of this part\u2019s rules and save each one to Takes \u2014 the part itself is not changed">\ud83c\udfb2 Roll takes\u2026</button>' +
+        '<button type="button" class="ambient-seg v2-bkplay' + (on ? ' active' : '') + '" aria-pressed="' + on + '" title="Each pass plays the next of this layer\u2019s saved takes instead of the part">' +
           (on ? '\u21bb Playing in turn' : '\u21bb Play in turn') + '</button>' +
         (on ? '<select class="ambient-select v2-bkorder" aria-label="Order">' +
           '<option value="turn"' + (q.order === 'shuffle' ? '' : ' selected') + '>In order</option>' +
@@ -17868,7 +18078,7 @@
       '</span>' +
       '<span class="v2-bank">' +
         (mine.length ? mine.map((b2) => row(b2, true)).join('')
-          : '<span class="ambient-hint">No takes of this layer yet \u2014 \ud83c\udfb2 Fill bank rolls several at once, or \ud83c\udfb2 New take \u25b8 \ud83d\udcbe Save it to the bank keeps the one playing.</span>') +
+          : '<span class="ambient-hint">No takes of this layer yet \u2014 \ud83c\udfb2 Roll takes makes several at once, or \ud83c\udfb2 New take \u25b8 \ud83d\udcbe Save it to Takes keeps the one playing.</span>') +
       '</span>' +
       (other.length ? '<button type="button" class="ambient-seg v2-bkothers" aria-expanded="' + open + '">' + (open ? '\u25be' : '\u25b8') +
           ' Other layers & older \u00b7 ' + other.length + '</button>' +
@@ -18012,7 +18222,7 @@
           try { if (typeof showToast === 'function') showToast('Nothing saved — this take is still here. Press again when you are ready.', { ms: 4000 }); } catch (e) {}
           return;
         }
-        try { if (typeof showToast === 'function') showToast('Saved “' + nm + '” — it is in the bank now, and can be mapped to any part or chord.', { ms: 5000 }); } catch (e) {}
+        try { if (typeof showToast === 'function') showToast('Saved “' + nm + '” to Takes — it can be mapped to any part or pass in ▦ Schedule.', { ms: 5000 }); } catch (e) {}
         run();
       });
     };
@@ -19764,6 +19974,10 @@
   // ♯ TWEAKS IS GONE (2026-10-06) — see the Shape note in the card build. ⏱ TIME is a
   // section with no button here: the Editors and Generate open it (`V2.openTime`).
   const SECS = ['Instrument', 'Generate', 'Mix', 'FX', 'Bank'];
+  // WHAT A SECTION IS CALLED (2026-10-07, user: rename "Bank" to "Takes"). LABEL ONLY —
+  // the key stays 'Bank' everywhere it is stored or matched (the naming rule).
+  const SEC_WORD = { Bank: 'Takes' };
+  const secWord = (k) => SEC_WORD[k] || k;
   // ── WHAT AN EFFECT IS CALLED ───────────────────────────────────
   // The DATA KEYS are `dist`, `autopan`, `pecho` — kept forever for save-compat
   // — and the card's words are Drive, Auto-pan, Pitch echo. The FX summary
@@ -21714,7 +21928,7 @@
               // so there is nothing to finish — ✍ Write ▾ ▸ ▦ Close grid (or Roll ⇄
               // Pattern, or any tab) leaves it. Only the bank stays down here.
               '<button type="button" class="ambient-seg ambient-seedgrid-bank" data-sgk="v2:' + L.id + '"' +
-                ' title="Save this phrase to the sequence bank under a name, so it can be reused — on another layer, in another area, or bound to a part.">⬇ To bank…</button>' +
+                ' title="Save this phrase to Takes under a name, so it can be reused — on another layer, in another area, or bound to a part.">⬇ To Takes…</button>' +
             '</span></div>' +
           '</div>' +
           ((p.kind === 'recorded' && !(p.notes || []).length)
@@ -24268,7 +24482,7 @@
           '<div class="v2-pop-title v2-pop-goto" role="tablist" aria-label="Go to a section">' +
             SECS.map(g2 => '<button type="button" class="v2-gototab' +
               (g2 === grp ? ' on' : '') + '" data-goto="' + esc(g2) + '"' +
-              (g2 === grp ? ' aria-current="true"' : '') + '>' + esc(g2) + '</button>').join('') +
+              (g2 === grp ? ' aria-current="true"' : '') + '>' + esc(secWord(g2)) + '</button>').join('') +
           '</div>' +
           // REGISTER, IN THE HEAD. It is the control you reach for while
           // listening — move the whole part an octave — so it sits where it is
@@ -24625,9 +24839,9 @@
     wrap.className = 'v2-secpop-wrap' + (top ? ' v2-secpop-top' : '');
     wrap.innerHTML =
       '<div class="v2-secpop-scrim"></div>' +
-      '<div class="v2-secpop" role="dialog" aria-modal="true" aria-label="' + esc(grp) + '">' +
+      '<div class="v2-secpop" role="dialog" aria-modal="true" aria-label="' + esc(secWord(grp)) + '">' +
         '<div class="v2-secpop-head">' +
-          '<span class="v2-secpop-title">' + esc(grp) + '</span>' +
+          '<span class="v2-secpop-title">' + esc(secWord(grp)) + '</span>' +
           '<button type="button" class="v2-secpop-close" aria-label="Close" ' +
             'title="Close \u2014 back to the layer">\u2715</button>' +
           '<span class="ambient-hint v2-grpsum" data-grp="' + esc(grp === 'Playing' ? 'Playing' : secGrp(grp)) + '"></span>' +
@@ -24922,7 +25136,7 @@
         '" data-tab="' + esc(t.name) + '"' +
         (tabNa(t.name, L) ? ' aria-disabled="true"' +
           ' title="Rhythm shapes a GENERATED part — this one is FROZEN, so these do nothing until you unfreeze it"' : '') +
-        '>' + esc(t.name) + '</button>';
+        '>' + esc(secWord(t.name)) + '</button>';
       // ── FX IS A DROPDOWN, NOT NINE CHIPS ─────────────────────────
       // (2026-09-18, user: "consolidate the effect option buttons into a
       // dropdown — all except Wet Only, leave that as a button and color it
@@ -28641,7 +28855,7 @@
           const L0 = ctx.L, p0 = L0.part || {};
           // ONLY RULES CAN BE ROLLED: a hand-written part has no takes to throw
           if (p0.kind !== 'live' && p0.made !== 'take') {
-            try { showToast('This part is written by hand \u2014 there are no rules to roll. \u2726 Generate gives it rules; then Fill bank rolls takes of them.', { ms: 5500 }); } catch (e) {}
+            try { showToast('This part is written by hand \u2014 there are no rules to roll. \u2726 Generate gives it rules; then Roll takes makes takes of them.', { ms: 5500 }); } catch (e) {}
             return;
           }
           const id0 = L0.id | 0, nm0 = L0.name || ('Layer ' + id0);
@@ -28652,15 +28866,15 @@
               const k = r.added.length;
               try {
                 showToast(k
-                  ? ('\ud83c\udfb2 ' + k + ' take' + (k === 1 ? '' : 's') + ' of ' + nm0 + ' are in the bank' + (k < n ? (' \u2014 only ' + k + ' new one' + (k === 1 ? '' : 's') + ' in ' + r.tries + ' tries: these rules mostly repeat (or repeat what is already banked). More Variation in \u2726 Generate gives more to choose from') : '') + '. Tap one to play it, or map them to parts in \u25a6 Schedule.')
-                  : ('These rules came out the same every time \u2014 nothing new to bank. Loosen them in \u2726 Generate (Variation) and try again.'), { ms: 6500 });
+                  ? ('\ud83c\udfb2 ' + k + ' take' + (k === 1 ? '' : 's') + ' of ' + nm0 + ' saved to Takes' + (k < n ? (' \u2014 only ' + k + ' new one' + (k === 1 ? '' : 's') + ' in ' + r.tries + ' tries: these rules mostly repeat (or repeat what is already saved). More Variation in \u2726 Generate gives more to choose from') : '') + '. Tap one to play it, or map them to parts in \u25a6 Schedule.')
+                  : ('These rules came out the same every time \u2014 nothing new to save. Loosen them in \u2726 Generate (Variation) and try again.'), { ms: 6500 });
               } catch (e) {}
               h._sig = ''; V2.render(E);
             });
           };
           const ask = (n) => () => setTimeout(() => run(n), 0);
-          _ambActionsPopover('\ud83c\udfb2 Fill the bank', [
-            { disabled: true, label: 'Roll different takes of ' + nm0 + '\u2019s rules and save each to the bank. The part itself does not change.' },
+          _ambActionsPopover('\ud83c\udfb2 Roll takes', [
+            { disabled: true, label: 'Roll different takes of ' + nm0 + '\u2019s rules and save each to Takes. The part itself does not change.' },
             { label: '4 takes', fn: ask(4) }, { label: '8 takes', fn: ask(8) }, { label: '16 takes', fn: ask(16) },
             { label: 'Another number\u2026', fn: () => setTimeout(() => {
               window.uiPrompt('How many takes? (1\u201364)', '12').then((v) => {
@@ -28700,7 +28914,7 @@
             const q = Object.assign({ names: [] }, L0.bankPlay || {});
             if (!q.on && !(q.names || []).length) {
               q.names = bankList().filter((b2) => b2.from === (L0.id | 0)).map((b2) => b2.name);
-              if (!q.names.length) { try { showToast('Bank some takes of this layer first \u2014 \ud83c\udfb2 Fill bank rolls several at once.', { ms: 4500 }); } catch (e) {} return; }
+              if (!q.names.length) { try { showToast('Save some takes of this layer first \u2014 \ud83c\udfb2 Roll takes makes several at once.', { ms: 4500 }); } catch (e) {} return; }
             }
             q.on = q.on ? 0 : 1;
             L0.bankPlay = q; reanchor();
@@ -28749,8 +28963,31 @@
               }
               try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
               try { if (typeof showToast === 'function') showToast('Loaded \u201c' + nm2 + '\u201d \u2014 this part plays exactly those notes now.', { ms: 4500 }); } catch (e) {}
+              // THE BANK CLOSES ON A LOAD (2026-10-07, user) — you chose; the drawing is
+              // what to look at now. secClose also drops it from the rebuild's re-open list.
+              try { const c5 = document.querySelector('.v2-layer[data-v2id="' + id0 + '"]') || c2.card; if (c5) secClose(c5); } catch (e) {}
               h._sig = ''; V2.render(E);
             };
+            // A PART THAT IS A BANKED TAKE, UNTOUCHED, LOSES NOTHING — it is still in the
+            // bank. Asking "keep what is here first?" (and offering to save it again) was
+            // asked of "Line · take 3" while loading "Line · take 3" (2026-10-07).
+            const asBanked = (() => {
+              try {
+                const p5 = ctx.L.part;
+                if (!p5 || p5.kind !== 'recorded' || p5.made !== 'phrase' || !p5.from) return '';
+                const e5 = savedSequences.find((x) => x && x.name === p5.from); if (!e5) return '';
+                const got = V2.phraseNotes(e5); if (!got) return '';
+                const sg = (ns) => ns.map((n) => (n.midi | 0) + '@' + Math.round(n.t * 3840) + ':' + Math.round(n.dur * 3840)).sort().join(',');
+                return sg(got.notes) === sg(p5.notes || []) ? p5.from : '';
+              } catch (e) { return ''; }
+            })();
+            if (asBanked && asBanked === nm2) {
+              try { secClose(ctx.card); } catch (e) {}
+              try { if (typeof showToast === 'function') showToast('\u201c' + nm2 + '\u201d is already this part.', { ms: 3000 }); } catch (e) {}
+              h._sig = ''; V2.render(E);
+              return;
+            }
+            if (asBanked) { load(reCtx()); return; }
             const cost = takeCost(ctx.L, null);
             keepGate(E, ctx.L, {
               title: '\u266a ' + nm2 + ' \u2014 keep what is here first?',
@@ -28759,7 +28996,7 @@
                   ? ('the ' + n3 + ' note' + (n3 === 1 ? '' : 's') + ' on this part')
                   : (cost.what + ' \u2014 ' + n3 + ' note' + (n3 === 1 ? '' : 's'))) +
                 '. That cannot be undone; closing this changes nothing.'),
-              saveLabel: '\ud83d\udcbe Save this take to the bank, then load',
+              saveLabel: '\ud83d\udcbe Save this take to Takes, then load',
               goLabel: '\u266a Load \u201c' + nm2 + '\u201d \u2014 what is here is gone',
               ctx: reCtx,
               go: load,
@@ -29346,7 +29583,7 @@
                 ? ('A new take replaces the ' + n3 + ' note' + (n3 === 1 ? '' : 's') + ' drawn above.')
                 : ('A new take replaces ' + cost.what + ' \u2014 ' + n3 + ' note' + (n3 === 1 ? '' : 's') + '.')) +
               ' That cannot be undone; closing this changes nothing.'),
-            saveLabel: '\ud83d\udcbe Save it to the bank, then roll',
+            saveLabel: '\ud83d\udcbe Save it to Takes, then roll',
             goLabel: '\ud83c\udfb2 Roll over it \u2014 this take is gone',
             ctx: reCtx,
             go: roll,

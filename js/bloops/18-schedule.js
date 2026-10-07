@@ -138,7 +138,7 @@
         (has(_ambPartAttr) ? _ambPartAttr(x.pi) : '') + '>' + esc(has(_ambPartLabel) ? _ambPartLabel(cfg, x.pi) : ('Part ' + (x.pi + 1))) + '</button>').join('') + '</div>';
 
     // TAP SETS — what a tap paints, and how far it reaches
-    h += '<div class="sch-brush"><span class="sch-lbl">Tap sets</span>';
+    h += '<div class="sch-brush">' + (st.mode === 'phrase' ? '' : '<span class="sch-lbl">Tap sets</span>');
     const tool = (id, lab, sw) => '<button type="button" class="ambient-seg sch-tool' + (st.tool === id ? ' on' : '') +
       '" data-sch="tool:' + id + '"><i class="sch-sw ' + sw + '"></i>' + lab + '</button>';
     if (st.mode === 'salt') {
@@ -162,27 +162,12 @@
             layers: 'Every layer on that chord on this pass' }[lv]) + '">' +
           ({ cell: 'This cell', every: 'Every pass', layers: 'All layers' }[lv]) + '</button>').join('');
     } else {
+      // ▦ PHRASE HAS NO BRUSH (2026-10-07, user: the brush listed every layer's takes
+      // over a grid of every layer — "Line · take 2" could be painted onto Beat). A tap
+      // opens THAT cell's picker: its layer's own takes first. See `openPhrasePick`.
       if (st.tool !== 'on' && st.tool !== 'off' && st.tool !== 'chance') st.tool = 'on';
-      const ph = (id, lab, cls) => '<button type="button" class="ambient-seg sch-tool' + (st.phrase === id ? ' on' : '') +
-        '" data-sch="phrase:' + esc(id) + '"><i class="sch-sw ' + cls + '"></i>' + esc(lab) + '</button>';
-      h += ph('gen', 'Generated', 'sw-gen') + bank.map((b) => ph(b, b, 'sw-ph')).join('') + ph('clear', 'Inherit', 'sw-clear');
-      if (!bank.length) h += '<span class="ambient-hint">the Bank is empty — save a phrase to place it here</span>';
-      // A SLICE — which bars of the phrase, and how it fits the chord (the
-      // `{n, s, l, f}` spec; a whole phrase looped stores as its bare name)
-      if (st.phrase !== 'gen' && st.phrase !== 'clear') {
-        h += '<span class="sch-sep"></span><span class="sch-lbl">from bar</span>' +
-          '<input type="number" class="sch-barsin" data-schslice="s" inputmode="numeric" min="1" max="65" step="1" value="' + ((st.slice.s | 0) + 1) + '" aria-label="First bar of the phrase">' +
-          '<span class="sch-lbl">for</span>' +
-          '<input type="number" class="sch-barsin" data-schslice="l" inputmode="numeric" min="0" max="64" step="1" value="' + (st.slice.l | 0) + '" aria-label="How many bars (0 = to the end)">' +
-          '<span class="sch-lbl">bars</span>' +
-          [['loop', 'Loop'], ['stretch', 'Stretch'], ['once', 'Once']].map(([v, lab]) =>
-            '<button type="button" class="ambient-seg' + (st.slice.f === v ? ' on' : '') + '" data-sch="fitph:' + v + '" title="' +
-            esc({ loop: 'Loop it to fill the chord', stretch: 'Stretch it to fit the chord', once: 'Play it once, then rest' }[v]) + '">' + lab + '</button>').join('') +
-          '<span class="ambient-hint">0 bars = to the end</span>';
-      }
-      h += '<span class="sch-sep"></span><span class="sch-lbl">on</span>' +
-        ['cell', 'pass', 'part'].map((lv) => '<button type="button" class="ambient-seg sch-level' + (st.level === lv ? ' on' : '') +
-          '" data-sch="level:' + lv + '">' + ({ cell: 'This chord', pass: 'Whole pass', part: 'Whole part' }[lv]) + '</button>').join('');
+      h += '<span class="ambient-hint">Each cell is what that layer plays on that pass \u2014 tap one to pick one of its saved takes' +
+        (bank.length ? '' : ' (no takes saved yet \u2014 \ud83c\udfb2 Roll takes in a layer\u2019s Takes tab)') + '</span>';
     }
     h += '</div>';
 
@@ -210,7 +195,7 @@
     }
     h += '<div class="ambient-hint sch-cap">' + esc((has(_ambPartLabel) ? _ambPartLabel(cfg, r.pi) : 'Part') + ' · ' +
       r.len + ' change' + (r.len === 1 ? '' : 's') + ' · ' + cols + ' pass' + (cols === 1 ? '' : 'es') +
-      ' · widths follow each change’s length on that pass') + '</div>';
+      (st.mode === 'phrase' ? '' : ' · widths follow each change’s length on that pass')) + '</div>';
 
     // THE PART'S PASSES — how many, and whether its cadence is a template
     const gst = has(_ambGridStore) ? _ambGridStore(cfg, r.pi, false) : null;
@@ -227,6 +212,12 @@
       // ↻ HOLD PASS — repeat the pass that is playing so an edit is heard next time round
       (has(_ambPassHoldBtnHtml) ? String(_ambPassHoldBtnHtml(E)).replace('data-pmx="hold"', 'data-sch="hold"') : '') +
       '</div>';
+    // ▦ PHRASE IS PER PASS (2026-10-07, user: a chord cell offered whole takes that
+    // span every change). A banked take is a whole pass of a layer, so the grid is
+    // layers × passes and nothing finer; per-chord / sliced mappings stored by the old
+    // grid still play, and their pass cell says so (its picker can clear them).
+    if (st.mode === 'phrase') h += phrasePassesHtml(E, cfg, st, r, rows, cols);
+    else {
     h += '<div class="sch-passes">';
     passes.forEach((P) => {
       h += '<div class="sch-pass" data-schpass="' + P.c + '"><button type="button" class="sch-passlab' + (st.passOpen === P.c ? ' on' : '') + '" data-sch="pass:' + P.c + '"' +
@@ -262,7 +253,7 @@
           const cls = (res.name || res.gen || rot) ? 'ph' : 'phgen';
           return '<button type="button" class="sch-cell ' + cls + (inh ? ' inh' : '') + '" style="' + size + '"' + attrs +
             ' title="' + esc(where + ' \u2014 ' + (res.name ? ('plays ' + res.name)
-              : rot ? ('plays the next of its ' + rot + ' banked take' + (rot === 1 ? '' : 's') + ' (\u21bb rotation \u2014 its options, or its Bank tab)')
+              : rot ? ('plays the next of its ' + rot + ' saved take' + (rot === 1 ? '' : 's') + ' (\u21bb rotation \u2014 its options, or its Takes tab)')
               : 'plays its own generated part') +
               ((res.from && res.from !== 'cell') ? (' (set on the whole ' + res.from + ')') : '')) + '">' + (inh ? '\u21b3 ' : '') + esc(face) + '</button>';
         }
@@ -295,11 +286,12 @@
       }
     });
     h += '</div>';
+    }
     h += '<div class="ambient-hint sch-foot">' + (st.mode === 'salt'
       ? 'How much of each pass\u2019s Salt this layer takes on each chord \u2014 the same on every pass. Set a pass\u2019s Salt on its label.'
       : st.mode === 'plays'
       ? 'Dashed cells follow the chord’s default for every pass. <b>Plays</b>, <b>Silent</b> and <b>Chance</b> give a cell its own; tapping a cell that already has it puts it back.'
-      : '<b>↳</b> is inherited from the whole pass or the whole part. <b>Generated</b> is the layer’s own part, made by its rules.') +
+      : 'Each cell is one pass of that layer. <b>↳</b> follows its every-pass setting; <b>↻ in turn</b> is its takes rotation; <b>generated</b> is its own part, made by its rules.') +
       ' Tap a layer’s name for its options.</div>';
     el.innerHTML = h + optionsHtml(E, cfg, st, rows);
   }
@@ -414,7 +406,7 @@
     return '<button type="button" class="sch-rowlab' + (st.open === row.key ? ' on' : '') + '" data-sch="opt:' + esc(row.key) + '"' +
       ' title="' + esc(row.label + ' \u2014 options') + '"><b>' + esc(row.label) + '</b>' +
       (row.L.gateMode === 'mute' ? '<span class="sch-note sch-mute">mute</span>' : '') +
-      (rotOf(row.L) ? '<span class="sch-note" title="Plays its banked takes in turn where nothing is mapped">\u21bb ' + rotOf(row.L) + '</span>' : '') +
+      (rotOf(row.L) ? '<span class="sch-note" title="Plays its saved takes in turn where nothing is mapped">\u21bb ' + rotOf(row.L) + '</span>' : '') +
       (note ? '<span class="sch-note">' + esc(note) + '</span>' : '') + '</button>';
   }
   function optionsHtml(E, cfg, st, rows) {
@@ -429,12 +421,12 @@
     if (row.key.indexOf('v2:') === 0) {
       const q = L.bankPlay || {}, on = !!q.on, n = rotOf(L);
       const own = (() => { try { return (savedSequences || []).filter((x) => x && Number.isFinite(x.from) && (x.from | 0) === (L.id | 0)).length; } catch (e) { return 0; } })();
-      h += '<div class="sch-optrow"><span class="sch-lbl">Bank rotation</span>' +
+      h += '<div class="sch-optrow"><span class="sch-lbl">Takes rotation</span>' +
         btn(!on, 'bkp:off', 'Off', 'Unmapped passes play the layer\u2019s own part') +
-        btn(on && q.order !== 'shuffle', 'bkp:turn', '\u21bb In order', 'Unmapped passes play its banked takes one after another', !own && !(q.names || []).length) +
-        btn(on && q.order === 'shuffle', 'bkp:shuffle', '\u21bb Shuffled', 'A fresh order of its banked takes each round', !own && !(q.names || []).length) +
-        '<span class="ambient-hint">' + (on ? (n + ' take' + (n === 1 ? '' : 's') + ' in turn \u2014 pick which in the layer\u2019s Bank tab; a mapped cell always wins')
-          : own ? (own + ' take' + (own === 1 ? '' : 's') + ' banked for it') : 'no takes banked for it yet \u2014 \ud83c\udfb2 Fill bank in its Bank tab') + '</span></div>';
+        btn(on && q.order !== 'shuffle', 'bkp:turn', '\u21bb In order', 'Unmapped passes play its saved takes one after another', !own && !(q.names || []).length) +
+        btn(on && q.order === 'shuffle', 'bkp:shuffle', '\u21bb Shuffled', 'A fresh order of its saved takes each round', !own && !(q.names || []).length) +
+        '<span class="ambient-hint">' + (on ? (n + ' take' + (n === 1 ? '' : 's') + ' in turn \u2014 pick which in the layer\u2019s Takes tab; a mapped cell always wins')
+          : own ? (own + ' take' + (own === 1 ? '' : 's') + ' saved for it') : 'no takes saved for it yet \u2014 \ud83c\udfb2 Roll takes in its Takes tab') + '</span></div>';
     }
     const mute = L.gateMode === 'mute';
     h += '<div class="sch-optrow"><span class="sch-lbl">When a cell is off</span>' +
@@ -750,6 +742,110 @@
     commit(E, key);
     v2Refresh(E, key);
   }
+  // what one layer plays on one pass of a part — for the cell face and its picker
+  function passPlan(L, pi, pass) {
+    const sp = has(_ambPartSeqCellSpec) ? _ambPartSeqCellSpec(L, pi, _ambPartSeqCellKey(pass, '*')) : null;
+    const all = has(_ambPartSeqCellSpec) ? _ambPartSeqCellSpec(L, pi, _AMB_PARTSEQ_ALL) : null;
+    const isGen = (x) => !!(x && has(_ambPsqIsGen) && _ambPsqIsGen(x.n));
+    let chords = 0;
+    try { const cell = (L.partSeqs || {})[pi | 0] || {}; Object.keys(cell).forEach((k2) => { if (new RegExp('^' + pass + ':\\d+$').test(k2)) chords++; }); } catch (e) {}
+    const rot = rotOf(L);
+    const deflt = rot ? ('\u21bb in turn (' + rot + ')') : 'generated';
+    const face = (x) => isGen(x) ? '\u26a1 generated' : ((has(_ambPsqLabel) ? _ambPsqLabel(x) : x.n) || x.n);
+    return { own: sp, all: all, chords: chords, rot: rot, deflt: deflt,
+      text: sp ? face(sp) : all ? ('\u21b3 ' + face(all)) : deflt,
+      set: !!(sp || all), inh: !sp };
+  }
+  function phrasePassesHtml(E, cfg, st, r, rows, cols) {
+    let h = '<div class="sch-ppgrid" style="--np:' + cols + '"><span></span>';
+    for (let c = 0; c < cols; c++) h += '<span class="sch-pphead">Pass ' + (c + 1) + '</span>';
+    rows.forEach((row) => {
+      h += rowLabHtml(row, st);
+      for (let c = 0; c < cols; c++) {
+        const pl = passPlan(row.L, r.pi, c);
+        h += '<button type="button" class="sch-cell ' + (pl.set || pl.rot ? 'ph' : 'phgen') + (pl.inh && (pl.set || pl.rot) ? ' inh' : '') + '"' +
+          ' data-sch="pcell:' + esc(row.key) + ':' + c + '"' + (has(_ambPartAttr) ? _ambPartAttr(r.pi) : '') +
+          ' title="' + esc(row.label + ' \u00b7 pass ' + (c + 1) + ' \u2014 ' + pl.text + ' \u2014 tap to choose') + '">' +
+          esc(pl.text) + (pl.chords ? '<small>+ ' + pl.chords + ' per-chord</small>' : '') + '</button>';
+      }
+    });
+    return h + '</div>';
+  }
+  // ── THE PHRASE CELL'S PICKER ──────────────────────────────────────────────
+  // What THIS layer plays on this chord / pass / part: its own takes (▶ to hear),
+  // ⚡ Generated, ↳ Inherit, other layers' takes behind a fold, a slice behind
+  // another. Writes through `paintPhrase` (the one cell writer), so the store and
+  // its cascade are exactly what the brush wrote.
+  function openPhrasePick(E, el, cfg, key, pass) {
+    const st = stOf(el);
+    const ranges = _ambGridRanges(cfg) || [], r = ranges[st.part]; if (!r) return;
+    const L = has(_ambLayerByKey) ? _ambLayerByKey(E, key) : null; if (!L) return;
+    const cols = Math.max(1, _ambPartPassCols(cfg, r.pi));
+    if (st.level !== 'pass' && st.level !== 'part') st.level = 'pass';
+    const close = () => { const o = document.querySelector('.sch-pick-ov'); if (o) o.remove(); };
+    close();
+    const ov = document.createElement('div');
+    // `sm-overlay` too: the view CSS (`body.view-mix > *:not(…)`) hides every
+    // body child it does not name — measured, this sheet computed display:none
+    ov.className = 'sm-overlay sch-pick-ov';
+    const lid = Number.isFinite(L.id) ? (L.id | 0) : null;
+    // THIS LAYER'S TAKES ONLY — another layer's take is that layer's material
+    let mine = [];
+    try { mine = (savedSequences || []).filter((x) => x && lid != null && Number.isFinite(x.from) && (x.from | 0) === lid).map((x) => x.name); } catch (e) { mine = []; }
+    const rowLab = (() => { try { return ((_ambChordMatrixRows(cfg) || []).find((x) => x.key === key) || {}).label || L.name || key; } catch (e) { return L.name || key; } })();
+    const partNm = has(_ambPartLabel) ? _ambPartLabel(cfg, r.pi) : 'Part';
+    const paint = () => {
+      const pl = passPlan(L, r.pi, pass);
+      const cur = st.level === 'part' ? pl.all : pl.own;
+      const curN = cur ? cur.n : '', isGen = !!(cur && has(_ambPsqIsGen) && _ambPsqIsGen(cur.n));
+      // what ↳ Default falls back to, said outright
+      const dflt = st.level === 'pass'
+        ? (pl.all ? ('every-pass setting: ' + ((has(_ambPsqIsGen) && _ambPsqIsGen(pl.all.n)) ? 'generated' : pl.all.n)) : pl.deflt)
+        : pl.deflt;
+      ov.innerHTML = '<div class="sch-pick-scrim" data-pk="close"></div><div class="sch-pick" role="dialog" aria-label="' + esc(rowLab) + '">' +
+        '<div class="sch-pick-head"><b>' + esc(rowLab) + ' \u00b7 ' + esc(partNm) + (st.level === 'pass' ? ' \u00b7 pass ' + (pass + 1) : ' \u00b7 every pass') + '</b>' +
+          '<button type="button" class="ambient-seg" data-pk="close" aria-label="Close">\u2715</button></div>' +
+        (cols > 1 ? '<div class="sch-pick-for"><span class="sch-lbl">For</span>' +
+          [['pass', 'Pass ' + (pass + 1)], ['part', 'Every pass']].map(([lv, lab]) =>
+            '<button type="button" class="ambient-seg' + (st.level === lv ? ' on' : '') + '" data-pk="lv" data-lv="' + lv + '">' + lab + '</button>').join('') + '</div>' : '') +
+        (mine.length ? mine.map((nm) => '<div class="sch-pick-it' + (curN === nm ? ' on' : '') + '">' +
+            '<button type="button" class="ambient-seg sch-pick-hear" data-pk="hear" data-n="' + esc(nm) + '" aria-label="Hear ' + esc(nm) + '">\u25b6</button>' +
+            '<button type="button" class="ambient-seg sch-pick-name" data-pk="set" data-n="' + esc(nm) + '">' + esc(nm) + (curN === nm ? '<b>\u2713</b>' : '') + '</button></div>').join('')
+          : '<div class="ambient-hint">No takes of ' + esc(rowLab) + ' saved yet \u2014 \ud83c\udfb2 Roll takes in its Takes tab.</div>') +
+        '<div class="sch-pick-row">' +
+          '<button type="button" class="ambient-seg' + (isGen ? ' on' : '') + '" data-pk="gen" title="Its own part, made by its rules">\u26a1 Generated</button>' +
+          '<button type="button" class="ambient-seg' + (!cur ? ' on' : '') + '" data-pk="inherit">\u21b3 Default \u2014 ' + esc(dflt) + '</button></div>' +
+        ((cur && (cur.s || cur.l || (cur.f && cur.f !== 'loop'))) ? '<div class="ambient-hint">set as a slice (' + esc(has(_ambPsqLabel) ? _ambPsqLabel(cur) : cur.n) + ') \u2014 picking a take replaces it with the whole take</div>' : '') +
+        (st.level === 'pass' && pl.chords ? '<button type="button" class="ambient-seg" data-pk="clrch">\u2715 Clear ' + pl.chords + ' per-chord setting' + (pl.chords === 1 ? '' : 's') + ' on this pass</button>' : '') +
+        '</div>';
+    };
+    const write = (want) => {
+      // a WHOLE take, never a slice — `paintPhrase` builds the spec from st.slice
+      st.slice = { s: 0, l: 0, f: 'loop' };
+      st.phrase = want;
+      paintPhrase(E, el, cfg, key, pass, 0);
+    };
+    ov.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-pk]'); if (!b) return;
+      const a = b.getAttribute('data-pk');
+      if (a === 'close') { close(); return; }
+      if (a === 'lv') { st.level = b.getAttribute('data-lv'); paint(); return; }
+      if (a === 'hear') { try { if (window._v2 && window._v2.hearEntry && String(key).indexOf('v2:') === 0) window._v2.hearEntry(E, L, b.getAttribute('data-n')); } catch (e) {} return; }
+      if (a === 'clrch') {
+        try {
+          const cell = (L.partSeqs || {})[r.pi | 0] || {};
+          Object.keys(cell).filter((k2) => new RegExp('^' + pass + ':\\d+$').test(k2)).forEach((k2) => _ambPartSeqCellSet(L, r.pi, k2, null));
+        } catch (e) {}
+        commit(E, key); v2Refresh(E, key); paint(); return;
+      }
+      if (a === 'gen') { write('gen'); close(); return; }
+      if (a === 'inherit') { write('clear'); close(); return; }
+      // the same take again hands the cell back to its default (`paintPhrase`'s rule)
+      if (a === 'set') { write(b.getAttribute('data-n')); close(); return; }
+    });
+    paint();
+    document.body.appendChild(ov);
+  }
   function paintSalt(E, el, cfg, key, k) {
     const st = stOf(el);
     const ranges = _ambGridRanges(cfg) || [], r = ranges[st.part]; if (!r) return;
@@ -815,7 +911,8 @@
         el._sig = ''; render(E); return;
       }
       if (a[0] === 'view') { st.view = a[1]; el._sig = ''; render(E); return; }
-      if (a[0] === 'mode') { st.mode = a[1]; st.level = 'cell'; if (st.mode === 'salt' && st.tool === 'clear') st.tool = 'on'; el._sig = ''; render(E); return; }
+      // Phrase opens on WHOLE PASS — a whole take on a pass plays exactly; a chord cell is grid-snapped
+      if (a[0] === 'mode') { st.mode = a[1]; st.level = (a[1] === 'phrase') ? 'pass' : 'cell'; if (st.mode === 'salt' && st.tool === 'clear') st.tool = 'on'; el._sig = ''; render(E); return; }
       if (a[0] === 'fitph') { st.slice.f = a[1]; el._sig = ''; render(E); return; }
       if (a[0] === 'part') { st.part = a[1] | 0; el._sig = ''; render(E); return; }
       if (a[0] === 'tool') { st.tool = a[1]; el._sig = ''; render(E); return; }
@@ -898,6 +995,7 @@
         paintRound(E, el, cfg, key, r);
         return;
       }
+      if (a[0] === 'pcell') { const pass = a.pop() | 0, key = a.slice(1).join(':'); openPhrasePick(E, el, cfg, key, pass); return; }
       if (a[0] === 'cell') {
         if (el._lpAte) { el._lpAte = 0; return; }   // a long-press already answered this press
         // key may itself contain ':' (e.g. 'v2:3', 'arp:2') — pass and chord are the last two

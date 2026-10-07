@@ -7971,25 +7971,31 @@
     // match the ROWS, so the voice clause is only spoken when a row can actually act —
     // the same rule that makes the no-changes branch below describe density instead of
     // a harmony that is not there. Optional, and 0 says nothing.
+    // PLAIN WORDS, AND WHOSE WORDS (2026-10-07, user: "this readout/hint is cryptic, does
+    // it change? i don't know what it means"). It was a mood line ("It breathes.") that
+    // never said it was a PREVIEW of Apply at the slider's amount. Now: the amount it is
+    // describing, what changes in concrete terms, and that nothing happens until Apply —
+    // the list under it names each setting. The bands still follow what ACTUALLY
+    // engages at that amount (repeats from 40, a part sitting out from 60).
     function _ambNovWords(amount, changes, tsets) {
       const n = amount | 0;
-      if (!n) return 'Nothing moves. The piece plays exactly as written, every time through.';
-      // WITH NO CHANGES only the density curve can act, so the sentence describes THAT
-      // rather than a harmony that is not there \u2014 the readout has to match the rows.
-      if (changes === false) return n < 40
-        ? 'Layers thin out and drift back, gently. Add changes and the harmony can move too.'
-        : 'Layers drop away and come back as it plays. Add changes and the harmony can move too.';
-      if (n < 30) return 'Barely. The odd chord recolours and the density drifts \u2014 you would have to be listening for it.';
-      // THESE NAME WHAT ACTUALLY ENGAGES AT THAT AMOUNT, not the whole feature list —
-      // the repeats range comes in at 40 and 🎲 Chance not until 60, so the middle
-      // band promising a part that "sits a round out" was a round early.
+      const tail = ' Nothing changes until you press Apply \u2014 the list below shows each setting it would set.';
+      if (!n) return 'At 0: no variation \u2014 Apply would set everything back to playing exactly as written.' + tail;
+      const head = 'At ' + n + ': ';
+      // WITH NO CHANGES only the density curve can act, so say THAT
+      if (changes === false) return head + (n < 40
+        ? 'layers drop out and come back now and then.'
+        : 'layers drop out and come back often.') + ' (Add chord changes and the harmony can vary too.)' + tail;
       const voices = ((tsets | 0) > 0);
-      if (n < 60) return 'It breathes. Chords take substitutes, the arrangement thins and fills, and a section sometimes runs an extra time.' +
-        (voices ? ' The voices move around the Tone set.' : '');
-      if (n < 85) return 'It improvises. The order of the parts moves, sections run different lengths, the odd one sits a round out, and no two times through are the same.' +
-        (voices ? ' Voices come and go across the Tone set, and some notes double.' : '');
-      return 'A different take every time. Expect the form itself to surprise you.' +
-        (voices ? ' Even the instruments trade places, and the odd note is played by two at once.' : '');
+      let w;
+      if (n < 30) w = 'a light touch \u2014 the odd chord gets a different colour, and layers thin out a little.';
+      else if (n < 60) w = 'moderate \u2014 some chords are swapped for substitutes, layers drop out and come back, and a part sometimes plays one extra time.' +
+        (voices ? ' Layers with a Tone set switch sounds.' : '');
+      else if (n < 85) w = 'strong \u2014 the parts play in a different order, run different lengths, and one may sit out a round; no two passes are the same.' +
+        (voices ? ' Layers with a Tone set switch sounds, and some notes are doubled by a second sound.' : '');
+      else w = 'maximum \u2014 every pass is a new version, and the structure itself changes.' +
+        (voices ? ' Layers trade sounds, and some notes are doubled by a second sound.' : '');
+      return head + w + tail;
     }
     // APPLY, with the previous values stashed so one press is undoable. Undo is not a
     // luxury here: this writes TEN keys at once, and a macro you cannot take back is
@@ -37359,6 +37365,7 @@
       try { _ambPartSeqMatrixSync(E); } catch (e) {}
       try { _ambProgOverviewPlayhead(E); } catch (e) {}
       try { _ambSaltReadoutSync(E); } catch (e) {}
+      try { _ambVarNowSync(E); } catch (e) {}
       try { _ambSynthVoicePlayheads(E); } catch (e) {}
       try { if (typeof window._v2VizFrame === 'function') window._v2VizFrame(E); } catch (e) {}
       try { _ambCurPartPlayhead(E); } catch (e) {}
@@ -44070,8 +44077,13 @@
         // one that sets them all, so it is what you reach for before you know which
         // axis you wanted. It states nothing about its own state because it HOLDS no
         // state \u2014 it is a generator, not a setting.
-        '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-novbtn" data-pov="grp:novelty" ' +
-          'title="Novelty \u2014 one dial over the whole arrangement: how much the piece changes as it plays. Sets the controls beside it; nothing new is stored.">\u273a Novelty</span>' +
+        // …AND IT IS A META-CONTROL, so it does not sit in the grid as a peer of the axes
+        // it sets (2026-10-07, user: "Novelty feels like a separate thing from the other
+        // buttons, it's basically a meta-variation"). Its own full-width row, then the
+        // axes under a caption that says what the relationship is.
+        '<span role="button" tabindex="0" class="ambient-pov-grpbtn ambient-pov-novbtn ambient-var-meta" data-pov="grp:novelty" ' +
+          'title="Novelty \u2014 one dial over the whole arrangement: how much the piece changes as it plays. Sets the controls below; nothing new is stored.">\u273a Novelty<b>one dial that sets all of these</b></span>' +
+        '<span class="ambient-var-each">\u2026or tune each one</span>' +
         (!_ch ? '' : (function () {
           const _sv = (prog && prog.salt) || {};
           const _bits = [];
@@ -44132,12 +44144,9 @@
             (_byp ? '<b>bypassed</b>' : (_pink ? '<b>pink</b>' : '')) + '</span>';
         })()) +
         '' +
-        // CAPTURE — only offered when something actually varies pass to pass;
-        // on a plain written progression it would just clone the chords.
-        (_ch && (_ambProgSaltAnyLen(cfg) || (prog.salt && (prog.salt.colors | 0) > 0) || (prog.order && prog.order.mode) ||
-          (prog.reroll | 0) || (prog.vary | 0) || (prog.tension | 0))
-          ? '<span role="button" tabindex="0" class="ambient-pov-capture" data-pov="capture" title="Freeze the pass you are hearing into a fixed, named progression \u2014 salt, order, alternates and re-rolls all baked in. Saved as a version you can switch back to; the live progression keeps varying.">\u2744 Capture pass</span>'
-          : '')
+        // ❄ CAPTURE MOVED to the ▶ Now readout (`_ambVarNowSync`), 2026-10-07 — it saves
+        // the pass you are HEARING, so it sits beside the line that names that pass.
+        ''
       ;
     }
     function _ambRenderVarBar(E) {
@@ -44677,6 +44686,125 @@
         if (ci != null) { const chip = el.querySelector('.salt-ch[data-sci="' + ci + '"]'); if (chip) chip.classList.add('cur'); }
       }
     }
+    // ── ▶ VARIATION, NOW (2026-10-07, user: "need readout in the Variation section
+    // indicating what Variation is doing for the current change/part as it happens
+    // during playback") ────────────────────────────────────────────────────────
+    // The change you are HEARING (`_ambAudibleNow`, so the phone's delayed output
+    // reads right), and one line per variation that is acting on it right now —
+    // nothing is printed for a variation that is off or doing nothing here. Every
+    // value comes from the engine's own reader (the order permutation, the played
+    // chord, the salt segment count, the rubato lengths, the arc multiplier), never
+    // a second computation. Called per viz frame beside the Salt readout; sig-
+    // guarded so the DOM changes only when the change, the arc slice or a knob does.
+    // Is there anything for ❄ Keep this pass to freeze? Only when something varies the
+    // changes pass to pass — on a plain progression it would only clone the chords.
+    function _ambCapturable(cfg) {
+      const prog = cfg && cfg.prog;
+      return !!(prog && prog.on && Array.isArray(prog.chords) && prog.chords.length &&
+        (_ambProgSaltAnyLen(cfg) || (prog.salt && (prog.salt.colors | 0) > 0) || (prog.order && prog.order.mode) ||
+          (prog.reroll | 0) || (prog.vary | 0) || (prog.tension | 0)));
+    }
+    function _ambVarNowSync(E) {
+      const el = _ambGet(E, 'ambient-var-now'); if (!el) return;
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); const p = cfg && cfg.prog;
+      const put = (sig, rows) => {
+        if (el._sig === sig) return; el._sig = sig;
+        el.textContent = '';
+        if (!el._wired) { el._wired = true;
+          el.addEventListener('pointerdown', (ev) => { try { _ambProgOverviewAct(E, ev); } catch (e) {} }); }
+        rows.forEach((r, i) => {
+          if (r.keep) {
+            const k = document.createElement('span');
+            k.setAttribute('role', 'button'); k.tabIndex = 0;
+            k.className = 'ambient-pov-capture avn-keep'; k.setAttribute('data-pov', 'capture');
+            k.title = 'Freeze the pass you are hearing into a fixed, named version of the progression \u2014 salt, order, alternates and re-rolls baked in. Switch back to it any time.';
+            k.textContent = '\u2744 Keep this pass';
+            el.appendChild(k); return;
+          }
+          const d = document.createElement('div');
+          d.className = i === 0 ? 'avn-head' : (r.dim ? 'avn-row avn-dim' : 'avn-row');
+          if (r.ic) { const ic = document.createElement('span'); ic.className = 'avn-ic'; ic.textContent = r.ic; d.appendChild(ic); }
+          if (r.k) { const k = document.createElement('b'); k.textContent = r.k; d.appendChild(k); }
+          d.appendChild(document.createTextNode(r.t));
+          el.appendChild(d);
+        });
+      };
+      if (!E.timer) { put('stopped', [{ t: 'Press \u25b6 \u2014 this follows the music and says what Variation is doing to each change as it plays.' }]); return; }
+      const chords = (p && p.on && Array.isArray(p.chords)) ? p.chords : [];
+      if (!chords.length) { put('nochords', [{ t: 'No chord changes in this area \u2014 Variation works on the changes.' }]); return; }
+      const now = (typeof _ambAudibleNow === 'function') ? _ambAudibleNow() : Tone.now();
+      const len = chords.length, step = _ambProgStepAt(E, now) | 0;
+      const cyc = Math.floor(step / len), slot = ((step % len) + len) % len, seed = cfg.seed | 0;
+      let arcSl = 0; try { arcSl = _ambArcSliceAt(E, now, cfg) | 0; } catch (e) {}
+      const knobs = JSON.stringify([p.salt, p.rubato, p.order, p.arc, p.reroll, p.vary, p.tension, (p.parts || []).length,
+        (typeof grooveSwing !== 'undefined') ? grooveSwing : 0, (typeof grooveHumanizeMs !== 'undefined') ? grooveHumanizeMs : 0,
+        (typeof grooveAccentEvery !== 'undefined') ? grooveAccentEvery : 0]);
+      const sig = step + '|' + arcSl + '|' + knobs + '|' + (_ambCapturable(cfg) ? 'k' : '');
+      if (el._sig === sig) return;
+      const nameOf = (c) => { try { return (c && _ambChordShort(c)) || '?'; } catch (e) { return '?'; } };
+      // WHERE — part, pass, change
+      let where = '';
+      try {
+        const w = _ambPartChordAt(E, cfg, now);
+        if (w) where = _ambPartLabel(cfg, w.pi) + ' \u00b7 pass ' + ((w.pass | 0) + 1) + ' \u00b7 ';
+      } catch (e) {}
+      const perm = _ambProgOrderPerm(cfg, len, cyc);
+      const idx = perm ? perm[slot] : slot;
+      let played = null;
+      const sv = _ambProgStepOverride;
+      try { _ambProgStepOverride = step; played = _ambProgCurrentChord(p); } catch (e) {} finally { _ambProgStepOverride = sv; }
+      const writtenHere = chords[idx], playedNm = played ? nameOf(played) : nameOf(writtenHere);
+      const rows = [{ t: '\u25b6 ' + where + 'change ' + (slot + 1) + ' of ' + len + ': ' + playedNm }];
+      // ↻ ORDER
+      if (perm) {
+        rows.push({ ic: '\u21bb', k: 'Order ', t: 'this round is ' + ((p.order && p.order.mode === 'reverse') ? 'reversed' : 'shuffled') +
+          (idx !== slot ? ' \u2014 change ' + (idx + 1) + ' (' + nameOf(writtenHere) + ') plays here' : ' \u2014 this one stays in place') });
+      }
+      // 🎲 / 🌊 / 🌡 / alternates — the chord itself was swapped
+      if (played && writtenHere && playedNm !== nameOf(writtenHere)) {
+        const why = [(p.reroll | 0) ? 'Re-roll' : '', (p.vary | 0) ? 'Vary' : '', (p.tension | 0) ? 'Tension' : '',
+          (Array.isArray(writtenHere.alts) && writtenHere.alts.length) ? 'alternates' : ''].filter(Boolean).join(' / ') || 'a substitution';
+        rows.push({ ic: '\ud83c\udfb2', k: why + ' ', t: nameOf(writtenHere) + ' \u2192 ' + playedNm });
+      }
+      // 🧂 SALT — colour segments on this change, this time
+      try {
+        const sp = _ambPartSaltAt(cfg, step);
+        if (sp && (sp.colors | 0) > 0) {
+          const n = _ambProgSaltSegCount(sp, step, seed);
+          rows.push({ ic: '\ud83e\uddc2', k: 'Salt ', t: n > 1 ? ('coloured in ' + n + ' segments this time') : 'plain this time', dim: n <= 1 });
+        }
+      } catch (e) {}
+      // ↔ RUBATO — this change's length, against its written one
+      try {
+        if ((_ambRubatoAt(cfg, step) | 0) > 0) {
+          const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+          const wl = chords.map((c) => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+          const lens = _ambProgSaltLensParted(wl, cyc, seed, cfg);
+          const a = lens[idx], b = wl[idx];
+          const fb = (v) => _ambFmtBpc(v) + (Math.abs(v - 1) < 1e-6 ? ' bar' : ' bars');
+          rows.push({ ic: '\u2194', k: 'Rubato ', t: 'lasts ' + fb(a) + (Math.abs(a - b) > 1e-6 ? (' (written ' + fb(b) + ')') : ' \u2014 as written'), dim: Math.abs(a - b) <= 1e-6 });
+        }
+      } catch (e) {}
+      // 🌒 ARC — how full the arrangement is right now
+      try {
+        const amt = _ambArcAmountAt(E, now, cfg) | 0;
+        if (amt > 0) {
+          const mul = _ambArcMulAtSlice(cfg, arcSl, amt);
+          rows.push({ ic: '\ud83c\udf12', k: 'Arc ', t: Math.round(mul * 100) + '% full here (depth ' + amt + '%' + ((p.arc && p.arc.shape) ? ', ' + p.arc.shape : '') + ')' });
+        }
+      } catch (e) {}
+      // 🕺 GROOVE — the area's feel (constant, but it is part of what you hear)
+      try {
+        const g = [];
+        if (typeof grooveSwing !== 'undefined' && grooveSwing > 0) g.push('swing ' + Math.round(grooveSwing) + '%');
+        if (typeof grooveHumanizeMs !== 'undefined' && grooveHumanizeMs > 0) g.push('humanize \u00b1' + Math.round(grooveHumanizeMs) + ' ms');
+        if (typeof grooveAccentEvery !== 'undefined' && grooveAccentEvery > 0) g.push('accent every ' + grooveAccentEvery);
+        if (g.length) rows.push({ ic: '\ud83d\udd7a', k: 'Groove ', t: g.join(' \u00b7 ') });
+      } catch (e) {}
+      if (rows.length === 1) rows.push({ t: 'nothing varies this change \u2014 it plays as written', dim: true });
+      if (_ambCapturable(cfg)) rows.push({ keep: true });
+      put(sig, rows);
+    }
     // DRAG A CARD BY ITS ORDINAL to reorder the play order. Pointer-based, so one
     // handler covers touch and mouse. Three things this codebase already paid for
     // once each, all of them in the page-tab reorder:
@@ -45056,7 +45184,9 @@
       if (op === 'capture') {
         const cyc = (function () {
           try { const len = prog.chords.length;
-            const st = _ambProgStepAt(E, ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.016) | 0;
+            // the pass you HEAR — on the phone the scheduler runs well ahead of the sound
+            const nowA = (typeof _ambAudibleNow === 'function') ? _ambAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+            const st = _ambProgStepAt(E, nowA + 0.016) | 0;
             return Math.max(0, Math.floor(st / Math.max(1, len))); } catch (e) { return 0; }
         })();
         const chords = _ambProgCaptureCycle(E, cfg, cyc);
@@ -46379,7 +46509,7 @@
       if (cols <= 1) {
         return '<div class="ambient-hint pmx-foot">' + esc('There is one pass here, so per-pass salt has ' +
           'nothing to vary. Raise the pass count above first — or set the salt for these changes as a whole ' +
-          'in the progression editor (Changes settings → Variation), and for the area in 🧂 Salt.') + '</div>';
+          'in the part editor (▤ Parts → ✎ Edit → Variation), and for the area in 🧂 Salt.') + '</div>';
       }
       const store = _ambPassSaltStore(cfg, r.pi, false);
       const inh = _ambPassSaltInherited(cfg, r.pi, parts);
@@ -57151,6 +57281,8 @@
             // screen, which is the thing you are actually working in.
             _ambProgGrpOpen('variation', '\u273a Variation', false) +
             '<div class="ambient-pov-strip ambient-pov-varstrip" id="ambient-prog-varbar"></div>' +
+            // ▶ NOW — what Variation is doing to the change you are hearing (`_ambVarNowSync`)
+            '<div class="ambient-var-now" id="ambient-var-now" aria-live="polite"></div>' +
             _ambProgGrpClose() +
             // 🧂 SALT — deterministic per-cycle spice on the global progression
             // (engine: _ambProgSaltCfg / _ambProgSaltLens / colors in
@@ -57187,7 +57319,7 @@
               // widest of three is how the whole axis came to feel scattered.
               '<span class="ambient-hint salt-ladder">Salt recolours a chord without moving it — ' +
               'when the changes FALL is <b>↔ Rubato</b>, its own section below. These are the <b>area</b> ' +
-              'defaults; a set of changes can override them (✎ Edit → Changes settings → Variation), and a ' +
+              'defaults; a part can override them (▤ Parts → ✎ Edit → Variation), and a ' +
               'single pass can override them again (▦ Schedule → a pass\u2019s label). How much each layer takes of the ' +
               'recolouring, chord by chord, is ▦ Schedule\u2019s <b>Salt</b> mode.</span>' +
             '</div>' +
@@ -57219,16 +57351,26 @@
               '<p class="ambient-hint ambient-nov-says" id="ambient-nov-says"></p>' +
               // BALANCE, not amount \u2014 and the caption says so, because a row of four
               // sliders under a fifth reads as "more of this" unless it is told not to.
-              '<button type="button" class="ambient-seg ambient-nov-shape" id="ambient-nov-shape" aria-expanded="false">\u25b8 Shape it</button>' +
+              // ▸ SHAPE IT — ONE DISCLOSURE BAR (2026-10-07, user: "clunky, could be clearer/
+              // cleaner"). Full width, the caret on the left and the CURRENT lean on the
+              // right ("even" / "more Harmony · less Form"), so it says what is set without
+              // being opened; open, the panel hangs off the bar as one block, one compact
+              // row per axis (dot · name · slider · value) and ↺ Even when anything leans.
+              '<div class="ambient-nov-shapewrap" id="ambient-nov-shapewrap">' +
+              '<button type="button" class="ambient-nov-shape" id="ambient-nov-shape" aria-expanded="false" aria-controls="ambient-nov-bal">' +
+                '<span class="ambient-nov-shcar" aria-hidden="true">\u25b8</span><span class="ambient-nov-shlbl">Shape it</span>' +
+                '<span class="ambient-nov-shsum" id="ambient-nov-shsum">even</span></button>' +
               '<div class="ambient-nov-bal" id="ambient-nov-bal" hidden>' +
-                '<p class="ambient-hint">Lean the same amount of change one way. Even is the default; these never add novelty, they only decide where it goes.</p>' +
+                '<p class="ambient-hint">Where the change goes \u2014 these never add more, they only lean it.</p>' +
                 _AMB_NOV_AXES.map(ax =>
                   '<div class="ambient-nov-balrow" data-novax="' + ax.k + '">' +
-                    '<label for="ambient-nov-b' + ax.k + '">' + ax.name + '</label>' +
+                    '<label for="ambient-nov-b' + ax.k + '"><i class="ambient-nov-dot" aria-hidden="true"></i>' + ax.name + '</label>' +
                     '<input type="range" id="ambient-nov-b' + ax.k + '" class="ambient-sl" min="0" max="100" step="5" value="50" aria-label="' + ax.name + ' balance">' +
+                    '<output class="ambient-nov-bv" id="ambient-nov-bv' + ax.k + '" for="ambient-nov-b' + ax.k + '">even</output>' +
                     '<span class="ambient-hint ambient-nov-asks">' + ax.asks + '</span>' +
                   '</div>').join('') +
-              '</div>' +
+                '<button type="button" class="ambient-seg ambient-nov-even" id="ambient-nov-even" hidden>\u21ba Even</button>' +
+              '</div></div>' +
               '<div class="ambient-nov-preview" id="ambient-nov-preview"></div>' +
               '<div class="ambient-nov-foot">' +
                 // ✺ NOVELTY ON/OFF — compare what Apply wrote against what was there
@@ -57247,9 +57389,11 @@
               // off parks the amount and plays the changes as written; on brings it back.
               _ambVarOptBtn('rubato', '\u2194 Rubato', '\u2194 Rubato \u2014 switch it off to hear the changes fall exactly as written; the amount is kept and comes back when you switch it on.') +
               '<span class="ambient-sched-grp ambient-rubato-grp"><span class="ambient-sched-lbl">amount</span><input type="number" class="ambient-salt-in" id="ambient-rubato-amt" min="0" max="100" step="5" value="0" title="Each cycle re-slices the CHORD LENGTHS (A 1\u00bc bars, B \u00bd, C 1\u00be \u2026) on a 1/8-bar grid. The cycle total is ALWAYS preserved, so loops and Evolve stay aligned \u2014 only where the changes fall moves. AREA-WIDE by nature: this is the shared chord clock, so every layer agrees about which chord is sounding. 0 = as written, 100 = wild."></span>' +
-              '<span class="ambient-hint rubato-ladder">The <b>area</b> default. A set of changes can carry its own ' +
-              '(\u270e Edit \u2192 Changes settings \u2192 Variation). Under a Passes grid every pass keeps its ' +
-              'LENGTH \u2014 only where the changes fall inside it moves.</span>' +
+              // (2026-10-07: rewritten — "Passes grid" and "Changes settings" no longer exist)
+              '<span class="ambient-hint rubato-ladder">Each pass, the changes fall a little earlier or later \u2014 ' +
+              'every <b>pass keeps its length</b>, so parts, takes and loops stay in step. This is the <b>area</b>\u2019s amount; ' +
+              'a part can set its own or none (\u25a4 Parts \u2192 \u270e Edit \u2192 Variation). ' +
+              'While it plays, the \u273a Variation readout shows each change\u2019s length against its written one.</span>' +
             '</div>' +
             _ambProgGrpClose() +
             _ambProgGrpOpen('order', '\u21bb Order', false, true) +
@@ -59694,6 +59838,19 @@
           const says = G('ambient-nov-says'); if (says) says.textContent = _ambNovWords(st.amount, _hasCh, _nTs);
           _AMB_NOV_AXES.forEach(ax => { const e = G('ambient-nov-b' + ax.k);
             if (e && document.activeElement !== e) e.value = String(st.bal[ax.k]); });
+          // ▸ SHAPE IT's face: each axis's lean, and the summary on the closed bar
+          { const lean = (v) => { const d = (v | 0) - 50; return d === 0 ? 'even' : (d > 0 ? '+' + d : '\u2212' + (-d)); };
+            const more = [], less = [];
+            _AMB_NOV_AXES.forEach(ax => {
+              const v = st.bal[ax.k] | 0, o = G('ambient-nov-bv' + ax.k);
+              if (o) { const t = lean(v); if (o.textContent !== t) o.textContent = t; o.classList.toggle('lean', v !== 50); }
+              if (v >= 55) more.push(ax.name); else if (v <= 45) less.push(ax.name);
+            });
+            const sum = G('ambient-nov-shsum');
+            if (sum) sum.textContent = (more.length || less.length)
+              ? [more.length ? 'more ' + more.join(', ') : '', less.length ? 'less ' + less.join(', ') : ''].filter(Boolean).join(' \u00b7 ')
+              : 'even';
+            const ev = G('ambient-nov-even'); if (ev) ev.hidden = !_AMB_NOV_AXES.some(ax => (st.bal[ax.k] | 0) !== 50); }
           const host = G('ambient-nov-preview');
           if (host) {
             const esc2 = (t) => String(t == null ? '' : t).replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]));
@@ -59749,7 +59906,13 @@
             const open = box.hidden;
             box.hidden = !open;
             sh.setAttribute('aria-expanded', open ? 'true' : 'false');
-            sh.textContent = (open ? '\u25be' : '\u25b8') + ' Shape it';
+            const car = sh.querySelector('.ambient-nov-shcar'); if (car) car.textContent = open ? '\u25be' : '\u25b8';
+            const wr = G('ambient-nov-shapewrap'); if (wr) wr.classList.toggle('open', open);
+          }); }
+        { const ev = G('ambient-nov-even');
+          if (ev) ev.addEventListener('click', () => {
+            const st = _ambNovState(); _AMB_NOV_AXES.forEach(ax => { st.bal[ax.k] = 50; });
+            _novPaint();
           }); }
         { const ap = G('ambient-nov-apply');
           if (ap) ap.addEventListener('click', () => {

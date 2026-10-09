@@ -556,6 +556,7 @@
 - **Pattern per-step Level / Ratchet are `timing.svel` / `timing.srat`, keyed by STEP INDEX** like
   `timing.odds`, and `stepFxStage` stamps them by rounding each onset back to its cell — so it runs
   BEFORE `timingStage` (swing/lean/⇠⇢ `n.nudge` would move the onset off its cell).
+- **A whole-cycle onset shift must fit after the pattern's LAST onset, not after one step.** Start vary drew seconds up to `cyc − one step`, so full-length patterns slid past the cycle end and `timingStage`'s clamp (`cs + cyc − 0.001`, active whenever swing/lean is on) piled them onto the last instant — 416/464 notes in the final 3%, read as "Variation borked the content". `fitStart` now scales the drawn fraction by the room left after `max(n.at)`.
 
 - **⊞ RESOLUTION MOVES WHICHEVER PATTERN IS THE MATERIAL, and a kit has two.** The
   emitter is `lanes = beatLanes(…) || p.rhythm.lanes` — so `beat.per` is read in ONE of

@@ -5394,14 +5394,26 @@
     // draws from `_ambRand`, the SHARED stream, and every draw v2 makes is
     // isolated precisely so a v2 layer cannot shift a v1 layer's numbers. Same
     // rule, same slack, its own seed.
+    // …AND IT HAS TO FIT (2026-10-09, user: "Something in variation completely borked this
+    // content"). The draw used to be a SECONDS offset up to the whole cycle less ONE step,
+    // ignoring how long the pattern is — so a full-length pattern slid mostly past the
+    // cycle's end, and the timing stage's clamp (run whenever swing/lean is on) piled
+    // every late note onto the last instant: measured 416 of 464 notes in the final 3%.
+    // Now the draw is a FRACTION, and `fitStart` turns it into seconds against the room
+    // actually left after the LAST onset — "anywhere it still fits", as the rule says.
     let startOff = 0;
+    const fitStart = (arr) => {
+      if (!(startOff > 0) || !arr || !arr.length) return 0;
+      let last = -Infinity;
+      for (let z = 0; z < arr.length; z++) if (arr[z] && Number.isFinite(arr[z].at) && arr[z].at > last) last = arr[z].at;
+      const room = (+ctx.cycleStart || 0) + cyc - 0.02 - last;
+      return room > 0.02 ? startOff * room : 0;
+    };
     try {
       const sv = (typeof _ambEffStart === 'function')
         ? _ambEffStart(Number.isFinite(L.startVary) ? L.startVary : undefined, ctx.cfg) : 0;
       if (!(p.rhythm && p.rhythm.kind === 'drawn' && p.rhythm.straight) && sv > 0 && vRnd(seedBase ^ 0x5bf03635, 127) * 100 < sv) {
-        const spanSec = cyc / Math.max(1, (p.rhythm && p.rhythm.steps) || 1);
-        const slack = Math.max(0, Math.max(0.05, cyc) - Math.max(0, spanSec) - 0.02);
-        if (slack > 0.02) startOff = vRnd(seedBase ^ 0x27d4eb2f, 131) * slack;
+        startOff = vRnd(seedBase ^ 0x27d4eb2f, 131);      // a FRACTION of the room — see `fitStart`
       }
     } catch (e) {}
     // POLYPHONIC EUCLID — v1's `euclidVoices`, and NOT the same thing as
@@ -5446,7 +5458,7 @@
         }
       }
       out.sort((a3, b3) => a3.at - b3.at);
-      if (startOff > 0) for (let z2 = 0; z2 < out.length; z2++) out[z2].at += startOff;
+      { const sh = fitStart(out); if (sh > 0) for (let z2 = 0; z2 < out.length; z2++) out[z2].at += sh; }
       return out;
     }
     // WHICH CHANGE EACH ONSET IS IN — only asked when a setting needs it
@@ -6027,7 +6039,7 @@
     if (anticWrapped) out.sort((a3, b3) => a3.at - b3.at);
     // The phrase's START shifts the WHOLE cycle, so it is applied once here
     // rather than at each push, before anything downstream reads the times.
-    if (startOff > 0) for (let z = 0; z < out.length; z++) out[z].at += startOff;
+    { const sh = fitStart(out); if (sh > 0) for (let z = 0; z < out.length; z++) out[z].at += sh; }
     // ── THE DENSITY CEILING (2026-09-17) ──────────────────────────────────
     // Every die that ADDS notes — Twist's burst, Phrasing's cell, a ghost —
     // drew on its own, so they stacked: 20 pulses came out as 35 onsets and 65
@@ -11811,6 +11823,16 @@
     lab.insertBefore(sp, t);
   }
   function stepsSync(host, L) {
+    // ▭ THE THUMBNAIL IS A COMPUTED FACE TOO (2026-10-09, user: "edits not being reflected in
+    // visualizer"). It was built once with the card, and closing the pattern editor re-renders
+    // only when the card SET changes — so the readout below said "24 of 64" while the picture
+    // still drew the pattern from before the edit. This is the repaint every writer already
+    // calls; rebuild the thumbnail here when its markup differs.
+    const th = host.querySelector('.v2-stepsthumb');
+    if (th && V2.patternThumbHtml) {
+      let html = ''; try { html = V2.patternThumbHtml(L); } catch (e) { html = ''; }
+      if (html && th._th !== html) { th._th = html; th.innerHTML = html; }
+    }
     const lab = host.querySelector('.v2-stepslab'); if (!lab) return;
     const p = L.part, r = p.rhythm || {};
     const kit = ((L.instrument && L.instrument.voice) || 'synth') === 'kit';

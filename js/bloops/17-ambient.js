@@ -6421,6 +6421,48 @@
       g.seq[String(col | 0)] = (arr || []).map(v => v | 0).filter(v => v >= 0 && v < plen).slice(0, 64);
       return true;
     }
+    // ── PARTIAL PLAYS (2026-10-08, user: "2 and 1/3 where 1/3 is 1 of 3 changes") ───
+    // NO NEW STORE: "2⅓" is THREE passes whose last plays only the part's first change —
+    // exactly what ▦ Schedule says when changes are dropped from a pass, so the engine,
+    // the arrangement clock and the Schedule grid already agree on it. Read back the same
+    // way: a final pass that is the first k changes in order (k < len) is the fraction.
+    function _ambFracTxt(k, n) {
+      const f = { '1/2': '\u00bd', '1/3': '\u2153', '2/3': '\u2154', '1/4': '\u00bc', '3/4': '\u00be', '1/5': '\u2155', '2/5': '\u2156', '3/5': '\u2157', '4/5': '\u2158', '1/6': '\u2159', '5/6': '\u215a', '1/8': '\u215b', '3/8': '\u215c', '5/8': '\u215d', '7/8': '\u215e' };
+      const g = (a, b) => (b ? g(b, a % b) : a); const d = g(k, n) || 1;
+      const key = (k / d) + '/' + (n / d);
+      return f[key] || key;
+    }
+    function _ambPartPlaysRead(cfg, pi) {
+      const rg = (_ambGridRanges(cfg) || []).find(r => r.pi === pi);
+      const len = Math.max(1, rg ? rg.len : 1);
+      const cols = Math.max(1, _ambPartPassCols(cfg, pi));
+      const last = _ambPartGridSeq(cfg, pi, cols - 1, len);
+      const pre = last.length > 0 && last.length < len && last.every((v, i) => v === i);
+      const k = pre ? last.length : 0;
+      return { whole: cols - (k ? 1 : 0), k: k, len: len };
+    }
+    function _ambPartPlaysWrite(cfg, pi, whole, k) {
+      const p = cfg && cfg.prog; const pt = p && Array.isArray(p.parts) ? p.parts[pi] : null; if (!pt) return false;
+      const cur = _ambPartPlaysRead(cfg, pi), len = cur.len;
+      k = Math.max(0, Math.min(len - 1, k | 0));
+      whole = Math.max(k > 0 ? 0 : 1, Math.min(64, whole | 0));
+      const total = whole + (k ? 1 : 0);
+      // the previous fraction's column goes first — it is OURS (a prefix of the part)
+      const g0 = _ambGridStore(cfg, pi, false);
+      if (cur.k && g0 && g0.seq) delete g0.seq[String(cur.whole)];
+      // THE COUNT LIVES IN ONE PLACE. A round visits a part `plays × grid columns` times
+      // (`_ambArrGridSeq`), so once the part has a pass grid the count is its COLUMNS and
+      // `plays` stays 1 — measured: plays 3 over a 3-column grid played the part 9 times.
+      const g = _ambGridStore(cfg, pi, k > 0);
+      if (k) {
+        _ambPassWrite(cfg, pi, whole, Array.from({ length: k }, (_, i) => i));
+        // a SHORTER last pass, not one stretched to fill — Fill cadence would close the gap
+        delete g.fit;
+      }
+      if (g) { g.cols = total; delete pt.plays; }
+      else if (total > 1) pt.plays = total; else delete pt.plays;
+      return true;
+    }
     function _ambArrWrite(cfg, col, arr) {
       const p = cfg && cfg.prog; if (!p) return false;
       const n = _ambGridRanges(cfg).length;
@@ -10806,7 +10848,7 @@
           '<button type="button" class="pe2-name" data-pe="' + _renInfo.act + '" title="Rename these changes">' +
             (_kindLbl ? '<small>' + esc(_kindLbl) + '</small>' : '') + esc(_renInfo.nm) + ' <i>✎</i></button>' +
           '<button type="button" class="pe2-ib pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" aria-label="' + (ed._pvOn ? 'Stop' : 'Preview') + '" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■' : '▶') + '</button>' +
-          '<button type="button" class="pe2-ib" data-pe="pe2more" aria-label="More" title="Rename, clone, add a pad layer, save to the seed list, delete">⋯</button>' +
+          '<button type="button" class="pe2-ib" data-pe="pe2more" aria-label="More" title="Rename, clone, add a pad layer, save to the seed list, versions, delete">⋯</button>' +
           '<button type="button" class="pe2-ib pe2-x" data-pe="cancel" aria-label="Close without saving" title="Close without saving">✕</button>' +
         '</div>';
       const _barsTot = ed.chords.slice(_peRange.from, _peRange.to).reduce((a2, c) => a2 + (_ambIsTransition(c) ? 0 : _peBarsOf(c)), 0);
@@ -11194,6 +11236,16 @@
           { label: '⧉ Clone — a fresh editable copy', fn: () => _ambPeAct('clone') },
           { label: '＋ Pad layer that plays this', fn: () => _ambPeAct('pad') },
           { label: '⤓ Save to seed list…', fn: () => _ambPeAct('export') },
+          // ⇄ VERSIONS — the whole Area's chords as saved snapshots. Switching replaces
+          // the LIVE chords, so this editor's draft is closed first (asked when it differs).
+          { label: '\u21c4 Versions of these changes\u2026', fn: () => {
+            const E2 = _E; const rect = { left: Math.max(8, r0.right - 260), right: r0.right, top: r0.top, bottom: r0.bottom, width: 260, height: r0.height || 40 };
+            let dirty = false;
+            try { const live = E2 && E2.getCfg && E2.getCfg().prog; dirty = !!(live && JSON.stringify(ed.chords) !== JSON.stringify(live.chords)); } catch (e) { dirty = false; }
+            const go = () => { _ambPeClose(); setTimeout(() => _ambVerMenu(E2, rect), 0); };
+            if (!dirty || typeof window.uiConfirm !== 'function') { go(); return; }
+            window.uiConfirm('Close the editor to switch versions?\n\nYour unsaved edits here are dropped \u2014 press Save first to keep them.').then((ok) => { if (ok) go(); });
+          } },
           'hr',
           { label: kp ? ('✕ Delete ' + (kp.name || ('Changes ' + (pi + 1))) + ' and its chords') : '✕ Delete the whole progression', fn: () => _ambPeAct('partkill:' + (ed.part | 0)) },
         ];
@@ -43949,6 +44001,11 @@
     }
     // THE ARRANGEMENT AS IT WAS, kept before the first version is ever made — so a
     // capture can never be the only thing left (it was, and the parts were lost).
+    // ⇄ THE VERSIONS MENU FROM ANYWHERE — the overview's own `vermenu` op, anchored at `rect`
+    function _ambVerMenu(E, rect) {
+      const r0 = rect || { left: 16, right: 280, top: 80, bottom: 120, width: 264, height: 40 };
+      try { _ambProgOverviewAct(E, { preventDefault() {}, target: { closest: () => ({ getAttribute: () => 'vermenu', getBoundingClientRect: () => r0 }) } }); } catch (e) {}
+    }
     function _ambProgEnsureOriginal(prog) {
       if (Array.isArray(prog.versions) && prog.versions.length) return;
       if (!Array.isArray(prog.chords) || !prog.chords.length) return;
@@ -44167,7 +44224,17 @@
       const master = '<button type="button" class="ambient-var-toggle ambient-pov-varmaster' + (byp ? '' : ' active') + '" aria-pressed="' + (!byp) + '" ' +
         'title="Bypass every Variation setting at once \u2014 hear the piece plain, then switch back. Everything is kept while it is off.">' +
         (byp ? '\u273a Variation: Off \u2014 bypassed (tap to bring it back)' : '\u273a Variation: On') + '</button>';
+      // ▶ THE NOW BOX RIDES UNDER THE MASTER SWITCH (2026-10-07, user: "move the Now box
+      // above the variation buttons"). It is a persistent node (its readout is sig-guarded
+      // on it), so it is LIFTED OUT before this rewrite and put back after the switch —
+      // never rebuilt, never lost to innerHTML.
+      const nowEl = _ambGet(E, 'ambient-var-now');
+      if (nowEl && nowEl.parentNode) nowEl.parentNode.removeChild(nowEl);
       host.innerHTML = '<div class="ambient-pov-bar ambient-pov-varbar' + (byp ? ' ambient-var-bypassed' : '') + '">' + master + html + '</div>';
+      if (nowEl) {
+        const mEl = host.querySelector('.ambient-pov-varmaster');
+        if (mEl) mEl.insertAdjacentElement('afterend', nowEl); else host.appendChild(nowEl);
+      }
       if (!host._wiredMaster) { host._wiredMaster = true;
         host.addEventListener('click', (ev) => {
           const b = ev.target && ev.target.closest && ev.target.closest('.ambient-pov-varmaster'); if (!b) return;
@@ -44353,12 +44420,22 @@
       // ONLY WHEN NON-DEFAULT. `1×` is the value a part has unless you say
       // otherwise, so rendering it on every card is a control repeating the
       // absence of a decision. The ⋯ menu is the door when it is hidden.
-      const _povPlaysHtml = (card) => (card.ord && card.plays > 1
-        ? ('<span class="ambient-pov-plays" title="How many times this part runs before the next one starts">' +
-             '<span role="button" tabindex="0" data-pov="stepplays:' + card.k + ':-1" title="One fewer">−</span>' +
-             '<b>' + card.plays + '×</b>' +
-             '<span role="button" tabindex="0" data-pov="stepplays:' + card.k + ':1" title="One more">+</span></span>')
-        : '');
+      // ALWAYS SHOWN, ONE CHIP (2026-10-08, user: "hard to edit on phone, also it should
+      // always show"). Two 22px ± targets only appeared once a part repeated; now "N× ▾"
+      // is on every card and opens a menu of counts — one finger-sized press.
+      const _povPlaysHtml = (card) => {
+        if (!card.ord) return '';
+        let txt = String((card.plays | 0) || 1), more = card.plays > 1;
+        try {
+          if (_ambPovOrder(cfg, povRound).src === 'written' && card.r.pi >= 0) {
+            const pr = _ambPartPlaysRead(cfg, card.r.pi);
+            txt = (pr.whole ? String(pr.whole) : '') + (pr.k ? _ambFracTxt(pr.k, pr.len) : '');
+            more = pr.whole > 1 || pr.k > 0;
+          }
+        } catch (e) {}
+        return '<span role="button" tabindex="0" class="ambient-pov-playschip' + (more ? ' on' : '') + '" data-pov="playsmenu:' + card.k + '" ' +
+          'title="How many times this part plays before the next one starts \u2014 whole plays and part of one \u2014 tap to set">' + txt + '\u00d7 \u25be</span>';
+      };
       const namesFirst = _ambPovNamesOn(el);
       // ▤ PARTS V2 — ONE HEADER ROW (2026-10-03, user: "it feels cluttered"). It was
       // three: ＋ Part / ▤ Song map / ♪ Names, then an always-on Versions strip, then
@@ -44369,13 +44446,17 @@
       // ↻ Play again moved into each part's ⋯ (it is something you do to a part).
       const _vers = Array.isArray(prog.versions) ? prog.versions : [];
       const _vCur = (Number.isFinite(prog.versionIdx) && _vers[prog.versionIdx]) ? _vers[prog.versionIdx].name : '';
+      // VERSIONS LIVE IN ✎ Edit changes ▸ ⋯ NOW (2026-10-08, user: "too much white space"
+      // — an always-present "Versions ▾" alone on a wide row). They are the whole Area's
+      // chords, so they belong with the chords; the bar keeps only what is SHOWING: a
+      // chip appears while a saved version plays (not "Original" = as written), naming it.
+      const _vShow = !!(_vCur && !/^original$/i.test(_vCur));
       let h = '<div class="ambient-pov-bar pov2-bar">' +
-        '<span role="button" tabindex="0" class="pov2-verchip" data-pov="vermenu" title="Versions — switch to a saved version of these changes, save the current one, or delete one">' +
-          esc(_vCur || (_vers.length ? 'Versions' : 'Versions')) + ' ▾</span>' +
-        '<span class="pov2-spacer"></span>' +
+        (_vShow ? ('<span role="button" tabindex="0" class="pov2-verchip" data-pov="vermenu" title="Playing the saved version \u201c' + esc(_vCur) + '\u201d of these changes \u2014 tap to switch back to Original or to another version">\u25b8 ' +
+          esc(_vCur) + ' \u25be</span>') : '') +
         '<span class="pov2-seg" role="group" aria-label="Chord labels">' +
-          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? ' on' : '') + '" data-pov="' + (namesFirst ? 'noop' : 'names') + '" title="Show chord names">D G A</span>' +
-          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? '' : ' on') + '" data-pov="' + (namesFirst ? 'names' : 'noop') + '" title="Show Roman numerals">I IV V</span>' +
+          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? ' on' : '') + '" data-pov="' + (namesFirst ? 'noop' : 'names') + '" title="Show chords by name (D, G, A)">Names</span>' +
+          '<span role="button" tabindex="0" class="pov2-segbtn' + (namesFirst ? '' : ' on') + '" data-pov="' + (namesFirst ? 'names' : 'noop') + '" title="Show chords as Roman numerals in the key (I, IV, V)">Numerals</span>' +
         '</span>' +
         '<span role="button" tabindex="0" class="pov2-iconbtn" data-pov="arrmap" aria-label="Song map" ' +
           'title="Song map — the whole piece end to end: order of play, every part and section, and the bars they occupy">▤</span>' +
@@ -44466,39 +44547,55 @@
         const cadTot = cad.reduce((a2, v) => a2 + v, 0);
         const cadTxt = cad.length ? (cadFlat ? 'even' : _ambCadStr(cad)) : '';
         const pAttr = (r.pi < 0) ? 0 : r.pi;
-        h += '<div class="pov2-head">' + (r.pi < 0 ? '' : _povOrdHtml(card)) +
-            '<div class="pov2-id">' + nameHtml + '<span class="pov2-meta">' + _povKeyMeta(r) +
-              (cadTot > 0 ? (' · ' + esc(_ambFmtBpc(cadTot)) + ' bar' + (Math.abs(cadTot - 1) < 1e-6 ? '' : 's')) : '') + '</span></div>' +
-            (r.pi < 0 ? '' : (_povPlaysHtml(card) + _povHangHtml(card) + _povDots(card))) +
-          '</div>';
-        h += '<div class="ambient-pov-chords pov2-chords">';
+        // ── THE CHORDS AS ONE LINE, NOT A ROW OF BLOCKS (2026-10-08, user: "the change
+        // blocks seem unnecessary now, since the changes are listed in the label, and
+        // then there's the edit button"). Every job the blocks did is kept on the names:
+        // a tap opens the editor on THAT chord (`chord:i`), the playhead glows and
+        // relabels the one sounding (it finds them by `data-ci` and the same inner
+        // `.ambient-pov-nm` / `.ambient-pov-rn`), ×N marks alternates; how long each is
+        // held lives on ⧖ Cadence beside ✎ Edit changes. When the part's NAME is just its
+        // chords (the auto name), that name IS this line — never the same list twice.
+        const _chNames = [], _chNames0 = [];
+        let chLine = '';
         for (let i = r.from; i < r.to; i++) {
-          // The strip is the SCORE — written chords in written order, so the
-          // playhead's identity lookup and the ×N alt badge still line up — but
-          // rendered in the KEY YOU HEAR (_ambProgViewShift). Per-cycle
-          // resolution is NOT folded in; the glowing chip relabels itself.
           const c = _ambChordShift(chords[i], vShift);
-          // Roman numerals are relative to the key THIS chip plays in.
           const pk = _ambPartKeyShifted(_ambPartKeyForSlot(prog, i), vShift);
           const rn = _ambPeRoman(c, pk ? pk.root : kRoot, pk ? pk.scale : kScale);
           const nm = _ambChordShort(c) || '?';
+          _chNames.push(nm); _chNames0.push(_ambChordShort(chords[i]) || '?');
           const altN = (Array.isArray(c.alts) && c.alts.length) ? c.alts.length : 0;
-          // AS WIDE AS IT IS HELD: grow ∝ bars (the 72px floor keeps a relabel
-          // from resizing it — see .ambient-pov-chord).
           const held = cad[i - r.from];
-          const grow = (Number.isFinite(held) && held > 0) ? (Math.round(held * 1000) / 1000) : 1;
-          h += '<span role="button" tabindex="0" class="ambient-pov-chord' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" style="width:min(100%,' + Math.max(44, Math.round(grow * 64)) + 'px)" data-pov="chord:' + i + '" data-ci="' + i + '" title="' + (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' — ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + (Number.isFinite(held) ? (' · ' + esc(_ambFmtBpc(held)) + ' bar' + (Math.abs(held - 1) < 1e-6 ? '' : 's')) : '') + ' · click to edit this chord">' +
-            (namesFirst
-              ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>')
-              : ('<b class="ambient-pov-rn">' + esc(rn || nm) + '</b>')) +
-            (altN ? '<i class="ambient-pov-alt" title="' + (altN + 1) + ' alternate chords cycle here">×' + (altN + 1) + '</i>' : '') +
+          chLine += (i > r.from ? '<i class="pov-chsep" aria-hidden="true"> \u2014 </i>' : '') +
+            '<span role="button" tabindex="0" class="ambient-pov-chord pov-inl' + (namesFirst ? ' pov-names' : '') + (_ambIsTransition(c) ? ' pov-trans' : '') + '" data-pov="chord:' + i + '" data-ci="' + i + '" title="' +
+              (_ambIsTransition(c) ? 'Transition ' : 'Chord ') + (i + 1) + ' \u2014 ' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') +
+              (Number.isFinite(held) ? (' \u00b7 ' + esc(_ambFmtBpc(held)) + ' bar' + (Math.abs(held - 1) < 1e-6 ? '' : 's')) : '') + ' \u00b7 tap to edit this chord">' +
+            (namesFirst ? ('<span class="ambient-pov-nm">' + esc(nm) + '</span>') : ('<b class="ambient-pov-rn">' + esc(rn || nm) + '</b>')) +
+            (altN ? '<i class="ambient-pov-alt pov-inl-alt" title="' + (altN + 1) + ' alternate chords cycle here">\u00d7' + (altN + 1) + '</i>' : '') +
             '</span>';
         }
-        h += '</div>';
-        h += '<div class="pov2-acts">' +
-            '<span role="button" tabindex="0" class="pov2-act pov2-edit" data-pov="partedit:' + pAttr + '" title="Edit these changes — every chord, their lengths and alternates">✎ Edit changes</span>' +
-            (cad.length ? ('<span role="button" tabindex="0" class="pov2-act pov2-time' + (cadFlat ? '' : ' pov2-shaped') + '" data-pov="cad:' + pAttr + '" title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(cad)) + ' = ' + esc(_ambFmtBpc(cadTot)) + ' bars). Click to edit or generate a new shape.">⧖ Cadence <i>' + esc(cadTxt) + '</i></span>') : '') +
+        const _nmNorm = (t) => String(t || '').replace(/^\s*\d+\s*\u00b7\s*/, '').replace(/\s+/g, ' ').replace(/[\u2013\u2014-]/g, '\u2014').trim();
+        // AUTO-NAMED = a part nobody named, whose stored name IS its chord list (what
+        // `_ambPartLabel` already treats as derived). Part-less progressions keep their
+        // title: it is the only rename door they have (no ⋯ menu).
+        const _ownNm = (r.pi >= 0 && parts && parts[r.pi] && typeof parts[r.pi].name === 'string') ? parts[r.pi].name.trim() : '';
+        const _auto = (r.pi >= 0) && (
+          (_ownNm && typeof _ambProgNameIsList === 'function' && _ambProgNameIsList(_ownNm)) ||
+          [_chNames, _chNames0].some((L2) => _nmNorm(r.name) === _nmNorm(L2.join(' \u2014 '))));
+        const titleHtml = _auto ? ('<span class="ambient-pov-partname pov2-chline">' + chLine + '</span>') : nameHtml;
+        // ONE ROW (2026-10-08, user: "should be able to make this 1 row"): number · chords
+        // (key and length wrap under them) · ✎ · ⧖ · ⋯. On a phone the two actions drop
+        // to their icon + the cadence word, so the chords keep the room.
+        const actsHtml = '<span class="pov2-acts pov2-acts-inl">' +
+            '<span role="button" tabindex="0" class="pov2-act pov2-edit" data-pov="partedit:' + pAttr + '" title="Edit these changes — every chord, their lengths and alternates" aria-label="Edit changes">✎<span class="pov2-actlbl"> Edit</span></span>' +
+            (cad.length ? ('<span role="button" tabindex="0" class="pov2-act pov2-time' + (cadFlat ? '' : ' pov2-shaped') + '" data-pov="cad:' + pAttr + '" title="Cadence — how many bars each chord is held (' + esc(_ambCadStr(cad)) + ' = ' + esc(_ambFmtBpc(cadTot)) + ' bars). Click to edit or generate a new shape." aria-label="Cadence">⧖<span class="pov2-actlbl"> Cadence</span> <i>' + esc(cadTxt) + '</i></span>') : '') +
+          '</span>';
+        h += '<div class="pov2-head">' + (r.pi < 0 ? '' : _povOrdHtml(card)) +
+            '<div class="pov2-id">' + titleHtml + '<span class="pov2-meta">' + _povKeyMeta(r) +
+              (cadTot > 0 ? (' · ' + esc(_ambFmtBpc(cadTot)) + ' bar' + (Math.abs(cadTot - 1) < 1e-6 ? '' : 's')) : '') + '</span></div>' +
+            actsHtml +
+            (r.pi < 0 ? '' : (_povPlaysHtml(card) + _povHangHtml(card) + _povDots(card))) +
           '</div>';
+        if (!_auto) h += '<div class="pov2-chline-row">' + chLine + '</div>';
         h += '</div>';
       });
       // ＋ ADD PART — at the FOOT of the list, where the part it adds will appear.
@@ -44739,7 +44836,9 @@
       const knobs = JSON.stringify([p.salt, p.rubato, p.order, p.arc, p.reroll, p.vary, p.tension, (p.parts || []).length,
         (typeof grooveSwing !== 'undefined') ? grooveSwing : 0, (typeof grooveHumanizeMs !== 'undefined') ? grooveHumanizeMs : 0,
         (typeof grooveAccentEvery !== 'undefined') ? grooveAccentEvery : 0]);
-      const sig = step + '|' + arcSl + '|' + knobs + '|' + (_ambCapturable(cfg) ? 'k' : '');
+      // ✺ VARIATION OFF (bypassed) means none of the rows below acts — say that instead
+      let byp = false; try { byp = (typeof _ambVarBypassed === 'function') && !!_ambVarBypassed(cfg); } catch (e) {}
+      const sig = step + '|' + arcSl + '|' + knobs + '|' + (_ambCapturable(cfg) ? 'k' : '') + '|' + (byp ? 'b' : '');
       if (el._sig === sig) return;
       const nameOf = (c) => { try { return (c && _ambChordShort(c)) || '?'; } catch (e) { return '?'; } };
       // WHERE — part, pass, change
@@ -44755,6 +44854,7 @@
       try { _ambProgStepOverride = step; played = _ambProgCurrentChord(p); } catch (e) {} finally { _ambProgStepOverride = sv; }
       const writtenHere = chords[idx], playedNm = played ? nameOf(played) : nameOf(writtenHere);
       const rows = [{ t: '\u25b6 ' + where + 'change ' + (slot + 1) + ' of ' + len + ': ' + playedNm }];
+      if (byp) { rows.push({ t: '\u273a Variation is off \u2014 every change plays as written. Switch it back on above to hear it vary.', dim: true }); put(sig, rows); return; }
       // ↻ ORDER
       if (perm) {
         rows.push({ ic: '\u21bb', k: 'Order ', t: 'this round is ' + ((p.order && p.order.mode === 'reverse') ? 'reversed' : 'shuffled') +
@@ -45071,6 +45171,62 @@
         if (!_povWrite(_povFlat(cards))) return;
         persist(); refresh(); return;
       }
+      if (op === 'playsmenu') {
+        // ▤ PLAYS — whole plays (− N +) and part of one more (+0 · +⅓ · +⅔ …, in the
+        // part's own changes). Live: every tap writes and the card redraws under it.
+        const k = a[1] | 0;
+        const esc = (x) => String(x == null ? '' : x).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+        const close = () => { const o2 = document.querySelector('.pov-plays-ov'); if (o2) o2.remove(); };
+        close();
+        const ov2 = document.createElement('div');
+        ov2.className = 'sm-overlay pov-plays-ov';     // sm-overlay: the view CSS hides any body child it does not name
+        const paint = () => {
+          const cfgN = E.getCfg(), progN = cfgN.prog;
+          const pov = _ambPovOrder(cfgN, _povRoundNow());
+          const card = pov.cards.find(c => c.k === k); if (!card) { close(); return; }
+          const written = pov.src === 'written';
+          const pr = written ? _ambPartPlaysRead(cfgN, card.pi) : { whole: Math.max(1, card.n | 0), k: 0, len: 1 };
+          const nm = (progN.parts && progN.parts[card.pi] && progN.parts[card.pi].name) || ('Part ' + (card.pi + 1));
+          const fr = (q) => _ambFracTxt(q, pr.len);
+          const say = (pr.whole ? (pr.whole === 1 ? 'one full play' : (pr.whole + ' full plays')) : '') +
+            (pr.k ? ((pr.whole ? ', then ' : '') + 'the first ' + pr.k + ' of its ' + pr.len + ' changes') : '') + '.';
+          ov2.innerHTML = '<div class="pov-plays-scrim" data-pp="close"></div><div class="pov-plays" role="dialog" aria-label="Plays">' +
+            '<div class="pov-plays-head"><b>' + esc(nm) + ' plays</b><button type="button" class="ambient-seg" data-pp="close" aria-label="Done">Done</button></div>' +
+            '<div class="pov-plays-row"><button type="button" class="ambient-seg pov-plays-st" data-pp="w:-1" aria-label="One fewer">\u2212</button>' +
+              '<b class="pov-plays-n">' + (pr.whole ? pr.whole : '') + (pr.k ? fr(pr.k) : '') + '\u00d7</b>' +
+              '<button type="button" class="ambient-seg pov-plays-st" data-pp="w:1" aria-label="One more">+</button></div>' +
+            (written && pr.len > 1
+              ? ('<div class="pov-plays-row"><span class="pov-plays-lbl">and</span><span class="pov-plays-seg">' +
+                  Array.from({ length: pr.len }, (_, q) => '<button type="button" class="ambient-seg' + (q === pr.k ? ' on' : '') + '" data-pp="k:' + q + '">' + (q ? ('+' + fr(q)) : '+0') + '</button>').join('') +
+                '</span></div>')
+              : (!written ? '<div class="ambient-hint">Part of a play needs the parts in their written order \u2014 this arrangement uses its own play order.</div>' : '')) +
+            '<div class="ambient-hint pov-plays-say">' + esc(say.charAt(0).toUpperCase() + say.slice(1)) +
+              (pr.k ? ' The last play stops early, so the next part comes in sooner.' : '') + '</div>' +
+          '</div>';
+        };
+        ov2.addEventListener('click', (ev) => {
+          const bt = ev.target.closest('[data-pp]'); if (!bt) return;
+          const act = bt.getAttribute('data-pp');
+          if (act === 'close') { close(); return; }
+          const cfgN = E.getCfg();
+          const pov = _ambPovOrder(cfgN, _povRoundNow());
+          const card = pov.cards.find(c => c.k === k); if (!card) return;
+          if (pov.src !== 'written') {
+            // a play ORDER writes repetition out — the ± branch below owns that
+            if (act.indexOf('w:') === 0) _ambProgOverviewAct(E, { preventDefault() {}, target: { closest: () => ({ getAttribute: () => 'stepplays:' + k + ':' + (act.slice(2) | 0), getBoundingClientRect: () => bt.getBoundingClientRect() }) } });
+            paint(); return;
+          }
+          const pr = _ambPartPlaysRead(cfgN, card.pi);
+          let whole = pr.whole, kk = pr.k;
+          if (act.indexOf('w:') === 0) whole = Math.max(kk ? 0 : 1, Math.min(64, whole + (act.slice(2) | 0)));
+          else if (act.indexOf('k:') === 0) { kk = act.slice(2) | 0; if (!kk && !whole) whole = 1; }
+          if (_ambPartPlaysWrite(cfgN, card.pi, whole, kk)) { persist(); refresh(); }
+          paint();
+        });
+        paint();
+        document.body.appendChild(ov2);
+        return;
+      }
       if (op === 'stepplays') {
         const k = a[1] | 0, d = a[2] | 0;
         const pov = _ambPovOrder(cfg, _povRoundNow());
@@ -45203,7 +45359,7 @@
         if (prog.versions.length >= 12) { if (typeof showToast === 'function') showToast('12 versions is the limit — remove one first.'); return; }
         const _pts = Array.isArray(chords.parts) ? chords.parts : null;
         prog.versions.push({ name: name, chords: chords.map(_ambCloneChord), ...(_pts ? { parts: _pts } : {}) });
-        if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it in Versions to loop it.');
+        if (typeof showToast === 'function') showToast('Captured “' + name + '” — ' + chords.length + ' chords. Switch to it from \u270e Edit changes \u25b8 \u22ef \u25b8 Versions to loop it.');
         persist(); refresh();
         });
         return;
@@ -45223,6 +45379,7 @@
       if (op === 'cad') { const pi = a[1] | 0; setTimeout(() => { try { _ambCadenceModal(E, pi); } catch (e) {} }, 0); return; }
       if (op === 'vermenu') {
         // ▤ PARTS V2: Versions is one chip; this is everything its strip did.
+        // (Also opened from ✎ Edit changes ▸ ⋯ via `window._ambVerMenu`.)
         const r0 = t.getBoundingClientRect();
         const go = (v) => _ambProgOverviewAct(E, { preventDefault() {},
           target: { closest: () => ({ getAttribute: () => v, getBoundingClientRect: () => r0 }) } });

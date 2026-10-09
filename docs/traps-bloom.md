@@ -53,6 +53,11 @@
 
 ### Bloom: the arrangement clock
 
+- **A round visits a part `plays × grid columns` times** (`_ambArrGridSeq`). Once a part has its own
+  pass grid the count is `grid.cols` and `plays` must stay 1 — setting both played a 3-pass part 9
+  times. Partial plays ("2⅓") are a last column that is a PREFIX of the part's changes
+  (`_ambPartPlaysWrite` / `_ambPartPlaysRead`), with `fit` off so the pass is shorter.
+
 - **THE SUPER-CYCLE IS NOT THE HORIZON — the horizon is a FLOOR.** `_ambGridSlots` closes when its whole
   state key repeats, and with a per-round die that changes a round's LENGTH the cumulative visit count
   advances by a different amount each round, so `visits % partCols` has to realign too. Measured: a

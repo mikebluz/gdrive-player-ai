@@ -28,7 +28,8 @@
     { k: 'arp', name: 'Arp', col: '#fb923c', icon: 'M4 18l4-6 4 4 4-8 4 4', make: (E, L) => V2.makeArp(E, L) },
     { k: 'pulse', name: 'Pulse', col: '#a3e635', icon: 'M4 12h3l2-6 3 12 2-6h6', make: (E, L) => V2.makeSimple(E, L, 'one') },
     { k: 'chords', name: 'Chords', col: '#e879f9', icon: 'M6 6v12M12 6v12M18 6v12', make: (E, L) => V2.makeMixed(E, L) },
-    { k: 'drone', name: 'Drone', col: '#94a3b8', icon: 'M3 12h18', make: (E, L) => V2.makeSustain(E, L, true) },
+    // ⎯ Drone is no longer a style: it is the Hits choice HELD (2026-10-09). A layer
+    // made as a Drone reads as Chords (its pitch) holding one hit (its hits).
     { k: 'beat', name: 'Beat', col: '#f87171', icon: 'M5 18V9M10 18V13M15 18V6M20 18V11', make: (E, L) => V2.makeBeat(E, L) },
     { k: 'ambience', name: 'Ambience', col: '#d6b98c', icon: 'M4 16c2-2 4-2 6 0s4 2 6 0 3-2 4-1', make: (E, L) => V2.makeSimple(E, L, 'scatter') },
   ];
@@ -72,7 +73,7 @@
   // material row reads — so it wins; the rule-shape guesses below are only the fallback
   // for a layer tuned by hand away from any material (measured: a Drone guessed as Beat).
   const MAT_STYLE = { bass: 'bass', line: 'line', roll: 'line', melody: 'line', arp: 'arp', one: 'pulse', onenote: 'pulse',
-    mixed: 'chords', confug: 'chords', ground: 'chords', sustain: 'drone', anchor: 'drone', beat: 'beat', scatter: 'ambience' };
+    mixed: 'chords', confug: 'chords', ground: 'chords', sustain: 'chords', anchor: 'line', beat: 'beat', scatter: 'ambience' };
   function styleOf(L) {
     const p = (L && L.part) || {}, r = p.rhythm || {}, t = p.pitch || {};
     // A FROZEN TAKE (⋯ Lock, a pencil edit) keeps its rules beside the notes —
@@ -81,7 +82,7 @@
     const m = (typeof p.mat === 'string') ? p.mat.replace(/^v1:/, '') : '';
     if (MAT_STYLE[m]) return MAT_STYLE[m];
     if (L.voice === 'kit' || (L.instrument && L.instrument.voice === 'kit')) return 'beat';
-    if (t.kind === 'anchor' || p.sustain || (p.shape && p.shape.ring)) return 'drone';
+    if (t.kind === 'anchor') return 'line';
     if (t.kind === 'mixed' || t.kind === 'chord') return 'chords';
     if (t.kind === 'series') return 'arp';
     if (t.kind === 'walk') return 'line';
@@ -100,9 +101,11 @@
     { k: 'wander', label: 'Wander', icon: 'M3 14l3-3 3 2 3-5 3 4 3-2 3 1' },
     { k: 'any', label: 'Any chord tone', icon: 'M5 8h.01M12 17h.01M19 10h.01M9 13h.01M16 6h.01' },
     { k: 'pedal', label: 'One held note (pedal)', icon: 'M3 12h18' },
+    { k: 'chord', label: 'The whole chord', icon: 'M6 6v12M12 6v12M18 6v12' },
   ];
   function moveOf(L) {
     const t = ((L && L.part) || {}).pitch || {};
+    if (t.kind === 'chord' || t.kind === 'stack' || t.kind === 'mixed') return 'chord';
     if (t.kind === 'anchor') return 'pedal';
     if (t.kind === 'walk') return 'wander';
     if (t.kind === 'chance') return 'any';
@@ -125,8 +128,8 @@
     climb: { label: 'Across', opts: ['1 octave', '2 octaves', '3 octaves'],
       get: (L) => clamp(((L.part.pitch || {}).octaves | 0) - 1, 0, 2), set: (L, i) => { L.part.pitch.octaves = i + 1; } },
     wander: { label: 'Range', opts: ['Narrow', 'Medium', 'Wide'],
-      get: (L) => { const s = (L.part.pitch || {}).span | 0; return s >= 7 ? 2 : s >= 4 ? 1 : 0; },
-      set: (L, i) => { L.part.pitch.span = [3, 5, 8][i]; } },
+      get: (L) => { const s = (L.part.pitch || {}).span | 0; return s >= 4 ? 2 : s >= 2 ? 1 : 0; },
+      set: (L, i) => { L.part.pitch.span = [1, 2, 4][i]; } },
     any: { label: 'Leaps', opts: ['Small', 'Any size'],
       get: (L) => ((L.proximity | 0) > 30 ? 0 : 1), set: (L, i) => { L.proximity = i === 0 ? 70 : 0; } },
   };
@@ -135,9 +138,10 @@
     const t = L.part.pitch = Object.assign({}, L.part.pitch || {});
     if (k === 'same') { t.kind = 'fixed'; t.move = 'root'; if (!(t.degree >= 1)) t.degree = 1; }
     else if (k === 'climb' || k === 'fall' || k === 'updown') { t.kind = 'series'; t.dir = (k === 'climb') ? 'up' : (k === 'fall') ? 'down' : 'updown'; if (!(t.octaves >= 1)) t.octaves = 2; }
-    else if (k === 'wander') { t.kind = 'walk'; if (!(t.span >= 1)) t.span = 5; }
+    else if (k === 'wander') { t.kind = 'walk'; if (!(t.span >= 1)) t.span = 2; }
     else if (k === 'any') { t.kind = 'chance'; }
     else if (k === 'pedal') { t.kind = 'anchor'; }
+    else if (k === 'chord') { if (!/^(chord|stack|mixed)$/.test(t.kind || '')) { t.kind = 'chord'; if (!((t.voices | 0) >= 2)) t.voices = 3; } }
   }
 
   // ── RHYTHM: figures as pictures, the bar you tap ──────────────────────────
@@ -227,7 +231,7 @@
     'part.pitch.mix': { def: 50, what: 'The balance between chords and single notes.', lo: 'all single notes', hi: 'all chords' },
     'part.pitch.lines': { def: 1, what: 'How many melodies play at once.', lo: 'one line', hi: 'six lines' },
     'part.pitch.stutter': { what: 'How often a note is played again straight away.', lo: 'never', hi: 'very often' },
-    'part.pitch.span': { def: 5, what: 'How far the line may wander, in scale steps.', lo: 'one step', hi: '12 steps' },
+    'part.pitch.span': { def: 2, what: 'How far the line may wander, in scale steps.', lo: 'one step', hi: '5 steps' },
     'part.pitch.octaves': { def: 1, what: 'How many octaves a run covers.', lo: 'one octave', hi: 'four octaves' },
     'chg.am': { def: 100, what: 'How much of the material each change touches. The rest is kept.', lo: 'nothing changes', hi: 'all of it changes', gate: (L) => (((L.chg || {}).ev | 0) > 0 ? null : 'needs Evolve'), long: 'Turn Evolve up first.' },
     'part.transpose': { what: 'Moves every written note up or down.', lo: 'two octaves down', hi: 'two octaves up' },
@@ -289,7 +293,7 @@
     return h + '<span class="g2-hint" style="margin:0">How likely each step is to play — tap to step it down. Per note in the Editor.</span></div>';
   }
   const TABS = [
-    { id: 'rhythm', label: 'Rhythm', secs: [
+    { id: 'rhythm', label: 'Feel', secs: [
       ['Rhythm feel', [C_('part.rhythm.kind', 'Rhythm type', RHYTHM_K, 'kind:live;voice:synth', { what: 'How the hits are placed.', get: (L) => rk(L) || '', set: (L, k) => { const r0 = L.part.rhythm || {}; if (isMine(r0) && k !== r0.kind) L.part.rhythmAlt = clone(r0); L.part.rhythm = Object.assign({}, r0, { kind: k }); }, show: (L) => (rk(L) === 'drawn' ? 'Step grid' : null) }),
         S_('part.rhythm.figSync', 'Syncopation', 0, 100, 1, '', 'rhythm:fig'), S_('part.rhythm.figGrp', 'Grouping', 0, 100, 1, '', 'rhythm:fig'), S_('part.rhythm.figVar', 'Bar variation', 0, 100, 1, '', 'rhythm:fig'),
         S_('part.rhythm.chance', 'Chance', 0, 100, 0, '%', 'rhythm:chance'), S_('part.rhythm.syncop', 'Syncopate', 0, 100, 0, '', 'rhythm:chance'),
@@ -345,7 +349,7 @@
         C_('part.pitch.lineUp', 'Line sits', [['1', 'An octave above the chords'], ['0', 'In the same register']], 'voice:synth;pitch:mixed', { num: true, def: '1', what: 'Where the single-note line sits against the chords.', get: (L) => (((L.part.pitch || {}).lineUp === 0) ? '0' : '1') })]],
       ['Line', [C_('part.pitch.home', 'Home', [['floor', 'Floor', 'Walks up from Register.'], ['center', 'Centre', 'Register is in the middle.'], ['ceiling', 'Ceiling', 'Walks down from Register.']], 'voice:synth;pitch:walk', { def: 'floor', what: 'Where the line lives relative to Register.' }),
         C_('part.pitch.walkMode', 'Line moves', [['step', 'Steps from the last note'], ['scatter', 'Scatters in Range']], 'voice:synth;pitch:walk,mixed', { what: 'Whether each note steps from the last or lands anywhere in the range.', get: (L) => (L.part.pitch || {}).walkMode || (pk(L) === 'mixed' ? 'step' : 'scatter') }),
-        S_('part.pitch.span', 'Range', 1, 12, 0, '', 'voice:synth;pitch:walk,mixed'), S_('part.pitch.lines', 'Lines', 1, 6, 0, '', 'voice:synth;pitch:walk,chance,mixed'),
+        S_('part.pitch.span', 'Range', 1, 5, 0, '', 'voice:synth;pitch:walk,mixed'), S_('part.pitch.lines', 'Lines', 1, 6, 0, '', 'voice:synth;pitch:walk,chance,mixed'),
         C_('part.pitch.motif', 'Motif', [['', 'Off'], ['bar', 'Repeat bar 1', 'A A B A.'], ['notes', 'Repeat its notes', 'A A B A.']], 'voice:synth;pitch:walk,chance,mixed', { what: 'Repeats an idea so the line has a shape you can follow.' }),
         S_('part.pitch.stutter', 'Repeat', 0, 100, 0, '', 'voice:synth;pitch:walk,mixed'),
         C_('part.pitch.dir', 'Direction', [['up', 'Up'], ['down', 'Down'], ['updown', 'Up & down'], ['downup', 'Down & up'], ['converge', 'Outside in']], 'voice:synth;pitch:series', { def: 'up', what: 'Which way a run sweeps through the chord.' }),
@@ -406,6 +410,21 @@
   ];
   // WRITTEN NOTES (a recorded part) get their own two
   const WRITTEN = [['Written notes', [S_('part.transpose', 'Transpose', -24, 24)]], FEEL, ['Each pass', PASS_BASIC]];
+  // ── THE THREE STAGES (2026-10-09): Hits → Style → Lengths ─────────────────
+  // Hits decide WHEN notes start, the style WHICH notes play, Lengths HOW LONG
+  // they hold. Each keeps its choice when another changes (`part.ownHits` /
+  // `part.ownLens`, see `keepOwn`): a style only decides them on a layer you
+  // have not told. These controls left the Rhythm tab — one topic, one place.
+  const STAGE_CTLS = [];
+  (() => {
+    const rt = TABS.find((t) => t.id === 'rhythm');
+    rt.secs = rt.secs.filter(([nm, cs]) => { if (nm === 'On the changes' || nm === 'Note lengths') { STAGE_CTLS.push(...cs); return false; } return true; });
+    const feel = rt.secs.find((s0) => s0[0] === 'Rhythm feel');
+    if (feel) feel[1] = feel[1].filter((c) => { if (/^part\.rhythm\.(kind|figSync|figGrp|figVar|chance|syncop|voices)$/.test(c.path)) { STAGE_CTLS.push(c); return false; } return true; });
+    STAGE_CTLS.forEach((c) => { if (c.w === 'rhythm:pulse,euclid,drawn,chance') c.w += ',statement'; });
+    STAGE_CTLS.push(S_('part.shape.lenLean', 'Lean', -100, 100, 0, ''));
+    META['part.shape.lenLean'] = { def: 0, what: 'How much more a long gap holds than a short one. Below 0 it flips: short notes in long gaps.', lo: 'against the grain', hi: 'long gaps hold, short ones clip' };
+  })();
   function setPath(o, path, v) {
     const ks = path.split('.'); let a = o;
     for (let i = 0; i < ks.length - 1; i++) { if (!a[ks[i]] || typeof a[ks[i]] !== 'object') a[ks[i]] = {}; a = a[ks[i]]; }
@@ -743,11 +762,55 @@
   .g2-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px;border-radius:14px;background:#15152a;border:1px solid #262640}
   .g2-tab{min-height:50px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:10px;border:0;background:transparent;color:#c9c5e3;font-size:13px;font-weight:600}
   .g2-tab.on{background:#8b5cf6;color:#fff}
+  .g2-sel{flex:1;min-width:0;min-height:40px;padding:0 38px 0 12px;border-radius:10px;border:1px solid #3a3a5c;background:#1b1b30 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23c9c5e3' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center;-webkit-appearance:none;appearance:none;color:#ece8f8;font:inherit;font-size:14px;font-weight:700}
+  .g2-optcard .g2-ctl{grid-template-columns:76px minmax(0,1fr)}
+  .g2-words{width:100%;box-sizing:border-box;min-height:96px;padding:10px 12px;border-radius:10px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;font:inherit;font-size:14px;line-height:1.45;resize:vertical}
+  .g2-voices{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+  .g2-vchip{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:0 10px;border-radius:16px;border:1px solid #3a3a5c;background:#1b1b30;color:#c9c5e3;font-size:13px;font-weight:700}
+  .g2-vchip i{width:8px;height:8px;border-radius:50%}
+  .g2-vchip small{font-weight:600;color:#a9a6c7}
+  .g2-vchip.on{border:2px solid #8b5cf6;background:#1d1838;color:#fff;padding:0 9px}
+  .g2-tab{height:66px;box-sizing:border-box}
+  .g2-tab.off{opacity:.35;cursor:default}
+  .g2-toast{position:absolute;left:14px;right:14px;bottom:76px;z-index:30;padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6;font-size:13px;line-height:1.4;pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+  .g2-tabv{font-size:11px;font-weight:700;color:#c4b5fd;line-height:1.2;text-align:center;overflow-wrap:anywhere;max-width:100%}
+  .g2-tab.on .g2-tabv{color:#efeaff}
   .g2-die{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:#0f3a36;color:#5eead4}
   .g2-row input[type=range]{width:100%;height:30px;accent-color:#9f7aea}
   .g2-row.dice input[type=range]{accent-color:#2dd4bf}
   .g2-step{height:22px;border-radius:5px;border:0;padding:0;background:#23233c}
   .g2-step.on{background:#a78bfa}
+  .g2-stages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .g2-stg{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:8px 10px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;min-width:0}
+  .g2-stg.on{border:2px solid #8b5cf6;background:#1d1838;padding:7px 9px}
+  .g2-stv{font-size:13px;font-weight:700;line-height:1.3;overflow-wrap:anywhere;min-width:0}
+  .g2-stv.off{color:#8d8ab0;font-weight:400}
+  .g2-opts{display:flex;flex-direction:column;gap:6px}
+  .g2-opt{display:flex;gap:10px;align-items:baseline;text-align:left;padding:9px 12px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;width:100%;min-width:0}
+  .g2-optn{flex:none;width:16px;font-size:12px;color:#8d8ab0}
+  .g2-tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:#2a2150;color:#d8ccff;margin-left:6px;vertical-align:1px}
+  .g2-optcard{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:12px;border:2px solid #8b5cf6;background:#1d1838;min-width:0}
+  .g2-check{flex:none;width:18px;height:18px;border-radius:50%;background:#8b5cf6;color:#fff;font-size:12px;display:grid;place-items:center;margin-top:1px}
+  .g2-formula{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:#101026;border:1px solid #3a3a5c}
+  .g2-fvals{font-size:22px;font-weight:700;letter-spacing:.04em;overflow-wrap:anywhere}
+  .g2-gaps{display:flex;height:48px;border-radius:10px;overflow:hidden;background:#0c0c18;border:1px solid #262640}
+  .g2-gap{flex:none;border:0;padding:0;background:#16243a;border-right:2px solid #1d1838;color:#d8e6ff;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;min-width:0;display:flex;align-items:center;justify-content:center}
+  .g2-gap.off{background:#2a2112;color:#f5b04a}
+  .g2-gap.br{background:repeating-linear-gradient(135deg,#ffffff0a 0 6px,transparent 6px 12px);color:#8d8ab0;font-weight:400;border-right:0}
+  .g2-mbar{position:relative;height:22px;margin-top:4px}
+  .g2-merge{position:absolute;top:0;width:24px;height:22px;margin-left:-12px;border-radius:7px;border:1px solid #3a3a5c;background:#24243e;color:#a9a6c7;font-size:11px;padding:0}
+  .g2-cyc{width:40px;min-height:36px;border-radius:10px;border:1px solid #3a3a5c;background:#1b1b30;color:#ece8f8;font-weight:700}
+  .g2-cyc.on{background:#a78bfa;color:#1a1033;border-color:#a78bfa}
+  .g2-lane{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:12px;border:1px solid #3a3a5c;background:#1b1b30;min-width:0}
+  .g2-lane.open{border:2px solid #8b5cf6;background:#1d1838;padding:9px 11px}
+  .g2-lchip{flex:1;min-width:0;min-height:34px;padding:4px 10px;border-radius:10px;border:1px solid #3a3a5c;background:#24243e;color:#ece8f8;font-size:12px;font-weight:600;text-align:left;overflow-wrap:anywhere}
+  .g2-lchip.ln{border-style:dashed;color:#d8ccff}
+  .g2-pick{flex:none;width:26px;height:26px;border-radius:7px;border:1px solid #3a3a5c;background:#24243e;color:#fff;font-size:13px;padding:0}
+  .g2-pick.on{background:#8b5cf6;border-color:#8b5cf6}
+  .g2-mini{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px}
+  .g2-mini i{height:8px;border-radius:2px;background:#26263f}
+  .g2-mini i.b2{background:#1c1c33}
+  .g2-mini i.on{background:#a78bfa}
   `;
   const DIE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke="currentColor" stroke-width="2"></rect><circle cx="8.5" cy="8.5" r="1.7" fill="currentColor"></circle><circle cx="15.5" cy="8.5" r="1.7" fill="currentColor"></circle><circle cx="12" cy="12" r="1.7" fill="currentColor"></circle><circle cx="8.5" cy="15.5" r="1.7" fill="currentColor"></circle><circle cx="15.5" cy="15.5" r="1.7" fill="currentColor"></circle></svg>';
   const ico = (d, w) => '<svg width="' + (w || 22) + '" height="' + (w ? Math.round(w * 0.72) : 22) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="' + d + '"></path></svg>';
@@ -778,20 +841,10 @@
         + (scoped() ? (own ? '<span class="g2-setn">its own rules</span><button type="button" class="g2-rsall" data-a="scopereset">↺ Back to the part’s</button>'
           : '<span class="g2-hint">takes the part’s rules — change anything to give it its own</span>') : '') + '</div>';
     }
-    // 1. STYLE (collapsed once chosen)
-    if (!G.styleOpen && sty) {
-      h += '<div style="display:flex;align-items:center;gap:10px"><span class="g2-cap">Style</span>'
-        + '<span style="display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:16px;font-size:13px;font-weight:700;border:1px solid ' + sty.col + ';background:' + sty.col + '26">' + ico(sty.icon, 16) + esc(sty.name) + '</span>'
-        + '<button type="button" class="g2-btn" data-a="styleopen" style="margin-left:auto;min-height:40px">Change ▾</button></div>';
-    } else {
-      h += '<div style="display:flex;align-items:center;justify-content:space-between"><span class="g2-cap">Style</span>'
-        + (sty ? '<button type="button" class="g2-btn" data-a="styleclose" style="min-height:36px">Close ▴</button>' : '') + '</div>'
-        + '<div class="g2-grid4">' + STYLES.map((s) => '<button type="button" class="g2-chip" data-a="style" data-k="' + s.k + '"'
-          + (s.k === sk ? ' style="border:2px solid ' + s.col + ';background:' + s.col + '26;color:#fff"' : '') + '>' + ico(s.icon) + '<span>' + esc(s.name) + '</span></button>').join('') + '</div>';
-      if (!sty) h += '<div class="g2-hint">Pick a style — it builds this layer’s rules with generated content.</div>';
-      if (G.fresh && !sty) h += '<button type="button" class="g2-btn" data-a="keepempty" style="align-self:flex-start;min-height:40px;color:#c9c5e3">Keep it empty — write it yourself</button>';
-    }
-    if (G.note) h += '<div class="g2-hint" style="color:#c9c5e3">' + esc(G.note) + '</div>';
+    // 0. MAKE — notes (the three stages) or a beat (its own path, one set of hits per drum)
+    const kit = isKit(L);
+    // (no Make row: Beat is a LAYER TYPE now, picked in ＋ Layer like Pattern — user, 2026-10-09)
+
     // 2. THE RESULT — the layer's real notes on a piano axis, tap a bar to re-roll it.
     // A key column on the left (one row per semitone, black keys drawn, every C named)
     // and a name on every note, so what each event IS can be read at a glance.
@@ -802,8 +855,9 @@
     let lo = mids.length ? Math.min(...mids) - 1 : 47, hi = mids.length ? Math.max(...mids) + 1 : 60;
     while (hi - lo < 12) { lo--; if (hi - lo < 12) hi++; }
     const rows = hi - lo + 1;
-    const rowH = clamp(Math.floor(240 / rows), 10, 14);   // ≥10px: a 9px name fits its own row
-    const TOP = 18, rollH = TOP + rows * rowH + 4;
+    // A FIXED HEIGHT (user, 2026-10-09: no resizing while you use it) — the pitch range
+    // only changes how tall each row is, never how tall the picture is
+    const TOP = 18, rollH = 262, rowH = (rollH - TOP - 4) / rows;
     const col = sty ? sty.col : '#a78bfa';
     const yOf = (m) => TOP + (hi - m) * rowH;
     // ONE TAP, TWO MEANINGS → a MODE: Re-roll (tap a bar) or Info (tap a note).
@@ -822,7 +876,7 @@
     for (let m = hi; m >= lo; m--) {
       const y = yOf(m), blk = isBlack(m);
       h += '<div style="position:absolute;left:0;width:' + KEYW + 'px;top:' + y + 'px;height:' + rowH + 'px;box-sizing:border-box;border-bottom:1px solid #1f1f33;background:' + (blk ? '#0b0b12' : '#d9d6ea') + '">'
-        + ((m % 12 === 0) ? '<span style="position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:700;color:#3b3550">' + nameOf(m) + '</span>' : '') + '</div>';
+        + ((m % 12 === 0 && rowH >= 8) ? '<span style="position:absolute;right:3px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:700;color:#3b3550">' + nameOf(m) + '</span>' : '') + '</div>';
       if (blk) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + y + 'px;height:' + rowH + 'px;background:rgba(255,255,255,.025);pointer-events:none"></div>';
       if (m % 12 === 0) h += '<div style="position:absolute;left:' + KEYW + 'px;right:0;top:' + (y + rowH - 1) + 'px;height:1px;background:#2a2a46;pointer-events:none"></div>';
     }
@@ -869,7 +923,7 @@
         h += '<span class="g2-mk" style="left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + hx.toFixed(4) + ');top:' + (yOf(m) - 2) + 'px;height:' + (rowH + 3) + 'px"></span>'
           + '<span class="g2-mg" style="left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + gx.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + gw.toFixed(4) + ');top:' + (yOf(m) + rowH - 1) + 'px"></span>';
       }
-      const pos = 'left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + col
+      const pos = 'left:calc(' + KEYW + 'px + (100% - ' + KEYW + 'px) * ' + x.toFixed(4) + ');width:calc((100% - ' + KEYW + 'px) * ' + w.toFixed(4) + ' - 1px);min-width:3px;top:' + (yOf(m) + 1) + 'px;height:' + (rowH - 2) + 'px;border-radius:3px;background:' + rowCol(n.row | 0, col)
         + (G.pick === i ? ';outline:2px solid #fff;outline-offset:1px;z-index:4' : '');
       h += info
         ? '<button type="button" class="g2-nt" data-a="note" data-i="' + i + '" aria-label="' + nameOf(m) + '" style="position:absolute;border:0;padding:0;' + pos + '"></button>'
@@ -886,37 +940,121 @@
       + '<span>' + ns.length + (isPat ? ' hits · ' : ' notes · ') + (Math.round(bars * 100) / 100) + ' bar' + (bars === 1 ? '' : 's') + (offN ? ' · <span style="color:#f5b04a">' + offN + ' off the grid</span>' : '') + '</span>'
       + (G.hist.length ? '<button type="button" class="g2-btn" data-a="undo" style="margin-left:auto;min-height:34px;font-size:13px">↶ Undo' + (G.hist.length > 1 ? ' (' + G.hist.length + ')' : '') + '</button>' : '') + '</div>';
     if (info && ns[G.pick]) h += noteInfoHTML(L, ns[G.pick], cyc, spb, bpb, nameOf, homes[G.pick]);
-    if (G.rollNote) h += '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;background:#0f2a28;border:1px solid #155e57;color:#b8f0e6">' + esc(G.rollNote) + '</div>';
-    // 3. TABS
-    h += '<div class="g2-tabs" role="tablist">' + TABS.map((t) => {
-      const ctls = (t.secs || []).reduce((a, s) => a.concat(s[1]), []);
+
+    // 1. ONE SET OF TABS, then ONE PANEL (user, 2026-10-09: stages and tabs side by
+    // side were "unclear how these interact"). Hits → Style → Lengths stay in their
+    // order and name their choice; each topic is one tab — Feel joined Hits (when
+    // notes start, and how they are bent), Pitch joined Style (which notes play).
+    const tabOf = (id) => TABS.find((t) => t.id === id);
+    const badges = (ids) => {
+      const ctls = ids.reduce((a, id) => a.concat(((tabOf(id) || {}).secs || []).reduce((a2, s0) => a2.concat(s0[1]), [])), []);
       const dice = ctls.some((c) => c.dice);
       const nCh = ctls.filter((c) => (c.choice ? !!getPath(V, c.path) : valOf(V, c) !== defOf(c)) && c.path !== 'instrument.register').length;
-      return '<button type="button" role="tab" class="g2-tab' + (G.tab === t.id ? ' on' : '') + '" data-a="tab" data-t="' + t.id + '" aria-selected="' + (G.tab === t.id) + '">' + esc(t.label)
-        + '<span style="display:flex;gap:3px;height:14px;align-items:center">' + (dice ? '<span style="display:inline-flex;color:#5eead4">' + DIE + '</span>' : '')
-        + (nCh ? '<span style="min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#a78bfa;color:#160f2e;font-size:11px;font-weight:800;line-height:16px;text-align:center">' + nCh + '</span>' : '') + '</span></button>';
+      return (dice ? '<span style="display:inline-flex;color:#5eead4">' + DIE + '</span>' : '')
+        + (nCh ? '<span style="min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#a78bfa;color:#160f2e;font-size:11px;font-weight:800;line-height:16px;text-align:center">' + nCh + '</span>' : '');
+    };
+    const held = !!(((V.part || {}).rhythm || {}).held);
+    // A NEW EMPTY LAYER STARTS ON HITS (the order we agreed: Hits → Style → Lengths).
+    // Picking hits first quietly builds it as Line, so there are notes to place them
+    // on; Style then decides which notes play.
+    const samp = isSamp(L), spk = isSpeech(L), plays = ((L.instrument || {}).plays) || '';
+    const empty = G.fresh && !sty && !kit && !samp && !spk && !scoped();
+    // FIVE FIXED SLOTS, ALWAYS (user, 2026-10-09: "stop having things dynamically resize").
+    // A slot that does not apply to this layer stays in place, dimmed — the row never
+    // re-flows when a choice changes what applies.
+    const dot = sty ? '<i style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;background:' + sty.col + '"></i>' : '';
+    const onHits = live && !(samp && !plays), onLen = live && !kit && !(samp && !plays);
+    const NAV = [
+      ['hits', kit ? 'Drums' : 'Hits', empty ? 'Pick one' : (!onHits ? '' : kit ? 'per drum' : esc(hitsName(V))), onHits ? badges(['rhythm']) : '', !(onHits || empty)],
+      spk ? ['words', 'Words', esc(((L.instrument || {}).text || '').trim() ? 'written' : 'none yet'), '', !live]
+        : ['style', 'Notes', empty ? 'Pick one' : (kit || (samp && plays !== 'shot')) ? '' : (sty ? dot + esc(moveName(V) || sty.name) : 'Pick one'), (live && !kit && !samp) ? badges(['pitch']) : '', kit || (samp && plays !== 'shot') || (!live && !empty && false)],
+      ['len', 'Lengths', !onLen ? '' : spk ? esc(speakFitName(L)) : (held ? 'held' : esc(lensName(V))), '', !(onLen || empty)],
+      ['vary', 'Variation', '', live ? badges(['vary']) : '', !live],
+      ['more', 'More', '', live ? badges(['more']) : '', !live],
+    ];
+    if (!live && !empty) NAV.forEach((n) => { n[4] = n[0] !== 'style'; });
+    if (!NAV.some((n) => n[0] === G.stage && !n[4])) G.stage = (NAV.find((n) => !n[4]) || NAV[0])[0];
+    // ♫ VOICES (user, 2026-10-09: Rows "is really Voices, and should be a separate setting …
+    // outside Statement"). Chosen first, above the tabs; Hits and Notes then edit the
+    // voice you picked. Voice 1 is the part itself; data keys are unchanged
+    // (`rhythm.voices`, `rhythm.laneHits[v]`, `part.rowPitch[v]`).
+    // on a NEW EMPTY layer too — it is the first thing you may set (adding one builds the layer)
+    const canVoice = (live || empty) && !kit && !samp && !spk && !scoped();
+    const nv = canVoice ? clamp((((L.part || {}).rhythm || {}).voices | 0) || 1, 1, 8) : 1;
+    if (!(G.voice >= 0 && G.voice < nv)) G.voice = 0;
+    const vi = G.voice;
+    if (canVoice) {
+      h += '<div class="g2-voices" role="group" aria-label="Voices"><span class="g2-cap" style="font-size:11px">Voices</span>';
+      for (let v = 0; v < nv; v++) h += '<button type="button" class="g2-vchip' + (v === vi ? ' on' : '') + '" data-a="voice" data-i="' + v + '" aria-pressed="' + (v === vi) + '"><i style="background:' + rowCol(v, sty ? sty.col : '#f472b6') + '"></i>' + (v + 1) + ' <small>' + esc(rowName(v)) + '</small></button>';
+      h += '<button type="button" class="g2-btn g2-sq" data-a="voiceadd" aria-label="Add a voice" title="Add a voice — it plays a note of the chord, with its own hits and notes"' + (nv >= 8 ? ' disabled' : '') + ' style="min-height:32px;width:32px">+</button>'
+        + (nv > 1 ? '<button type="button" class="g2-btn g2-sq" data-a="voicedel" aria-label="Remove the last voice" style="min-height:32px;width:32px">−</button>' : '')
+        + (L.part && L.part.ownHits && sty && vi === 0 ? '<button type="button" class="g2-btn" data-a="ownhits" style="margin-left:auto;min-height:32px;font-size:12px;padding:0 10px">↺ ' + esc(sty.name) + '’s own hits</button>' : '') + '</div>';
+      if (vi > 0) { NAV[0] = ['hits', 'Hits', esc(laneSum(L, 'rows', vi)), '']; NAV[1] = ['style', 'Notes', esc(rowNotesSum(L, vi)), '']; }
+    }
+    // ◐ A SAMPLE LAYER'S RECORDING AND HOW IT PLAYS sit above the tabs, like Voices — they
+    // are the instrument, and they decide which of the tabs apply
+    if (samp) {
+      const ins = L.instrument || {}, cur = ins.loopId || '', list = sampleList(!plays);
+      if (cur && !list.some((x) => x[0] === cur)) list.unshift([cur, cur]);
+      h += '<div class="g2-voices"><select class="g2-sel" data-a="srec" aria-label="Recording" style="flex:1 1 140px">' + (cur ? '' : '<option value="" selected disabled>Pick a recording…</option>')
+        + list.map(([k, nm]) => '<option value="' + esc(k) + '"' + (k === cur ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select>'
+        + selH('splays', plays || 'loop', playsList().map((x) => [x[0] || 'loop', x[1]]), 'How it plays').replace('style="flex:0 1 auto;', 'style="flex:1 1 140px;') + '</div>';
+    }
+    h += '<div class="g2-tabs" role="tablist" style="grid-template-columns:repeat(5,minmax(0,1fr))">' + NAV.map(([k, lab, val, bdg, off]) => {
+      const on = G.stage === k && !off;
+      return '<button type="button" role="tab" class="g2-tab' + (on ? ' on' : '') + (off ? ' off' : '') + '" data-a="stage" data-k="' + k + '" aria-selected="' + on + '"' + (off ? ' disabled aria-disabled="true"' : '') + '>' + esc(lab)
+        + (val ? '<span class="g2-tabv">' + val + '</span>' : '')
+        + (bdg ? '<span style="display:flex;gap:3px;height:14px;align-items:center">' + bdg + '</span>' : '') + '</button>';
     }).join('') + '</div>';
     if (!live && sty) {
       h += '<div class="g2-hint">This part plays a frozen take of its ' + esc(sty.name) + ' rules, so the controls are put away. Go back to the live rules to change them — ↶ Undo or ✕ brings the frozen notes back.</div>'
         + '<button type="button" class="g2-btn" data-a="release" style="align-self:flex-start;min-height:40px">⚡ Back to the live rules</button>';
-    } else if (!live) {
-      h += '<div class="g2-hint">This part plays notes written by hand. Pick a style above to hand it to generated rules — ↶ Undo or ✕ brings the written notes back.</div>';
+    } else if (!live && !empty) {
+      h += '<div class="g2-hint">This part plays notes written by hand. Pick a style below to hand it to generated rules — ↶ Undo or ✕ brings the written notes back.</div>';
     }
-    if (!live) {   // WRITTEN NOTES keep the two controls the classic panel gave them
-      h += tabHTML(L, { id: 'written', secs: WRITTEN }) + harmHTML(L);
-    } else {
-      // ONE TOPIC, ONE PLACE: each tab opens on its main control (the pattern you tap /
-      // Movement), with the finer controls for the same topic beneath it
-      if (G.tab === 'rhythm') h += scoped() ? scopedRhythmHTML(V) : rhythmHTML(L);
-      if (G.tab === 'pitch') h += movementHTML(V);
-      h += tabHTML(V, TABS.find((t) => t.id === G.tab));
-    }
+    // THE PANEL
+    if (empty) {
+      const keep = '<button type="button" class="g2-btn" data-a="keepempty" style="align-self:flex-start;min-height:40px;color:#c9c5e3">Keep it empty — write it yourself</button>';
+      if (G.stage === 'hits') h += '<div class="g2-sec"><div class="g2-optcard"><label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-lab">Hits from</span>'
+        + '<select class="g2-sel" data-a="hits" aria-label="Hits from"><option value="" selected disabled>Pick hits…</option>'
+        + hitChoices().map(([k, nm, , tag]) => '<option value="' + k + '">' + esc(nm) + (tag ? ' (' + esc(tag) + ')' : '') + '</option>').join('') + '</select></label>'
+        + '<span class="g2-hint" style="font-size:12px">Start with when the notes land. Then Style decides which notes play, and Lengths how long they hold.</span></div>' + keep + '</div>';
+      else if (G.stage === 'style') h += '<div class="g2-sec">' + notesMoveHTML(V) + styleStageHTML(sk) + '<div class="g2-hint">A starting point sets how the notes move, their register and the sound together — and brings its own hits until you pick some.</div>' + keep + '</div>';
+      else h += '<div class="g2-hint">Pick the hits first — lengths are measured from them.</div>';
+    } else if (!live) {   // WRITTEN NOTES keep the two controls the classic panel gave them
+      h += '<div class="g2-sec">' + styleStageHTML(sk) + '</div>' + tabHTML(L, { id: 'written', secs: WRITTEN }) + harmHTML(L);
+    } else if (vi > 0 && G.stage === 'hits') h += '<div class="g2-sec"><div class="g2-optcard"><b>Voice ' + (vi + 1) + ' · ' + esc(rowName(vi)) + '</b>' + laneEditorHTML(L, 'rows', vi, nv, 'hits') + '</div></div>';
+    else if (vi > 0 && G.stage === 'style') h += '<div class="g2-sec"><div class="g2-optcard"><b>Voice ' + (vi + 1) + ' · ' + esc(rowName(vi)) + '</b>' + laneEditorHTML(L, 'rows', vi, nv, 'notes') + '<span class="g2-hint" style="font-size:12px">The sound and register are shared by every voice — pick Voice 1 to change them.</span></div></div>';
+    else if (vi > 0 && G.stage === 'len') h += '<div class="g2-hint">Lengths are shared by every voice for now.</div><div class="g2-sec">' + lensHTML(V) + '</div>';
+    else if (samp && !plays) h += '<div class="g2-hint">' + esc(playsList()[0][2]) + ' Switch it to Slices on hits or Pitched one-shot above to shape it.</div>';
+    else if (G.stage === 'words') h += '<div class="g2-sec">' + wordsHTML(L) + '</div>';
+    else if (G.stage === 'len' && spk) h += '<div class="g2-sec">' + speechLensHTML(L) + '</div>';
+    else if (G.stage === 'style' && samp) h += '<div class="g2-sec">' + notesMoveHTML(V) + '</div>' + tabHTML(V, tabOf('pitch'));
+    else if (G.stage === 'hits') {
+      if (samp && plays === 'slices') h += '<div class="g2-sec">' + sliceHTML(L) + '</div>';
+      h += '<div class="g2-sec">' + (kit ? (scoped() ? '' : beatHTML(L)) : (scoped() ? scopedRhythmHTML(V) : hitsHTML(L))) + '</div>' + tabHTML(V, tabOf('rhythm'));
+    } else if (G.stage === 'style') {
+      h += '<div class="g2-sec">' + notesMoveHTML(V) + styleStageHTML(sk)
+        + '<div class="g2-hint">' + (!sty ? 'Pick a style — it builds this layer’s rules with generated content.' : (L.part && L.part.ownHits ? 'Your hits stay as they are; only the notes change.' : 'A style brings its own hits until you pick some in Hits.')) + '</div>'
+        + (G.fresh && !sty ? '<button type="button" class="g2-btn" data-a="keepempty" style="align-self:flex-start;min-height:40px;color:#c9c5e3">Keep it empty — write it yourself</button>' : '') + '</div>'
+        + (sty ? tabHTML(V, tabOf('pitch')) : '');
+    } else if (G.stage === 'len') h += '<div class="g2-sec">' + lensHTML(V) + '</div>';
+    else h += tabHTML(V, tabOf(G.stage));
     h += '</div>';
     // footer
     h += '<div class="g2-foot"><button type="button" class="g2-btn" data-a="take"' + (live ? '' : ' disabled') + '>🎲 New take</button>'
       + '<button type="button" class="g2-btn" data-a="preview" aria-label="Preview" style="width:48px;padding:0">▶</button>'
       + '<button type="button" class="g2-btn pri" data-a="done">Done</button></div>';
     if (G.dial) h += dialPopHTML(V);
+    // MESSAGES FLOAT (no layout shift): one toast over the sheet, gone after a few seconds
+    const msg = G.rollNote || G.note || '';
+    if (msg) {
+      h += '<div class="g2-toast" role="status">' + esc(msg) + '</div>';
+      if (G._toastTxt !== msg) {
+        G._toastTxt = msg; clearTimeout(G._toastT);
+        G._toastT = setTimeout(() => { if (!G) return; G.note = ''; G.rollNote = ''; G._toastTxt = ''; const t0 = G.box && G.box.querySelector('.g2-toast'); if (t0) t0.remove(); }, 4500);
+      }
+    }
     const sc = G.root.querySelector('.g2-body'), top = sc ? sc.scrollTop : 0;
     G.box.innerHTML = h;
     const sc2 = G.root.querySelector('.g2-body'); if (sc2) sc2.scrollTop = top;
@@ -954,38 +1092,6 @@
     });
     if (!rows.length) h += '<div class="g2-hint" style="padding:22px 0;text-align:center">' + (live ? 'Silent — these rules make no hits.' : 'Empty — pick a style to generate a pattern.') + '</div>';
     return h + '</div>';
-  }
-  function movementHTML(L) {
-    let h = '';
-    // MOVEMENT — the selected option is a card holding its own setting
-    const mv = moveOf(L);
-    if (styleOf(L) === 'beat') {
-      h += '<div style="display:flex;flex-direction:column;gap:6px"><b>Movement</b><div class="g2-hint">Beat plays drums, so there is no pitch to move — shape it with Rhythm below.</div></div>';
-    } else {
-    // COLLAPSES LIKE STYLE: once an option is chosen only its card shows (with its own
-    // setting still inside it — the thing you reach for most) and "Change ▾" opens the list
-    const openList = G.moveOpen || !mv;
-    h += '<div style="display:flex;flex-direction:column;gap:8px"><div style="display:flex;align-items:center;gap:8px"><b>Movement</b>'
-      + (mv ? '<button type="button" class="g2-btn" data-a="' + (openList ? 'moveclose' : 'moveopen') + '" style="margin-left:auto;min-height:36px">' + (openList ? 'Close ▴' : 'Change ▾') + '</button>' : '')
-      + '</div><div class="g2-grid2">';
-    MOVES.forEach((m) => {
-      if (m.k !== mv) { if (openList) h += '<button type="button" class="g2-mv" data-a="move" data-k="' + m.k + '">' + ico(m.icon, 26) + '<span>' + esc(m.label) + '</span></button>'; return; }
-      const sb = SUB[m.k];
-      h += '<div class="g2-mvcard"><div style="min-height:46px;padding:6px 12px;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700">' + ico(m.icon, 26) + '<span>' + esc(m.label) + '</span><span style="margin-left:auto;color:#a78bfa">✓</span></div>'
-        + '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px 12px;border-top:1px solid #3b2f6e;background:#1a1534">';
-      if (sb) {
-        const cur = sb.get(L);
-        h += '<span class="g2-hint" style="color:#c9c5e3">' + esc(sb.label) + '</span><div style="display:grid;grid-template-columns:repeat(' + sb.opts.length + ',minmax(0,1fr));gap:4px;flex-grow:1;min-width:170px">'
-          + sb.opts.map((o, i) => '<button type="button" class="g2-pill' + (i === cur ? ' on' : '') + '" data-a="sub" data-k="' + m.k + '" data-i="' + i + '">' + esc(o) + '</button>').join('') + '</div>'
-          + (sb.suffix ? '<span class="g2-hint" style="color:#c9c5e3">' + esc(sb.suffix) + '</span>' : '');
-      } else {
-        h += '<span class="g2-hint" style="color:#c9c5e3">Holds the one note that fits the most chords in the part.</span>';
-      }
-      h += '</div></div>';
-    });
-    h += '</div></div>';
-    }
-    return h;
   }
   // note-value names for a fraction of a bar (4/4): 1/8 → '8th'
   const NOTE = { 1: 'Bar', 2: 'Half', 4: 'Quarter', 8: '8th', 16: '16th', 32: '32nd', 64: '64th', 128: '128th' };
@@ -1054,7 +1160,7 @@
     h += '<div class="g2-popft"><button type="button" class="g2-btn pri" data-a="dialx">Done</button></div></div></div>';
     return h;
   }
-  function rhythmHTML(L) {
+  function rhythmHTML(L, noSrc) {
     let h = '';
     const p = L.part, r = p.rhythm || {}, sn = styleName(L);
     let mine = isMine(r);
@@ -1076,7 +1182,7 @@
         + (ruleOf(L) ? '<button type="button" class="g2-btn" data-a="rsrc" data-k="rule" style="align-self:flex-start;min-height:38px">↺ Use ' + esc(sn) + '’s rule again</button>' : '');
       return h + '</div>';
     }
-    if (!pat) h += '<div class="g2-ctl"><b style="grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Rhythm from<span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
+    if (!pat && !noSrc) h += '<div class="g2-ctl"><b style="grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Rhythm from<span class="g2-seg" role="group" aria-label="Where the rhythm comes from">'
       + '<button type="button" data-a="rsrc" data-k="rule" class="' + (!mine ? 'on' : '') + '" aria-pressed="' + !mine + '">🎲 ' + esc(sn) + '’s take</button>'
       + '<button type="button" data-a="rsrc" data-k="mine" class="' + (mine ? 'on' : '') + '" aria-pressed="' + mine + '">▦ Step grid</button></span></b></div>';
     const row = (lab, inner, id) => '<div class="g2-ctl"' + (id ? ' id="' + id + '"' : '') + '><span class="g2-lab">' + lab + '</span><span class="g2-r">' + inner + '</span></div>';
@@ -1280,7 +1386,474 @@
       + (fill ? '<path d="' + fill + '" stroke="' + col + '" stroke-width="5" fill="none" stroke-linecap="round"/>' : '')
       + '<text x="26" y="31" text-anchor="middle">' + v + '</text></svg>';
   }
-  const ctlOf = (path) => { for (const t of TABS.concat([{ secs: WRITTEN }])) for (const s0 of (t.secs || [])) for (const c of s0[1]) if (c.path === path) return c; return null; };
+  const ctlOf = (path) => { for (const t of TABS.concat([{ secs: WRITTEN }, { secs: [['', STAGE_CTLS]] }])) for (const s0 of (t.secs || [])) for (const c of s0[1]) if (c.path === path) return c; return null; };
+  const HITS = [
+    ['statement', 'Statement', '', 'new'],
+    ['even', 'Even', 'A number of hits, evenly spaced.'],
+    ['spread', 'Spread', 'Some hits spread as evenly as they can over a set of steps.'],
+    ['fig', 'Figure', 'A named rhythm, repeated each bar.'],
+    ['chance', 'Chance', 'Each step may play, by chance.'],
+    ['ground', 'On the changes', 'A hit on each chord change.'],
+    ['held', 'Held', 'One hit that sustains: each bar, each chord, or the whole part.'],
+    ['grid', 'Step grid', 'The steps you tap in.'],
+  ];
+  const HIT_KIND = { statement: 'statement', even: 'pulse', spread: 'euclid', fig: 'fig', chance: 'chance', ground: 'ground', grid: 'drawn' };
+  function isKit(L) { return !!((L.instrument && L.instrument.voice === 'kit') || L.voice === 'kit'); }
+  function hitsOf(L) {
+    const p = L.part || {}, r = p.rhythm || {};
+    if (r.held) return 'held';
+    if (r.kind === 'drawn' || p.form === 'steps') return 'grid';
+    return Object.keys(HIT_KIND).find((x) => HIT_KIND[x] === r.kind) || 'even';
+  }
+  function setHeld(L, per) {
+    const p = L.part, r = p.rhythm = Object.assign({}, p.rhythm);
+    if (per === 'bar') { r.kind = 'pulse'; r.n = 1; if (barsOf(L) > 1) p.barsMode = 'fill'; }
+    else { r.kind = 'ground'; delete r.strike; delete r.antic; }
+    r.held = per;
+    const sh = p.shape = Object.assign({}, p.shape); sh.lenRatio = 100; sh.holdSteps = 0; delete sh.lenShape; delete sh.lenRule;
+    if (per === 'part') applyMove(L, 'pedal');            // one pitch, struck again on every change
+    p.ownHits = 1;
+  }
+  function setHits(L, k) {
+    const p = L.part; if (!p) return;
+    p.ownHits = 1;
+    if (k === 'grid') { toMine(L); if (p.rhythm) delete p.rhythm.held; return; }
+    const r0 = p.rhythm || {};
+    if (isMine(r0)) p.rhythmAlt = clone(r0);               // the drawn grid is kept for coming back
+    if (k === 'held') { setHeld(L, 'bar'); return; }
+    const r = Object.assign({}, r0); delete r.held; delete r.straight;
+    r.kind = HIT_KIND[k];
+    if (k === 'even' && !((r.n | 0) >= 2)) r.n = 4;
+    if (k === 'spread') { if (!((r.steps | 0) >= 4)) r.steps = 8; if (!((r.pulses | 0) >= 1) || r.pulses > r.steps) r.pulses = Math.max(1, Math.round(r.steps * 5 / 8)); }
+    if (k === 'fig') { if (!r.fig) r.fig = 'tresillo'; if ((r.steps | 0) < 16) r.steps = 16; }   // below 16 a figure rounds away
+    if (k === 'chance' && !(+r.chance >= 1)) r.chance = 45;
+    if (k === 'statement' && !r.stmt) r.stmt = { u: [4, 2, 1, 1], span: 4 };
+    p.rhythm = r;
+    if ((k === 'even' || k === 'spread') && barsOf(L) > 1) p.barsMode = 'fill';
+  }
+  const LEN_F = ['lenRatio', 'holdSteps', 'lenShape', 'lenDepth', 'lenWeight', 'lenTurn', 'lenRule', 'lenEcho', 'lenLean', 'lenCyc', 'lastNote'];
+  // A STYLE TAP KEEPS WHAT YOU CHOSE: the style rebuilds the part, then your hits
+  // and/or lengths go back on top of it
+  function keepOwn(L, fn) {
+    const p = L.part || {};
+    const hits = p.ownHits ? { r: clone(p.rhythm || {}), bm: p.barsMode } : null;
+    const lens = p.ownLens ? LEN_F.reduce((o, f) => { if (p.shape && p.shape[f] !== undefined) o[f] = clone(p.shape[f]); return o; }, {}) : null;
+    fn();
+    const q = L.part; if (!q) return;
+    if (hits) { q.rhythm = hits.r; if (hits.bm) q.barsMode = hits.bm; else delete q.barsMode; q.ownHits = 1; }
+    if (lens) { const sh = q.shape = Object.assign({}, q.shape); LEN_F.forEach((f) => delete sh[f]); Object.assign(sh, lens); q.ownLens = 1; }
+  }
+  // ── ❝ STATEMENT maths: gaps are whole-number ratios (`stmt.u`) ──
+  const gcdN = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a || 1; };
+  const isP2 = (n) => n > 0 && (n & (n - 1)) === 0;
+  const reduceU = (u) => { const g = u.reduce((x, y) => gcdN(x, y)); return u.map((x) => x / g); };
+  const stOf = (L) => clone((((L.part || {}).rhythm || {}).stmt) || { u: [4, 2, 1, 1], span: 4 });
+  const fillOf = (st) => Math.max(0.25, (+st.span || 4) - (+st.breath || 0));      // beats the gaps fill
+  const GLY = { '1/2': '½', '1/4': '¼', '1/8': '⅛', '3/4': '¾', '3/8': '⅜', '1/3': '⅓', '2/3': '⅔', '1/6': '⅙', '1/5': '⅕', '2/5': '⅖', '3/5': '⅗', '4/5': '⅘', '5/8': '⅝', '7/8': '⅞' };
+  function gapVal(st, i) {   // one gap as an exact note value (whole notes)
+    const tot = st.u.reduce((a, b) => a + b, 0), f16 = Math.round(fillOf(st) * 4);
+    let n = st.u[i] * f16, d = tot * 16; const g = gcdN(n, d); n /= g; d /= g;
+    const k = n + '/' + d;
+    return { n, d, txt: n === d ? '1' : (n % d === 0 ? String(n / d) : (GLY[k] || k)), tri: !isP2(d) && d % 3 === 0 && isP2(d / 3), off: !isP2(d) };
+  }
+  const STMT_FAMS = [['halve', 'Halving'], ['23', '2s & 3s'], ['count', 'Counting'], ['mirror', 'Mirror'], ['fib', 'Self-similar']];
+  function stmtMake(f, v, fillB) {
+    const U8 = Math.max(2, Math.round(fillB * 2));         // eighths in the fill
+    if (f === 'halve') { const n = [4, 3, 5][v % 3], a = []; for (let i = n - 2; i >= 0; i--) a.push(2 ** i); a.push(1); return (v >> 1) % 2 ? a.reverse() : a; }
+    if (f === '23') {
+      const opts = []; for (let t = Math.floor(U8 / 3); t >= 0; t--) { const r = U8 - 3 * t; if (r % 2) continue; const a = Array(t).fill(3).concat(Array(r / 2).fill(2)); if (a.length > 1) opts.push(a); }
+      const base = opts[Math.min(opts.length - 1, v % 2)] || [1, 1], r = Math.floor(v / 2) % base.length; return base.slice(r).concat(base.slice(0, r));
+    }
+    if (f === 'count') { const n = [4, 3, 5][v % 3], a = Array.from({ length: n }, (_, i) => i + 1); return (v >> 1) % 2 ? a.reverse() : a; }
+    if (f === 'mirror') { const h = [[4, 2, 1, 1], [2, 1, 1], [3, 3, 2]][v % 3], a = (v >> 1) % 2 ? h.slice().reverse() : h.slice(); return a.concat(a.slice().reverse()); }
+    if (f === 'fib') {
+      const U = U8 <= 8 ? U8 * 2 : U8; let w = 'L'; while (w.length < 40) w = w.replace(/./g, (c) => (c === 'L' ? 'LS' : 'L'));
+      const a = []; let s = 0; for (const c of w.slice(v % 3)) { const x = c === 'L' ? 2 : 1; if (s + x > U) { if (U - s) a.push(U - s); break; } a.push(x); s += x; if (s === U) break; }
+      return a;
+    }
+    return [1];
+  }
+  function selH(a, cur, opts, aria) { return '<select class="g2-sel" data-a="' + a + '" aria-label="' + esc(aria) + '" style="flex:0 1 auto;min-height:36px">' + opts.map(([k, t]) => '<option value="' + k + '"' + (String(cur) === String(k) ? ' selected' : '') + (k === '' ? ' disabled' : '') + '>' + esc(t) + '</option>').join('') + '</select>'; }
+  function segH(a, cur, opts, aria) { return '<span class="g2-seg" role="group" aria-label="' + esc(aria) + '" style="flex-wrap:wrap">' + opts.map(([k, t]) => '<button type="button" data-a="' + a + '" data-k="' + k + '" class="' + (String(cur) === String(k) ? 'on' : '') + '" aria-pressed="' + (String(cur) === String(k)) + '">' + esc(t) + '</button>').join('') + '</span>'; }
+  const rowH = (lab, inner) => '<div class="g2-ctl"><span class="g2-lab">' + lab + '</span><span class="g2-r">' + inner + '</span></div>';
+  const tilesH = (L, paths) => { const cs = paths.map(ctlOf).filter(Boolean); return cs.length ? '<div class="g2-tiles">' + cs.map((c) => tileHTML(L, c)).join('') + '</div>' : ''; };
+  function statementHTML(L, st0) {
+    const st = st0 || stOf(L), tot = st.u.reduce((a, b) => a + b, 0), fb = fillOf(st), all = st.span;
+    // DROPDOWNS (user, 2026-10-09: "these can all be dropdowns")
+    // TEMPLATES FIRST — the quickest way in, right under Hits from (user, 2026-10-09)
+    let h = rowH('Templates', selH('sfam', G.fam || '', [['', G.fam ? '' : 'Pick one…']].filter((x) => x[1]).concat(STMT_FAMS), 'Templates')
+      + '<button type="button" class="g2-btn g2-sq" data-a="sfam" data-k="' + (G.fam || '*') + '" aria-label="' + (G.fam ? 'Another one like it' : 'Any template, at random') + '" title="' + (G.fam ? 'Another one like it' : 'Any template, at random') + '" style="color:#5eead4">🎲</button>');
+    h += rowH('Span', selH('sspan', st.span, [[2, '2 beats'], [3, '3 beats'], [4, '1 bar'], [5, '5 beats'], [6, '6 beats'], [7, '7 beats'], [8, '2 bars']], 'Span'));
+    h += rowH('Breath', selH('sbreath', st.breath || 0, [[0, 'None'], [0.5, '½ beat'], [1, '1 beat'], [2, '2 beats']].filter((x) => x[0] < st.span), 'Breath'));
+    // READABLE FIRST (user, 2026-10-09: "7/16 7/32 7/64 7/64" was hard to read). The
+    // note values lead only while every gap IS a plain note value (a 16th or longer,
+    // or a triplet); otherwise the RATIO leads — it is what was written — and the
+    // strip labels its gaps in the ratio's units too.
+    const vs = st.u.map((u, i) => gapVal(st, i)), plain = vs.every((v) => v.d <= 16 && (isP2(v.d) || v.tri));
+    const mixed = (x) => { const w = Math.floor(x + 1e-9), fr = Math.round((x - w) * 4) / 4; return (w || !fr ? String(w) : '') + ({ 0.25: '¼', 0.5: '½', 0.75: '¾' }[fr] || ''); };
+    const fills = st.breath ? mixed(fb) + ' of ' + mixed(st.span) + ' beats' : (st.span === 4 ? '1 bar' : st.span === 8 ? '2 bars' : mixed(st.span) + ' beats');
+    G.stPlain = plain;
+    h += '<div class="g2-formula">' + (plain
+      ? '<div class="g2-fvals">' + vs.map((v) => (v.tri ? '<span style="color:#f5b04a">' + esc(v.txt) + '³</span>' : esc(v.txt))).join(' ') + '</div><div class="g2-hint" style="font-size:12px">ratio <span class="g2-num">' + st.u.join(' : ') + '</span> · fills ' + fills + '</div>'
+      : '<div class="g2-fvals g2-num">' + st.u.join(' : ') + '</div><div class="g2-hint" style="font-size:12px">fills ' + fills + ' · ' + (st.grid === 'snap' ? 'each hit snaps to the nearest 16th as it plays' : '<span style="color:#f5b04a">some hits fall between the 16ths</span> — Snap to 16ths below puts each on one') + '</div>') + '</div>';
+    let strip = '', merge = '', acc = 0;
+    st.u.forEach((u, i) => {
+      const v = gapVal(st, i), w = (u / tot * fb) / all * 100;
+      strip += '<button type="button" class="g2-gap' + (v.off ? ' off' : '') + '" data-a="sgap" data-i="' + i + '" style="width:' + w.toFixed(3) + '%" aria-label="Gap ' + (i + 1) + ', ' + esc(v.txt) + '. Tap to split">' + (w > 7 ? (G.stPlain ? esc(v.txt) + (v.tri ? '³' : '') : String(u)) : '') + '</button>';
+      acc += w; if (i < st.u.length - 1) merge += '<button type="button" class="g2-merge" data-a="smerge" data-i="' + i + '" style="left:' + acc.toFixed(3) + '%" aria-label="Merge gaps ' + (i + 1) + ' and ' + (i + 2) + '">⋈</button>';
+    });
+    if (st.breath) strip += '<span class="g2-gap br" style="width:' + (st.breath / all * 100).toFixed(3) + '%">breath</span>';
+    h += '<div><div class="g2-gaps">' + strip + '</div><div class="g2-mbar">' + merge + '</div></div>';
+    h += rowH('Split', segH('ssplit', G.split || 'h', [['h', '½ | ½'], ['a', '⅔ | ⅓'], ['b', '⅓ | ⅔']], 'How a tap splits a gap'));
+    h += rowH('', '<button type="button" class="g2-btn" data-a="srev" style="min-height:36px">⇄ Reverse</button><button type="button" class="g2-btn" data-a="srot" style="min-height:36px">↻ Start a gap later</button>');
+    h += '<div class="g2-hint">Tap a gap to split it. Tap ⋈ between two gaps to merge them.</div>';
+    h += rowH('Grid', segH('sgrid', st.grid || '', [['', 'Exact ratios'], ['snap', 'Snap to 16ths']], 'Grid'));
+    h += rowH('<span style="color:#f5b04a">✺</span> Restate', segH('sre', st.re || '', [['', 'Same'], ['rot', 'Rotate'], ['mir', 'Mirror']], 'Restate each pass'));
+    h += rowH('', '<span class="g2-hint">' + (!st.re ? 'Every statement plays as written.' : st.re === 'rot' ? 'Each statement starts one gap later. Same ratios, new downbeat.' : 'Every other statement plays the gaps backwards, like an answer.') + '</span>');
+    return h;
+  }
+  const figName = (id) => { const f = (V2.FIGURES || []).find((x) => x[0] === id); return f ? String(f[1]).split(' — ')[0] : id; };
+  function hitCardHTML(L, k) {
+    const r = (L.part || {}).rhythm || {};
+    if (k === 'statement') return statementHTML(L);
+    if (k === 'even' || k === 'grid') return rhythmHTML(L, true);
+    if (k === 'spread') {
+      return rhythmHTML(L, true)
+        + rowH('From', ['bass', 'line', 'chords', 'ambience'].map((s) => { const S = STYLES.find((x) => x.k === s); return S ? '<button type="button" class="g2-pill" data-a="hrecipe" data-k="' + s + '">' + esc(s === 'line' ? 'Line’s roll 🎲' : s === 'chords' ? 'Chords: follow the chords' : S.name + '’s') + '</button>' : ''; }).join(''))
+      ;
+    }
+    if (k === 'fig') return '<div class="g2-chs">' + (V2.FIGURES || []).map((f) => '<button type="button" class="g2-pill' + (r.fig === f[0] ? ' on' : '') + '" data-a="hfig" data-k="' + f[0] + '">' + esc(figName(f[0])) + '</button>').join('') + '</div>'
+      + tilesH(L, ['part.rhythm.figSync', 'part.rhythm.figGrp', 'part.rhythm.figVar']);
+    if (k === 'chance') return tilesH(L, ['part.rhythm.chance', 'part.rhythm.syncop']) + '<div class="g2-hint">Each pass keeps its take; turn on <b>Vary</b> in Variation for new hits every pass.</div>';
+    if (k === 'ground') return tilesH(L, ['part.rhythm.strike', 'part.rhythm.antic']);
+    if (k === 'held') return rowH('Once per', segH('hheld', r.held || 'bar', [['bar', 'Bar'], ['change', 'Chord'], ['part', 'Whole part']], 'Once per'))
+      + '<div class="g2-hint">' + (r.held === 'part' ? 'One pitch for the whole part, struck again on each chord change.' : r.held === 'change' ? 'A new held note on each chord change.' : 'A new held note every bar.') + '</div>';
+    return '';
+  }
+  // ONE DROPDOWN, THEN ITS SETTINGS (user, 2026-10-09: the long list was confusing,
+  // the 8-button grid "can be consolidated to a dropdown"). The select names the
+  // choice; its one-line description and its settings follow in the card.
+  function optsHTML(list, cur, a, cardFn, lab) {
+    const sel = list.find((x) => x[0] === cur) || list[0];
+    return '<div class="g2-optcard"><label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-lab">' + esc(lab || 'Choose') + '</span>'
+      + '<select class="g2-sel" data-a="' + a + '" aria-label="' + esc(lab || 'Choose') + '">' + list.map(([k, nm, , tag]) =>
+        '<option value="' + k + '"' + (k === sel[0] ? ' selected' : '') + '>' + esc(nm) + (tag ? ' (' + esc(tag) + ')' : '') + '</option>').join('') + '</select></label>'
+      + (sel[2] ? '<span class="g2-hint" style="font-size:12px;margin-top:-4px">' + esc(sel[2]) + '</span>' : '') + cardFn(sel[0]) + '</div>';
+  }
+  function hitsHTML(L) {
+    const p = L.part || {}, sty = STYLES.find((s) => s.k === styleOf(L));
+    let h = '';
+    // ▦ NO STEP GRID HERE (user, 2026-10-09: "do we still need this … when we have a full
+    // Pattern layer type" → "still there"). Hand-written steps are a Pattern layer's job.
+    // A roll layer that already HAS drawn steps keeps them playing and says so — no
+    // editor here — until another choice hands it to rules.
+    const cur = hitsOf(L), list = HITS.filter((x) => x[0] !== 'grid');
+    if (cur === 'grid' && (L.part || {}).form !== 'steps') {
+      return h + rowsHTML(L) + '<div class="g2-optcard"><label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-lab">Hits from</span>'
+        + '<select class="g2-sel" data-a="hits" aria-label="Hits from"><option value="" selected disabled>Written by hand</option>'
+        + list.map(([k, nm, , tag]) => '<option value="' + k + '">' + esc(nm) + (tag ? ' (' + esc(tag) + ')' : '') + '</option>').join('') + '</select></label>'
+        + '<span class="g2-hint" style="font-size:12px">These hits were written by hand and play as they are. Pick a choice above to hand them to rules — hand-written steps live on a Pattern layer now.</span></div>';
+    }
+    return h + optsHTML(cur === 'grid' ? HITS : list, cur, 'hits', (k) => hitCardHTML(L, k), 'Hits from');
+  }
+  const LENS = [
+    ['fill', 'Fill the gap', 'Every note holds the same share of its gap.'],
+    ['hold', 'Hold', 'Every note holds a fixed number of steps, whatever the gaps.'],
+    ['shape', 'Shape', 'A figure of long and short, starting again each bar.'],
+    ['echo', 'Echo the hits', 'Each note lasts as long as a later gap, so the lengths come from the same rhythm.'],
+    ['lean', 'Lean on long gaps', 'Notes with long gaps hold and short ones clip. Below 0 it flips.'],
+    ['cycle', 'Own cycle', 'Long and short follow their own cycle, carrying on across passes.'],
+  ];
+  // the short names the tab row shows under Hits / Lengths
+  function hitChoices() { return HITS.filter((x) => x[0] !== 'grid'); }
+  function hitsName(L) { return (HITS.find((x) => x[0] === hitsOf(L)) || [0, ''])[1]; }
+  function lensName(L) { return ({ fill: 'Fill', hold: 'Hold', shape: 'Shape', echo: 'Echo', lean: 'Lean', cycle: 'Own cycle' })[lensOf(L)] || ''; }
+  function lensOf(L) { const sh = (L.part || {}).shape || {}; if ((sh.holdSteps | 0) > 0) return 'hold'; if (sh.lenShape) return 'shape'; return sh.lenRule || 'fill'; }
+  function setLens(L, k) {
+    const p = L.part, sh = p.shape = Object.assign({}, p.shape); p.ownLens = 1;
+    if (k !== 'hold') sh.holdSteps = 0;
+    if (k !== 'shape') delete sh.lenShape;
+    if (/^(echo|lean|cycle)$/.test(k)) sh.lenRule = k; else delete sh.lenRule;
+    if (k === 'hold' && !((sh.holdSteps | 0) > 0)) sh.holdSteps = 4;
+    if (k === 'shape' && !sh.lenShape) sh.lenShape = 'longshort';
+    if (k === 'echo' && !Number.isFinite(sh.lenEcho)) sh.lenEcho = 1;
+    if (k === 'lean' && !Number.isFinite(sh.lenLean)) sh.lenLean = 60;
+    if (k === 'cycle' && !sh.lenCyc) sh.lenCyc = 'LSS';
+  }
+  function lenCardHTML(L, k) {
+    const sh = (L.part || {}).shape || {};
+    if (k === 'fill') return tilesH(L, ['part.shape.lenRatio', 'lenVary']);
+    if (k === 'hold') return tilesH(L, ['part.shape.holdSteps', 'lenVary']);
+    if (k === 'shape') return tilesH(L, ['part.shape.lenShape', 'part.shape.lenDepth', 'part.shape.lenWeight', 'part.shape.lenTurn']);
+    if (k === 'echo') {
+      const e = sh.lenEcho | 0;
+      return rowH('Shift', segH('lecho', e, [0, 1, 2, 3, 4].map((x) => [x, String(x)]), 'Echo shift'))
+        + '<div class="g2-hint">' + (e ? 'Each note lasts as long as the gap ' + e + ' later. Long notes land over short gaps and overlap; short notes leave space.' : 'Shift 0 is plain legato: each note lasts its own gap.') + ' Note length scales it.</div>'
+        + tilesH(L, ['part.shape.lenRatio']);
+    }
+    if (k === 'lean') return tilesH(L, ['part.shape.lenLean', 'part.shape.lenRatio']);
+    const cy = String(sh.lenCyc || 'LSS'), n = Math.max(1, notesNow(L).ns.length), lcmN = (a, b) => a / gcdN(a, b) * b;
+    return '<div class="g2-r">' + cy.split('').map((c, i) => '<button type="button" class="g2-cyc' + (c === 'L' ? ' on' : '') + '" data-a="lcyc" data-i="' + i + '" aria-label="Step ' + (i + 1) + ': ' + (c === 'L' ? 'long' : 'short') + '">' + c + '</button>').join('')
+      + '<button type="button" class="g2-btn g2-sq" data-a="lcyc" data-i="-"' + (cy.length <= 2 ? ' disabled' : '') + ' aria-label="Shorter cycle">−</button><button type="button" class="g2-btn g2-sq" data-a="lcyc" data-i="+"' + (cy.length >= 8 ? ' disabled' : '') + ' aria-label="Longer cycle">+</button><button type="button" class="g2-btn g2-sq" data-a="lcyc" data-i="dice" aria-label="Roll a cycle" style="color:#5eead4">🎲</button></div>'
+      + '<div class="g2-hint">L holds to the next hit, S is clipped. ' + cy.length + ' lengths over ' + n + ' notes a pass: ' + (n % cy.length === 0 ? '<b>they line up every pass</b>, so nothing changes. Try a cycle of a different length.' : 'they line up again every <b>' + (lcmN(n, cy.length) / n) + '</b> passes.') + '</div>';
+  }
+  function lensHTML(L) {
+    const r = (L.part || {}).rhythm || {};
+    if (r.held) return '<div class="g2-hint" style="padding:10px 12px;border-radius:12px;border:1px solid #5a4520;background:#2a2112;color:#f3d9a8">Held notes always sustain to the next hit, so these rules wait until you pick another Hits choice.</div>';
+    const sh = (L.part || {}).shape || {};
+    return optsHTML(LENS, lensOf(L), 'lens', (k) => lenCardHTML(L, k), 'Lengths')
+      + rowH('Last note', segH('lastnote', sh.lastNote || '', [['held', 'Held'], ['clip', 'Clipped'], ['', 'Like the rest']], 'Last note'))
+      + rowH('', '<span class="g2-hint">The last note of each ' + (r.kind === 'statement' ? 'statement' : 'bar') + (sh.lastNote === 'held' ? ' holds to the next hit.' : sh.lastNote === 'clip' ? ' is cut short, so it ends crisply.' : ' follows the rule above.') + '</span>');
+  }
+  // ── THE y-AXIS (user, 2026-10-09): Hits decide WHEN, Notes WHICH, Lengths HOW LONG.
+  // Movement is the Notes tab's main control; the styles are starting points under it
+  // (each sets a Movement, a register and — on a new layer — a sound).
+  const MOVE_SHORT = { same: 'Chord tones', climb: 'Climb', fall: 'Fall', updown: 'Up & down', wander: 'Wander', any: 'Any tone', pedal: 'Pedal', chord: 'Whole chord' };
+  function speakFitName(L) { return ({ wait: 'Speak, then gap', cut: 'Cut', '': 'Overlap' })[L.speakFit || ''] || ''; }
+  function moveName(L) { return MOVE_SHORT[moveOf(L) || ''] || ''; }
+  function notesMoveHTML(L) {
+    const mv = moveOf(L) || '', sb = SUB[mv];
+    let h = '<div class="g2-optcard"><label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-lab">Notes</span>'
+      + '<select class="g2-sel" data-a="move" aria-label="How the notes move">' + (mv ? '' : '<option value="" selected disabled>Pick how the notes move…</option>')
+      + MOVES.map((m) => '<option value="' + m.k + '"' + (m.k === mv ? ' selected' : '') + '>' + esc(m.label) + '</option>').join('') + '</select></label>';
+    if (sb) {
+      const cur = sb.get(L);
+      h += '<div class="g2-ctl"><span class="g2-lab">' + esc(sb.label) + '</span><span class="g2-r"><span class="g2-seg" role="group" aria-label="' + esc(sb.label) + '" style="flex-wrap:wrap">'
+        + sb.opts.map((o, i) => '<button type="button" data-a="sub" data-k="' + mv + '" data-i="' + i + '" class="' + (i === cur ? 'on' : '') + '" aria-pressed="' + (i === cur) + '">' + esc(o) + '</button>').join('') + '</span>'
+        + (sb.suffix ? '<span class="g2-hint">' + esc(sb.suffix) + '</span>' : '') + '</span></div>';
+    } else if (mv === 'pedal') h += '<span class="g2-hint" style="font-size:12px">Holds the one note that fits the most chords in the part.</span>';
+    else if (mv === 'chord') h += '<span class="g2-hint" style="font-size:12px">Every hit plays the chord — Spread and Chords below shape how.</span>';
+    return h + '</div>';
+  }
+  // THE STYLE IS A DROPDOWN too (user, 2026-10-09), in the style's colour
+  // ── THE SOUND PRESETS, PORTED (2026-10-09, user: "hide and port"). ＋ Layer's v1
+  // presets made v1 layers; here each is a STARTING POINT on a v2 layer — a style,
+  // then its sound, its hits, its notes and its lengths in one go. Battery (a Beat
+  // and a Bass together) is two layers, so it is not one of these.
+  const AD = (a, d, s0, r) => ({ attack: a, decay: d, sustain: s0, release: r });
+  const DLY = (mix, timeMs, feedback, ping, spread) => ({ mix, timeMs, feedback, ping, spread, dryKill: 0 });
+  const PRESETS = [
+    { k: 'keys', name: '🎹 Keys', style: 'chords', tone: '', level: 62, revSend: 22, env: AD(20, 180, 80, 320), held: 'change', len: 90 },
+    { k: 'drone', name: '🕯 Drone', style: 'chords', level: 60, revSend: 30, env: AD(2000, 200, 80, 1500), held: 'change', move: 'same', reg: 3, voices: 1 },
+    { k: 'pedal', name: '⚓ Pedal point', style: 'chords', level: 60, revSend: 30, held: 'part', reg: 3 },
+    { k: 'vhs', name: '📼 VHS Pad', style: 'chords', tone: 'user:f-lagoonvhs', level: 68, revSend: 45, env: AD(900, 200, 80, 3200), held: 'change' },
+    { k: 'night', name: '🌒 Night Pad', style: 'chords', tone: 'user:f-meadow', level: 66, revSend: 50, env: AD(1400, 200, 80, 4000), held: 'change' },
+    { k: 'mall', name: '🏬 Mall Keys', style: 'line', tone: 'user:f-mallfountain', level: 55, revSend: 35, set: { restProb: 45, humanize: 25 } },
+    { k: 'gridarp', name: '🕹 Grid Arp', style: 'arp', tone: 'user:f-neonfog', level: 52, revSend: 25, delay: DLY(22, 375, 30, 1, 40), rateVar: 15, octaves: 2 },
+    { k: 'dub', name: '🌊 Dub Bass', style: 'bass', tone: 'user:f-undertow', level: 64, revSend: 10, delay: DLY(18, 750, 45, 0, 0), set: { humanize: 20 }, spread: [3, 8, 7], len: 70 },
+    { k: 'glass', name: '🫧 Glass Rain', style: 'ambience', tone: 'user:f-glasscath', level: 44, revSend: 40, delay: DLY(35, 500, 50, 1, 50), chance: [25, 60] },
+    { k: 'hiss', name: '🎞 Hiss Bed', style: 'chords', tone: 'user:f-tapehiss', level: 24, revSend: 18, held: 'change', voices: 1, reg: 3 },
+    { k: 'stacc', name: '🧱 Staccato Stack', style: 'chords', level: 60, revSend: 20, even: 4, len: 15, reg: 3 },
+    { k: 'cdrone', name: '🌫 Chord Drone', style: 'chords', level: 58, revSend: 40, env: AD(1800, 200, 80, 3000), held: 'change' },
+    { k: 'pulsebed', name: '🎠 Pulse Bed', style: 'chords', level: 62, revSend: 30, env: AD(120, 200, 80, 900), even: 4, len: 60 },
+    { k: 'roam', name: '🪨 Roaming Hold', style: 'chords', level: 60, revSend: 25, held: 'change', move: 'same', voices: 1, reg: 3, set: {}, roam: 55 },
+  ];
+  function applyPreset2(E, L, pr) {
+    const S = STYLES.find((x) => x.k === pr.style); if (!S) return;
+    if (L.instrument && L.instrument.voice === 'kit') L.instrument.voice = 'synth';
+    S.make(E, L);
+    const p = L.part, ins = L.instrument = Object.assign({}, L.instrument);
+    delete p.ownHits; delete p.ownLens;                   // a preset decides both, then you take over
+    if (pr.tone !== undefined) ins.tone = pr.tone;
+    if (pr.env) Object.assign(ins, pr.env);
+    if (pr.reg) ins.register = pr.reg;
+    if (Number.isFinite(pr.level)) L.level = pr.level;
+    if (Number.isFinite(pr.revSend)) L.revSend = pr.revSend;
+    if (pr.delay) L.delay = clone(pr.delay);
+    if (pr.set) Object.assign(L, pr.set);
+    if (pr.held) setHeld(L, pr.held);
+    if (pr.even) { p.rhythm = Object.assign({}, p.rhythm, { kind: 'pulse', n: pr.even }); delete p.rhythm.held; if (barsOf(L) > 1) p.barsMode = 'fill'; }
+    if (pr.spread) { p.rhythm = Object.assign({}, p.rhythm, { kind: 'euclid', pulses: pr.spread[0], steps: pr.spread[1], rotate: pr.spread[2] }); delete p.rhythm.held; }
+    if (pr.chance) { p.rhythm = Object.assign({}, p.rhythm, { kind: 'chance', steps: 16, chance: pr.chance[0], syncop: pr.chance[1] }); delete p.rhythm.held; }
+    if (pr.rateVar) p.rhythm = Object.assign({}, p.rhythm, { rateVar: pr.rateVar });
+    if (pr.move) applyMove(L, pr.move);
+    if (pr.voices || pr.octaves || pr.roam) p.pitch = Object.assign({}, p.pitch, pr.voices ? { voices: pr.voices } : {}, pr.octaves ? { octaves: pr.octaves } : {}, pr.roam ? { roam: pr.roam } : {});
+    if (pr.len) p.shape = Object.assign({}, p.shape, { lenRatio: pr.len, holdSteps: 0 });
+    p.startWith = pr.k;
+  }
+  // THE STYLE IS A DROPDOWN too (user, 2026-10-09), in the style's colour — the six
+  // styles, then the presets, as one list of starting points
+  function styleStageHTML(sk) {
+    const cur = STYLES.find((x) => x.k === sk), L0 = layer(), pk0 = L0 && L0.part && L0.part.startWith;
+    const isP = !!(pk0 && PRESETS.some((x) => x.k === pk0));
+    return '<label style="display:flex;align-items:center;gap:8px"><span class="g2-lab">Start with</span>'
+      + '<select class="g2-sel" data-a="style" aria-label="Start with"' + (cur ? ' style="border-color:' + cur.col + ';box-shadow:inset 4px 0 0 ' + cur.col + '"' : '') + '>'
+      + (cur ? '' : '<option value="" selected disabled>Pick a starting point…</option>')
+      + '<optgroup label="Styles">' + STYLES.filter((x) => x.k !== 'beat').map((x) => '<option value="' + x.k + '"' + (x.k === sk && !isP ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</optgroup>'
+      + '<optgroup label="Presets">' + PRESETS.map((x) => '<option value="p:' + x.k + '"' + (isP && x.k === pk0 ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</optgroup></select></label>';
+  }
+  // ── ⊟ PER-LANE HITS: Beat's drums and the Rows of a part (2026-10-09) ──────
+  // One design for both. A lane has the default hits (the beat's own euclid, or
+  // the Rows' interlocking spread), its OWN profile, or FOLLOWS another lane with
+  // an offset. Stored sparse in `rhythm.laneHits` (see the engine's normalizer).
+  const ROW_NAMES = ['Root', '3rd', '5th', '7th', 'Root ↑', '3rd ↑', '5th ↑', '7th ↑'];
+  // ROW COLOURS — Root keeps the style's; each added row has its own, on the preview and its lane
+  function rowName(v) { return ['Root', '3rd', '5th', '7th', 'Root ↑', '3rd ↑', '5th ↑', '7th ↑'][v] || ''; }
+  function rowCol(v, base) { return v ? ['', '#7dd3fc', '#fcd34d', '#86efac', '#c4b5fd', '#fda4af', '#5eead4', '#fdba74'][v] || base : base; }
+  const LANE_KINDS = [['statement', 'Statement'], ['pulse', 'Even'], ['euclid', 'Spread'], ['fig', 'Figure'], ['chance', 'Chance']];
+  const laneNm = (key, i) => (key === 'beat' ? (V2.LANE_NAMES || [])[i] || ('Lane ' + (i + 1)) : ROW_NAMES[i] || ('Row ' + (i + 1)));
+  const lhGet = (L) => (((L.part || {}).rhythm || {}).laneHits) || {};
+  function laneTarget(b) {
+    const w = b && b.closest && b.closest('[data-lane]'); if (!w) return null;
+    const [key, i] = w.getAttribute('data-lane').split(':'); return { key, i: +i };
+  }
+  function laneSum(L, key, i) {
+    const lh = lhGet(L), e = lh[String(i)];
+    if (e && e.link != null) {
+      const ld = lh[String(e.link)], gaps = !!(ld && ld.kind === 'statement'), off = e.off | 0;
+      return '🔗 Same as ' + laneNm(key, e.link) + (off ? ', ' + (off > 0 ? '+' : '') + off + (gaps ? ' gap' + (Math.abs(off) > 1 ? 's' : '') : '') : '');
+    }
+    if (e) {
+      if (e.kind === 'statement') { const st = e.stmt || { u: [1], span: 4 }; return 'Statement ' + st.u.slice(0, 4).map((u, j) => gapVal(st, j).txt).join(' ') + (st.u.length > 4 ? ' …' : ''); }
+      if (e.kind === 'pulse') return 'Even, ' + (e.n | 0) + ' a bar';
+      if (e.kind === 'euclid') return 'Spread ' + (e.pulses | 0) + ' of ' + (e.steps | 0);
+      if (e.kind === 'fig') return figName(e.fig);
+      if (e.kind === 'chance') return 'Chance ' + (e.chance | 0) + '%';
+    }
+    if (key === 'beat') { const ln = ((((L.part || {}).rhythm || {}).beat || {}).lanes || [])[i] || {}; return (ln.p | 0) > 0 ? 'The beat’s own, ' + (ln.p | 0) + ' a bar' : 'Off'; }
+    return rk(L) === 'euclid' ? 'Interlocks with the others' : 'The part’s hits';
+  }
+  function rowNotesSum(L, i) { const rp = ((L.part || {}).rowPitch || {})[String(i)]; return rp ? (MOVE_SHORT[moveOf({ part: { pitch: rp } }) || ''] || 'own notes') : 'one note'; }
+  // the lane's first bar as 16 cells — what the strip beside its name shows
+  function laneBar1(L, key, i) {
+    const p = L.part || {}, lh = lhGet(L), bars = barsOf(L), cells = new Array(16).fill(0);
+    const fromOns = (ons) => { (ons || []).forEach((f) => { const x = f * bars; if (x < 1 - 1e-9) cells[clamp(Math.round(x * 16), 0, 15)] = 1; }); };
+    const dflt = (j) => { if (key !== 'beat' || !V2.beatLaneRow) return null; const row = V2.beatLaneRow(p, j) || [], n = row.length || 16; const o = []; row.forEach((on, k) => { if (on) o.push(k / n / bars); }); return o; };
+    const e = lh[String(i)];
+    if (e) { let o = V2.laneProfOnsets ? V2.laneProfOnsets(p, i) : null; if (!o && e.link != null) { const d = dflt(e.link); if (d) { const sh = (e.off | 0) / (bars * 16); o = d.map((f) => ((f + sh) % 1 + 1) % 1); } } fromOns(o); }
+    else fromOns(dflt(i));
+    return cells;
+  }
+  function laneEditorHTML(L, key, i, n, only) {
+    const lh = lhGet(L), e = lh[String(i)], tag = ' data-lane="' + key + ':' + i + '"';
+    const leads = []; for (let j = key === 'beat' ? 0 : 1; j < n; j++) if (j !== i && !(lh[String(j)] && lh[String(j)].link != null)) leads.push([String(j), '= ' + laneNm(key, j)]);
+    const mode = !e ? '' : (e.link != null ? String(e.link) : 'own');
+    let h = '<div class="g2-stack"' + tag + '>';
+    // ♪ A ROW'S OWN NOTES (user, 2026-10-09: "they should be able to be just as varied as
+    // rows 1, or monotone, let user decide") — one chord note, or any Movement
+    if (key === 'rows' && only !== 'hits') {
+      const rp = ((L.part || {}).rowPitch || {})[String(i)], mv = rp ? (moveOf({ part: { pitch: rp } }) || '') : '', sb = rp ? SUB[mv] : null;
+      h += rowH('Notes', '<select class="g2-sel" data-a="rnotes" aria-label="Notes for ' + esc(laneNm(key, i)) + '"><option value=""' + (rp ? '' : ' selected') + '>One note: the ' + esc(laneNm(key, i).replace(' ↑', '')) + '</option>'
+        + MOVES.map((m) => '<option value="' + m.k + '"' + (m.k === mv ? ' selected' : '') + '>' + esc(m.label) + '</option>').join('') + '</select>');
+      if (sb) { const cur = sb.get({ part: { pitch: rp }, proximity: L.proximity }); h += rowH(esc(sb.label), '<span class="g2-seg" role="group" style="flex-wrap:wrap">' + sb.opts.map((o, j) => '<button type="button" data-a="rsub" data-k="' + mv + '" data-i="' + j + '" class="' + (j === cur ? 'on' : '') + '">' + esc(o) + '</button>').join('') + '</span>' + (sb.suffix ? '<span class="g2-hint">' + esc(sb.suffix) + '</span>' : '')); }
+    }
+    if (only === 'notes') return h + '</div>';
+    h += rowH('Hits', segH('lnmode', mode, [['', key === 'beat' ? 'The beat’s' : 'Default'], ['own', 'Own']].concat(leads), 'Hits for ' + laneNm(key, i)));
+    if (e && e.link != null) {
+      const ld = lh[String(e.link)], gaps = !!(ld && ld.kind === 'statement'), off = e.off | 0;
+      h += rowH('Offset', '<button type="button" class="g2-btn g2-sq" data-a="lnoff" data-k="-1" aria-label="Earlier">◀</button><button type="button" class="g2-btn g2-sq" data-a="lnoff" data-k="1" aria-label="Later">▶</button><span class="g2-hint">' + (off ? 'by ' + Math.abs(off) + (gaps ? ' gap' : ' 16th') + (Math.abs(off) > 1 ? 's' : '') + (off > 0 ? ' later' : ' earlier') : 'in step') + '</span>')
+        + '<div class="g2-hint">Follows <b>' + esc(laneNm(key, e.link)) + '</b>. Change ' + esc(laneNm(key, e.link)) + '’s hits and this one moves with it.</div>';
+    } else if (e) {
+      h += rowH('Kind', segH('lnkind', e.kind, LANE_KINDS, 'Kind of hits'));
+      const pm = (f, v, lab) => rowH(lab, '<b class="g2-num">' + v + '</b><button type="button" class="g2-btn g2-sq" data-a="lnset" data-f="' + f + '" data-k="-1" aria-label="Less">−</button><button type="button" class="g2-btn g2-sq" data-a="lnset" data-f="' + f + '" data-k="1" aria-label="More">+</button>');
+      if (e.kind === 'statement') h += statementHTML(L, clone(e.stmt || { u: [4, 2, 1, 1], span: 4 }));
+      if (e.kind === 'pulse') h += pm('n', e.n | 0, 'Hits');
+      if (e.kind === 'euclid') h += pm('pulses', e.pulses | 0, 'Hits') + rowH('Over', segH('lnsteps', e.steps | 0, [[8, '8 steps'], [16, '16 steps']], 'Steps')) + pm('rotate', e.rotate | 0, 'Rotate');
+      if (e.kind === 'fig') h += '<div class="g2-chs">' + (V2.FIGURES || []).map((f) => '<button type="button" class="g2-pill' + (e.fig === f[0] ? ' on' : '') + '" data-a="lnfig" data-k="' + f[0] + '">' + esc(figName(f[0])) + '</button>').join('') + '</div>';
+      if (e.kind === 'chance') h += pm('chance', e.chance | 0, 'Odds %');
+    } else h += '<div class="g2-hint">' + (key === 'beat' ? 'Plays the beat’s own pattern for this drum.' : (rk(L) === 'euclid' ? 'Spreads its hits around the other rows, as Rows always has.' : 'Plays the part’s hits on this note.')) + ' Pick <b>Own</b> to give it hits of its own.</div>';
+    return h + '</div>';
+  }
+  function laneListHTML(L, key, from, n) {
+    const sel = G.lsel === key;
+    let h = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button type="button" class="g2-btn" data-a="lnsel" data-k="' + key + '" style="min-height:34px;font-size:13px">' + (sel ? 'Done' : '☐ Select') + '</button>'
+      + (sel ? '<span class="g2-hint">' + G.lpick.length + ' picked</span><button type="button" class="g2-btn" data-a="lntogether" data-k="' + key + '" style="min-height:34px;font-size:13px"' + (G.lpick.length < 2 ? ' disabled' : '') + '>🔗 Same hits for these</button>' : '<span class="g2-hint">Pick several to give them one set of hits.</span>') + '</div>';
+    for (let i = from; i < n; i++) {
+      const open = G.lane && G.lane.key === key && G.lane.i === i, cells = laneBar1(L, key, i), pk2 = G.lpick.indexOf(i) >= 0;
+      h += '<div class="g2-lane' + (open ? ' open' : '') + '"><div style="display:flex;align-items:center;gap:8px;min-width:0">'
+        + (sel ? '<button type="button" class="g2-pick' + (pk2 ? ' on' : '') + '" data-a="lnpick" data-i="' + i + '" aria-pressed="' + pk2 + '" aria-label="Pick ' + esc(laneNm(key, i)) + '">' + (pk2 ? '✓' : '') + '</button>' : '')
+        + '<b style="min-width:58px;font-size:13px;display:flex;align-items:center;gap:6px">' + (key === 'rows' ? '<i style="width:9px;height:9px;border-radius:50%;background:' + rowCol(i, '#f472b6') + '"></i>' : '') + esc(laneNm(key, i)) + '</b>'
+        + '<button type="button" class="g2-lchip' + ((lhGet(L)[String(i)] || {}).link != null ? ' ln' : '') + '" data-a="lnopen" data-k="' + key + '" data-i="' + i + '" aria-expanded="' + open + '">' + esc(laneSum(L, key, i) + (key === 'rows' ? ' · ' + rowNotesSum(L, i) : '')) + ' ' + (open ? '▴' : '▾') + '</button></div>'
+        + '<div class="g2-mini" aria-hidden="true">' + cells.map((c, k) => '<i class="' + (c ? 'on' : (Math.floor(k / 4) % 2 ? 'b2' : '')) + '"' + (c && key === 'rows' ? ' style="background:' + rowCol(i, '#a78bfa') + '"' : '') + '></i>').join('') + '</div>'
+        + (open ? laneEditorHTML(L, key, i, n) : '') + '</div>';
+    }
+    return h;
+  }
+  function beatHTML(L) {
+    return '<div class="g2-hint">Beat makes its own hits, one set per drum. Tap a drum to give it hits of its own, or have it follow another.</div>'
+      + laneListHTML(L, 'beat', 0, V2.LANES || 8);
+  }
+  function rowsHTML(L) {
+    const n = clamp((((L.part || {}).rhythm || {}).voices | 0) || 1, 1, 8);
+    const p = L.part || {}, sty = STYLES.find((s0) => s0.k === styleOf(L)), sq = 'min-height:30px;width:30px;padding:0';
+    let h = '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0" title="Rows give the root, 3rd, 5th and 7th each their own hits">'
+      + '<span class="g2-lab">Rows</span><b class="g2-num">' + n + '</b>'
+      + '<button type="button" class="g2-btn" data-a="rows" data-k="-1" aria-label="Fewer rows" style="' + sq + '"' + (n <= 1 ? ' disabled' : '') + '>−</button>'
+      + '<button type="button" class="g2-btn" data-a="rows" data-k="1" aria-label="More rows (each note of the chord gets its own hits)" style="' + sq + '"' + (n >= 8 ? ' disabled' : '') + '>+</button>'
+      + (p.ownHits && sty ? '<button type="button" class="g2-btn" data-a="ownhits" style="margin-left:auto;min-height:30px;font-size:12px;padding:0 10px">↺ ' + esc(sty.name) + '’s own hits</button>' : '') + '</div>';
+    if (n > 1) h += '<div class="g2-hint" style="font-size:12px">Root keeps the line as it is. Each added row plays one note of the chord, on hits of its own.</div>';
+    if (n > 1) h += laneListHTML(L, 'rows', 1, n);
+    return h;
+  }
+  // ── ◐ SAMPLE AND 🗣 SPOKEN LAYERS (2026-10-09) ─────────────────────────────
+  // A Sample layer plays a recording: Whole loop (synced, its own length — none of
+  // the stages apply), Slices on hits (each hit plays the next cut) or Pitched
+  // one-shot (each hit plays the sample, tuned by Notes). A Spoken layer speaks a
+  // line on each hit: Hits → Words → Lengths, where Lengths says how a line meets
+  // the next hit. Both are `instrument.voice` ('loop' / 'speech') on the engine.
+  function isSamp(L) { return !!(L && L.instrument && L.instrument.voice === 'loop'); }
+  function isSpeech(L) { return !!(L && L.instrument && L.instrument.voice === 'speech'); }
+  const PLAYS = [['', 'Whole loop', 'The recording plays whole, at its own length, synced to the music. Hits, Notes and Lengths don’t apply.'],
+    ['slices', 'Slices on hits', 'The recording is cut into pieces, and each hit plays the next one.'],
+    ['shot', 'Pitched one-shot', 'Each hit plays the sample from the start, tuned to the note Notes picks.']];
+  function playsList() { return PLAYS; }
+  function playsName(L) { return (PLAYS.find((x) => x[0] === ((L.instrument || {}).plays || '')) || PLAYS[0])[1]; }
+  function sampleList(loopsOnly) {
+    const out = [];
+    try { if (typeof sampleSamplers !== 'undefined' && sampleSamplers.forEach) sampleSamplers.forEach((m, id) => { if (m && (!loopsOnly || m.kind === 'loop')) out.push([String(id), m.name || String(id)]); }); } catch (e) {}
+    return out.sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  }
+  function sampleHTML(L) {
+    const ins = L.instrument || {}, plays = ins.plays || '', cur = ins.loopId || '', sc = L.slice || {};
+    const list = sampleList(!plays);
+    if (cur && !list.some((x) => x[0] === cur)) list.unshift([cur, cur]);
+    let h = '<div class="g2-optcard">'
+      + rowH('Recording', '<select class="g2-sel" data-a="srec" aria-label="Recording">' + (cur ? '' : '<option value="" selected disabled>Pick a recording…</option>')
+        + list.map(([k, nm]) => '<option value="' + esc(k) + '"' + (k === cur ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select>')
+      + (list.length ? '' : '<span class="g2-hint" style="font-size:12px">No ' + (plays ? '' : 'loop ') + 'recordings in the library yet.</span>')
+      + rowH('Plays', selH('splays', plays || 'loop', PLAYS.map((x) => [x[0] || 'loop', x[1]]), 'How it plays'))
+      + '<span class="g2-hint" style="font-size:12px">' + esc((PLAYS.find((x) => x[0] === plays) || PLAYS[0])[2]) + '</span>';
+    if (plays === 'slices') {
+      const n = clamp((sc.n | 0) || 8, 1, 32);
+      h += rowH('Cuts', '<b class="g2-num">' + n + '</b><button type="button" class="g2-btn g2-sq" data-a="scuts" data-k="-1" aria-label="Fewer cuts"' + (n <= 1 ? ' disabled' : '') + '>−</button><button type="button" class="g2-btn g2-sq" data-a="scuts" data-k="1" aria-label="More cuts"' + (n >= 32 ? ' disabled' : '') + '>+</button>')
+        + rowH('Order', segH('sorder', sc.order || '', [['', 'In order'], ['back', 'Backwards'], ['shuffle', 'Shuffled']], 'Order'))
+        + rowH('Reverse', segH('srevp', sc.rev | 0, [[0, 'Never'], [25, 'Sometimes'], [100, 'Always']], 'Reverse'));
+    }
+    return h + '</div>';
+  }
+  function sliceHTML(L) {
+    const sc = L.slice || {}, n = clamp((sc.n | 0) || 8, 1, 32);
+    return '<div class="g2-optcard"><b>Slices</b>'
+      + rowH('Cuts', '<b class="g2-num">' + n + '</b><button type="button" class="g2-btn g2-sq" data-a="scuts" data-k="-1" aria-label="Fewer cuts"' + (n <= 1 ? ' disabled' : '') + '>−</button><button type="button" class="g2-btn g2-sq" data-a="scuts" data-k="1" aria-label="More cuts"' + (n >= 32 ? ' disabled' : '') + '>+</button>')
+      + rowH('Order', segH('sorder', sc.order || '', [['', 'In order'], ['back', 'Backwards'], ['shuffle', 'Shuffled']], 'Order'))
+      + rowH('Reverse', segH('srevp', sc.rev | 0, [[0, 'Never'], [25, 'Sometimes'], [100, 'Always']], 'Reverse')) + '</div>';
+  }
+  function speechVoices(cur) {
+    try { if (typeof _ambVoiceChoices === 'function') { const l = _ambVoiceChoices({ voice: cur }); if (Array.isArray(l) && l.length) return l.map((x) => [x[0], x[1] || x[0]]); } } catch (e) {}
+    return [['', 'Default voice']];
+  }
+  function wordsHTML(L) {
+    const ins = L.instrument || {};
+    let st = { lines: 0, ready: 0 }; try { st = V2.speechStat(G.E, L) || st; } catch (e) {}
+    return '<div class="g2-optcard">'
+      + '<label style="display:flex;flex-direction:column;gap:6px"><span class="g2-lab">Words</span>'
+      + '<textarea class="g2-words" data-a="wtext" rows="5" aria-label="Words" placeholder="Type or paste what it should say — one line per hit.">' + esc(ins.text || '') + '</textarea></label>'
+      + rowH('Spoken by', '<select class="g2-sel" data-a="wvoice" aria-label="Spoken by">' + speechVoices(ins.speechVoice || '').map(([k, nm]) => '<option value="' + esc(k) + '"' + (k === (ins.speechVoice || '') ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select>')
+      + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><button type="button" class="g2-btn" data-a="wwrite" style="min-height:36px">✍ Write the voice</button>'
+      + '<span class="g2-hint" id="g2-wst">' + (st.lines ? st.ready + ' of ' + st.lines + ' lines ready' + (st.ready < st.lines ? ' — write them while stopped' : '') : 'No lines yet') + '</span></div>'
+      + '<span class="g2-hint" style="font-size:12px">Fetching words from a source, and how they’re split, are on the layer card’s Words tab.</span></div>';
+  }
+  const SPEAK_FIT = [['wait', 'Speak, then gap', 'A line is never cut: hits that land while it speaks — or in the gap after — are skipped.'],
+    ['cut', 'Cut at the next hit', 'Every hit starts a line; one still speaking fades out.'],
+    ['', 'Let them overlap', 'Every hit starts a line, and lines can talk over each other.']];
+  function speechLensHTML(L) {
+    const k = L.speakFit || '', o = SPEAK_FIT.find((x) => x[0] === k) || SPEAK_FIT[2];
+    let h = '<div class="g2-optcard"><label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="g2-lab">Lines</span>'
+      + '<select class="g2-sel" data-a="wfit" aria-label="How a line meets the next hit">' + SPEAK_FIT.map(([v, nm]) => '<option value="' + (v || 'free') + '"' + (v === k ? ' selected' : '') + '>' + esc(nm) + '</option>').join('') + '</select></label>'
+      + '<span class="g2-hint" style="font-size:12px">' + esc(o[2]) + '</span>';
+    if (k === 'wait') h += rowH('Gap', segH('wgap', L.speakGapMs | 0, [[0, 'None'], [250, '¼ s'], [500, '½ s'], [900, '1 s'], [2000, '2 s']], 'Gap after a line'));
+    return h + '</div>';
+  }
   function dialSVG(c, v) {
     const cx = 105, cy = 100, r = 78, d = degAt(c, v), [kx, ky] = ptA(cx, cy, r, d);
     let ticks = '';
@@ -1335,13 +1908,168 @@
   // ── actions ───────────────────────────────────────────────────────────────
   function onClick(ev) {
     const b = ev.target.closest && ev.target.closest('[data-a]'); if (!b || !G) return;
+    if (b.tagName === 'SELECT' && ev.type !== 'change') return;   // a dropdown answers on change, not on the tap that opens it
     const a = b.getAttribute('data-a'), E = G.E;
     if (a === 'cancel') { close(true); return; }
     if (a === 'keepempty') { close(false); return; }
     if (a === 'done') { close(false); return; }
     if (a === 'styleopen') { G.styleOpen = true; paint(); return; }
     if (a === 'styleclose') { G.styleOpen = false; paint(); return; }
-    if (a === 'tab') { G.tab = b.getAttribute('data-t'); paint(); return; }
+    if (a === 'tab') { G.stage = b.getAttribute('data-t'); G.dial = null; paint(); return; }
+    // ── THE STAGES ──
+    if (a === 'stage') { G.stage = b.getAttribute('data-k'); G.dial = null; paint(); return; }
+    if (b.tagName === 'SELECT' || b.tagName === 'TEXTAREA') { if (ev.type !== 'change') return; }   // dropdowns and the words box answer on change
+    if (a === 'hits') { const k = b.getAttribute('data-k'); ensureStyled(); edit((L) => setHits(L, k), ''); return; }
+    if (a === 'hheld') { const k = b.getAttribute('data-k'); edit((L) => setHeld(L, k), ''); return; }
+    if (a === 'hfig') { const k = b.getAttribute('data-k'); edit((L) => { L.part.rhythm = Object.assign({}, L.part.rhythm, { kind: 'fig', fig: k }); delete L.part.rhythm.held; L.part.ownHits = 1; }, ''); return; }
+    if (a === 'hrecipe') {   // a Spread the way a style makes one — Line rolls a new one every tap
+      const S = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!S) return;
+      edit((L) => {
+        const t = clone(L); delete t.part.ownHits; try { S.make(E, t); } catch (e) { return; }
+        const r = t.part && t.part.rhythm; if (!r || r.kind !== 'euclid') return;
+        L.part.rhythm = Object.assign({}, L.part.rhythm, { kind: 'euclid', steps: r.steps, pulses: r.pulses, rotate: r.rotate | 0 }); delete L.part.rhythm.held;
+        if (t.part.barsMode) L.part.barsMode = t.part.barsMode; L.part.ownHits = 1;
+      }, S.k === 'line' ? 'A new roll, the way Line makes one.' : ''); return;
+    }
+    if (a === 'ownhits') {
+      edit((L) => {
+        const S = STYLES.find((x) => x.k === styleOf(L)); if (!S) return;
+        const t = clone(L); delete t.part.ownHits; try { S.make(E, t); } catch (e) { return; }
+        L.part.rhythm = t.part.rhythm; if (t.part.barsMode) L.part.barsMode = t.part.barsMode; else delete L.part.barsMode; delete L.part.ownHits;
+      }, 'Back on the style’s own hits.'); return;
+    }
+    if (a === 'lens') { const k = b.getAttribute('data-k'); edit((L) => setLens(L, k), ''); return; }
+    if (a === 'lecho') { const k = +b.getAttribute('data-k'); edit((L) => { L.part.shape = Object.assign({}, L.part.shape, { lenEcho: k }); L.part.ownLens = 1; }, ''); return; }
+    if (a === 'lastnote') { const k = b.getAttribute('data-k'); edit((L) => { const sh = L.part.shape = Object.assign({}, L.part.shape); if (k) sh.lastNote = k; else delete sh.lastNote; L.part.ownLens = 1; }, ''); return; }
+    if (a === 'lcyc') {
+      const i = b.getAttribute('data-i');
+      edit((L) => {
+        const sh = L.part.shape = Object.assign({}, L.part.shape); let cy = String(sh.lenCyc || 'LSS').split('');
+        if (i === '-') { if (cy.length > 2) cy.pop(); } else if (i === '+') { if (cy.length < 8) cy.push('S'); }
+        else if (i === 'dice') { const n = 2 + Math.floor(Math.random() * 4); cy = Array.from({ length: n }, (_, j) => (j === 0 || Math.random() < 0.4 ? 'L' : 'S')); }
+        else { const j = +i; cy[j] = cy[j] === 'L' ? 'S' : 'L'; }
+        sh.lenCyc = cy.join(''); L.part.ownLens = 1;
+      }, ''); return;
+    }
+    if (a === 'ssplit') { G.split = b.getAttribute('data-k'); paint(); return; }
+    if (a === 'rsub') {
+      const T = laneTarget(b); if (!T) return; const k = b.getAttribute('data-k'), j = +b.getAttribute('data-i');
+      edit((L) => { const p = L.part, rp = p.rowPitch = Object.assign({}, p.rowPitch || {}); const fake = { part: { pitch: Object.assign({}, rp[String(T.i)] || {}) }, proximity: L.proximity };
+        if (SUB[k]) SUB[k].set(fake, j); rp[String(T.i)] = fake.part.pitch; }, ''); return;
+    }
+    // ── ◐ SAMPLE / 🗣 WORDS ──
+    if (a === 'scuts') { const d = +b.getAttribute('data-k'); edit((L) => { const sc = L.slice = Object.assign({ n: 8, order: '', rev: 0, skip: 0, gate: 100 }, L.slice); sc.n = clamp((sc.n | 0) + d, 1, 32); }, ''); return; }
+    if (a === 'sorder') { const k = b.getAttribute('data-k'); edit((L) => { L.slice = Object.assign({ n: 8, order: '', rev: 0, skip: 0, gate: 100 }, L.slice, { order: k }); }, ''); return; }
+    if (a === 'srevp') { const k = +b.getAttribute('data-k'); edit((L) => { L.slice = Object.assign({ n: 8, order: '', rev: 0, skip: 0, gate: 100 }, L.slice, { rev: k }); }, ''); return; }
+    if (a === 'wgap') { const k = +b.getAttribute('data-k'); edit((L) => { L.speakFit = 'wait'; L.speakGapMs = k; }, ''); return; }
+    if (a === 'wwrite') {
+      const L0 = layer(); if (!L0 || !V2.speechWrite) return;
+      if (typeof _ambLiveApplyOK === 'function' && window._ambIsPlaying && window._ambIsPlaying()) { G.note = 'Stop playback first — the voice is written while stopped.'; paint(); return; }
+      const sw = G.box.querySelector('#g2-wst'); if (sw) sw.textContent = 'Writing…';
+      Promise.resolve(V2.speechWrite(G.E, L0, (d2, n2) => { const s2 = G && G.box && G.box.querySelector('#g2-wst'); if (s2) s2.textContent = '… ' + d2 + ' of ' + n2; }))
+        .then(() => { if (G) paint(); }, () => { if (G) { G.note = 'Couldn’t write the voice — no voice engine answered.'; paint(); } });
+      return;
+    }
+    // ── ⊟ LANES ──
+    if (a === 'lnopen') { const k = b.getAttribute('data-k'), i = +b.getAttribute('data-i'); G.lane = (G.lane && G.lane.key === k && G.lane.i === i) ? null : { key: k, i }; paint(); return; }
+    if (a === 'lnsel') { const k = b.getAttribute('data-k'); G.lsel = G.lsel === k ? null : k; G.lpick = []; paint(); return; }
+    if (a === 'lnpick') { const i = +b.getAttribute('data-i'), j = G.lpick.indexOf(i); if (j >= 0) G.lpick.splice(j, 1); else G.lpick.push(i); paint(); return; }
+    if (a === 'voice') { G.voice = +b.getAttribute('data-i'); G.dial = null; paint(); return; }
+    if (a === 'voiceadd' || a === 'voicedel') {
+      if (a === 'voiceadd') ensureStyled();
+      const n0 = clamp(((((layer() || {}).part || {}).rhythm || {}).voices | 0) || 1, 1, 8);
+      b.setAttribute('data-k', a === 'voiceadd' ? '1' : '-1'); b.setAttribute('data-a', 'rows');
+      onClick({ type: 'click', target: b });
+      G.voice = a === 'voiceadd' ? Math.min(7, n0) : Math.min(G.voice, n0 - 2); paint(); return;
+    }
+    if (a === 'rows') {
+      const d = +b.getAttribute('data-k');
+      edit((L) => {
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), n = clamp(((r.voices | 0) || 1) + d, 1, 8);
+        if (n > 1) r.voices = n; else delete r.voices;
+        // off a Spread, rows only split once they have hits of their own — seed them, interlocking
+        if (r.kind !== 'euclid' && n > 1) { const lh = Object.assign({}, r.laneHits || {}); for (let v = 1; v < n; v++) if (!lh[String(v)]) lh[String(v)] = { kind: 'euclid', steps: 8, pulses: [3, 5, 2, 4, 3, 5, 2][v - 1], rotate: (2 * v) % 8 }; r.laneHits = lh; }
+      }, ''); G.lane = null; return;
+    }
+    if (a === 'lntogether') {
+      const key = b.getAttribute('data-k'), pk = G.lpick.slice().sort((x, y) => x - y); if (pk.length < 2) return;
+      edit((L) => {
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), lh = r.laneHits = Object.assign({}, r.laneHits || {});
+        let ld = pk[0]; if (lh[String(ld)] && lh[String(ld)].link != null) ld = lh[String(ld)].link;
+        pk.forEach((i) => { if (i === ld) return; Object.keys(lh).forEach((k2) => { if (lh[k2] && lh[k2].link === i) lh[k2] = { link: ld }; }); lh[String(i)] = { link: ld }; });
+      }, pk.length + ' ' + (key === 'beat' ? 'drums' : 'rows') + ' share one set of hits now.');
+      G.lsel = null; G.lpick = []; return;
+    }
+    if (/^ln(mode|off|kind|set|steps|fig)$/.test(a)) {
+      const T = laneTarget(b); if (!T) return;
+      const k = b.getAttribute('data-k'), f = b.getAttribute('data-f'), i = T.i, key = T.key;
+      edit((L) => {
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), lh = r.laneHits = Object.assign({}, r.laneHits || {});
+        const e = lh[String(i)] ? clone(lh[String(i)]) : null;
+        if (a === 'lnmode') {
+          if (!k) { delete lh[String(i)]; Object.keys(lh).forEach((k2) => { if (lh[k2] && lh[k2].link === i) delete lh[k2]; }); return; }
+          if (k === 'own') {
+            if (e && e.link == null) return;
+            const ld = e && lh[String(e.link)];
+            let own = ld && ld.link == null ? clone(ld) : null;
+            if (!own && key === 'beat') { const ln = (((r.beat || {}).lanes || [])[e ? e.link : i]) || {}; own = { kind: 'euclid', steps: clamp(((r.beat || {}).per | 0) || 16, 1, 64), pulses: Math.max(1, ln.p | 0 || 4), rotate: ln.r | 0 }; }
+            lh[String(i)] = own || { kind: 'euclid', steps: 8, pulses: 3, rotate: (2 * i) % 8 };
+            return;
+          }
+          const j = +k; Object.keys(lh).forEach((k2) => { if (lh[k2] && lh[k2].link === i) lh[k2] = { link: j }; }); lh[String(i)] = { link: j }; return;
+        }
+        if (!e) return;
+        if (a === 'lnoff' && e.link != null) { e.off = clamp((e.off | 0) + (+k), -64, 64); if (!e.off) delete e.off; lh[String(i)] = e; return; }
+        if (e.link != null) return;
+        if (a === 'lnkind') {
+          const n0 = { kind: k };
+          if (k === 'statement') n0.stmt = { u: [4, 2, 1, 1], span: 4 };
+          if (k === 'pulse') n0.n = 4;
+          if (k === 'euclid') { n0.steps = 16; n0.pulses = 4; n0.rotate = 0; }
+          if (k === 'fig') n0.fig = 'tresillo';
+          if (k === 'chance') { n0.steps = 16; n0.chance = 40; }
+          lh[String(i)] = n0; return;
+        }
+        if (a === 'lnset') {
+          const d = +k;
+          if (f === 'n') e.n = clamp((e.n | 0) + d, 1, 32);
+          if (f === 'pulses') e.pulses = clamp((e.pulses | 0) + d, 1, e.steps | 0 || 16);
+          if (f === 'rotate') e.rotate = (((e.rotate | 0) + d) % (e.steps | 0 || 16) + (e.steps | 0 || 16)) % (e.steps | 0 || 16);
+          if (f === 'chance') e.chance = clamp((e.chance | 0) + d * 5, 0, 100);
+        }
+        if (a === 'lnsteps') { e.steps = +k; e.pulses = clamp(e.pulses | 0, 1, e.steps); e.rotate = (e.rotate | 0) % e.steps; }
+        if (a === 'lnfig') e.fig = k;
+        lh[String(i)] = e;
+      }, ''); return;
+    }
+    if (/^s(span|breath|fam|gap|merge|rev|rot|re|grid)$/.test(a)) {   // ❝ STATEMENT editing
+      const k = b.getAttribute('data-k'), i = +b.getAttribute('data-i');
+      const TL = laneTarget(b), L0 = layer();
+      const laneSt = (Lx) => { const e = lhGet(Lx)[String(TL.i)]; return clone((e && e.stmt) || { u: [4, 2, 1, 1], span: 4 }); };
+      const st0 = L0 ? (TL ? laneSt(L0) : stOf(viewOf(L0))) : null;
+      if (a === 'sgap' && st0) {
+        if (st0.u.length >= 16) { G.note = 'A statement holds up to 16 hits. Merge two gaps first.'; paint(); return; }
+        const v = gapVal(st0, i); if (v.n / v.d < 1 / 32 + 1e-9) { G.note = 'That gap is already a 32nd. It can’t split further.'; paint(); return; }
+      }
+      edit((L) => {
+        const r = L.part.rhythm = Object.assign({}, L.part.rhythm), st = TL ? laneSt(L) : stOf(L); if (!TL) L.part.ownHits = 1;
+        if (a === 'sspan') { st.span = +k; if ((st.breath || 0) >= st.span) delete st.breath; }
+        if (a === 'sbreath') { if (+k > 0) st.breath = +k; else delete st.breath; }
+        if (a === 'sfam') {
+          if (k === '*') { G.fam = STMT_FAMS[Math.floor(Math.random() * STMT_FAMS.length)][0]; G.famVar = Math.floor(Math.random() * 6); }
+          else if (G.fam === k) G.famVar = (G.famVar | 0) + 1; else { G.fam = k; G.famVar = 0; }
+          st.u = reduceU(stmtMake(G.fam, G.famVar, fillOf(st)));
+        }
+        if (a === 'sgap') { const [x, y] = G.split === 'a' ? [2, 1] : G.split === 'b' ? [1, 2] : [1, 1], kk = x + y, nx = []; st.u.forEach((u, j) => { if (j === i) nx.push(u * x, u * y); else nx.push(u * kk); }); st.u = reduceU(nx); G.fam = ''; }
+        if (a === 'smerge') { st.u = reduceU(st.u.slice(0, i).concat([st.u[i] + st.u[i + 1]], st.u.slice(i + 2))); G.fam = ''; }
+        if (a === 'srev') st.u = st.u.slice().reverse();
+        if (a === 'srot') st.u = st.u.slice(1).concat(st.u[0]);
+        if (a === 'sre') { if (k) st.re = k; else delete st.re; }
+        if (a === 'sgrid') { if (k) st.grid = k; else delete st.grid; }
+        if (TL) { r.laneHits = Object.assign({}, r.laneHits || {}); r.laneHits[String(TL.i)] = { kind: 'statement', stmt: st }; return; }
+        r.kind = 'statement'; delete r.held; r.stmt = st;
+      }, ''); return;
+    }
     // ◫ SCOPE — the whole part, or the stretch the sheet was opened on
     if (a === 'scope') { G.scope = (b.getAttribute('data-k') === 'bar') ? G.scopeFrom : null; G.note = ''; G.rollNote = ''; G.dial = null; paint(); return; }
     if (a === 'scopereset' && scoped()) { editReal((R) => { V2.resetBars(R, G.scope.bars); }, G.scope.nm + ' takes the part’s rules again.'); return; }
@@ -1385,14 +2113,24 @@
       }, G.scope.nm + ' plays as ' + s.name + ' now — the rest of the part keeps its own.');
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }
-    if (a === 'style') {
+    if (a === 'mk') {   // MAKE, on a new layer: notes go to Style; a beat is the kit's maker
+      const want = b.getAttribute('data-k'), L0 = layer(); if (!L0) return;
+      G.made = true;
+      if (want === 'notes') { G.stage = 'style'; paint(); return; }
+      if ((want === 'beat') === isKit(L0)) return;
+      if (want === 'beat') G.lastNotes = styleOf(L0) || G.lastNotes;
+      b.setAttribute('data-k', want === 'beat' ? 'beat' : (G.lastNotes || 'line'));
+      G.lane = null;
+    }
+    if (a === 'style' || a === 'mk') {
       const s = STYLES.find((x) => x.k === b.getAttribute('data-k')); if (!s) return;
       const was = styleOf(layer());
       const dressIt = G.fresh && !G.dressed;
+      const wasKit = isKit(layer());   // leaving a beat: the drum rhythm is not 'your hits' for a pitched style
       const p0 = layer().part || {}, mine0 = isMine(p0.rhythm) ? clone(p0.rhythm) : (isMine(p0.rhythmAlt) ? clone(p0.rhythmAlt) : null);
       // LEAVING ♦ BEAT LEAVES THE DRUM KIT (2026-10-06): Beat switches the voice to the kit and
       // nothing switched it back, so every pitched style picked after it played 0 notes
-      edit((L) => { if (s.k !== 'beat' && L.instrument && L.instrument.voice === 'kit') L.instrument.voice = 'synth'; if (dressIt) dress(E, L, s); s.make(E, L); if (mine0 && !isMine(L.part.rhythm)) L.part.rhythmAlt = mine0; else if (!mine0) delete L.part.rhythmAlt; }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
+      edit((L) => { if (s.k !== 'beat' && L.instrument && L.instrument.voice === 'kit') L.instrument.voice = 'synth'; if (L.part) delete L.part.startWith; if (dressIt) dress(E, L, s); if (s.k === 'beat' || wasKit) s.make(E, L); else keepOwn(L, () => s.make(E, L)); if (mine0 && !isMine(L.part.rhythm)) L.part.rhythmAlt = mine0; else if (!mine0) delete L.part.rhythmAlt; }, 'Now ' + s.name + ' — its own rules, with your sound unchanged.' + (was && was !== s.k ? ' ↶ Undo goes back to ' + (STYLES.find((x) => x.k === was) || {}).name + '.' : ''));
       if (dressIt) G.dressed = true;
       G.styleOpen = false; G.rollNote = ''; paint(); return;
     }
@@ -1515,10 +2253,41 @@
     const v = el.closest('.g2-row') && el.closest('.g2-row').querySelector('.g2-val');
     if (v) v.textContent = el.value + (el.getAttribute('data-u') || '');
   }
+  // an EMPTY layer has no notes to put hits on — give it Line's (the style tap's own path)
+  function ensureStyled() {
+    const L0 = layer(); if (!L0 || styleOf(L0) || isKit(L0) || isSamp(L0) || isSpeech(L0)) return;   // a sample or a voice IS the instrument
+    const el = { tagName: 'BUTTON', closest() { return el; }, getAttribute: (n) => (n === 'data-a' ? 'style' : n === 'data-k' ? 'line' : null), setAttribute() {} };
+    onClick({ type: 'change', target: el });
+  }
   function onChange(ev) {
     const el = ev.target; if (!el || !G) return;
     const a = el.getAttribute('data-a');
     if (a === 'ctl') { const p = el.getAttribute('data-p'), val = +el.value; edit((L) => setPath(L, p, val), ''); }
+    if (a === 'hits') { const k = el.value; ensureStyled(); edit((L) => setHits(L, k), ''); return; }
+    if (a === 'rnotes') {
+      const T = laneTarget(el); if (!T) return; const v = el.value;
+      edit((L) => {
+        const p = L.part, rp = p.rowPitch = Object.assign({}, p.rowPitch || {});
+        if (!v) { delete rp[String(T.i)]; return; }
+        const fake = { part: { pitch: Object.assign({ degree: (T.i % 4) + 1 }, rp[String(T.i)] || {}) } };
+        applyMove(fake, v); rp[String(T.i)] = fake.part.pitch;
+      }, ''); return;
+    }
+    if (a === 'srec' && el.value) { const k = el.value; edit((L) => { L.instrument = Object.assign({}, L.instrument, { loopId: k }); }, ''); return; }
+    if (a === 'splays') { const k = el.value === 'loop' ? '' : el.value; edit((L) => { const ins = L.instrument = Object.assign({}, L.instrument); if (k) ins.plays = k; else delete ins.plays; if (k === 'slices' && !L.slice) L.slice = { n: 8, order: '', rev: 0, skip: 0, gate: 100 }; if (k && L.part) L.part.kind = 'live'; }, ''); G.stage = 'hits'; return; }
+    if (a === 'wtext') { const v = el.value; edit((L) => { L.instrument = Object.assign({}, L.instrument, { text: v }); }, ''); return; }
+    if (a === 'wvoice') { const v = el.value; edit((L) => { L.instrument = Object.assign({}, L.instrument, { speechVoice: v }); }, ''); return; }
+    if (a === 'wfit') { const v = el.value === 'free' ? '' : el.value; edit((L) => { if (v) L.speakFit = v; else delete L.speakFit; if (v === 'wait' && !Number.isFinite(L.speakGapMs)) L.speakGapMs = 900; }, ''); return; }
+    if (a === 'move' && el.value) { const k = el.value; ensureStyled(); edit((L) => applyMove(L, k), ''); return; }
+    // a style pick runs the style tap's own path (dress, keep your hits, undo note)
+    if (a === 'style' && /^p:/.test(el.value)) {
+      const pr = PRESETS.find((x) => 'p:' + x.k === el.value); if (!pr) return;
+      const was = G.fresh && !G.dressed; G.dressed = true;
+      editReal((L) => { applyPreset2(G.E, L, pr); if (was) L.name = pr.name.replace(/^\S+\s/, ''); }, 'Started from ' + pr.name + ' — its sound, hits, notes and lengths. Change any of them now.');
+      return;
+    }
+    if (/^(style|sspan|sbreath|sfam)$/.test(a) && el.value !== '') { el.setAttribute('data-k', el.value); onClick({ type: 'change', target: el }); return; }
+    if (a === 'lens') { const k = el.value; edit((L) => setLens(L, k), ''); return; }
     if (a === 'gridn') {
       const n = clamp(parseInt(el.value, 10) || 16, 1, 64);
       regrid(n);
@@ -1604,7 +2373,7 @@
     root.innerHTML = '<div class="g2" role="dialog" aria-modal="true" aria-label="Generate V2"></div>';
     document.body.appendChild(root);
     const sc0 = (opts && opts.scope && Array.isArray(opts.scope.bars) && opts.scope.bars.length) ? { bars: opts.scope.bars.map(String), nm: String(opts.scope.nm || 'This stretch').replace(/^./, (c) => c.toUpperCase()) } : null;
-    G = { E, id: L.id, fresh: !!(opts && opts.fresh), scope: sc0, scopeFrom: sc0, snap: JSON.stringify(L), hist: [], styleOpen: !sc0 && !styleOf(L), tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
+    G = { E, id: L.id, fresh: !!(opts && opts.fresh), scope: sc0, scopeFrom: sc0, snap: JSON.stringify(L), hist: [], styleOpen: !sc0 && !styleOf(L), stage: 'hits', lane: null, lsel: null, lpick: [], lastNotes: '', split: 'h', fam: '', famVar: 0, tab: 'rhythm', sunit: 1, note: '', rollNote: '', flash: -1, root, box: root.querySelector('.g2') };
     root.addEventListener('click', (ev) => { if (ev.target === root) { close(false); return; } onClick(ev); });
     // THE DIAL: drag round it (the angle from its centre is the value). It repaints
     // only itself while you drag and commits once on release — one undo step.
@@ -1636,6 +2405,10 @@
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
     paint();
+    if (opts && opts.beat && !isKit(L)) {
+      const el = { tagName: 'BUTTON', closest() { return el; }, getAttribute: (n) => (n === 'data-a' ? 'style' : n === 'data-k' ? 'beat' : null), setAttribute() {} };
+      onClick({ type: 'change', target: el });
+    }
     return true;
   };
 })();

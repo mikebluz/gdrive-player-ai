@@ -3226,8 +3226,16 @@
       // part count, and dropped when it says nothing.
       {
         const _tp = Array.isArray(prog.parts) ? prog.parts.filter(x => x && !x.open).length : 1;
+        const _reps0 = prog.arrGrid && prog.arrGrid.reps;
         const _ag = _ambNormalizeGridObj(prog.arrGrid, Math.max(1, _tp));
         if (_ag) prog.arrGrid = _ag; else delete prog.arrGrid;
+        // ⟳ HOW MANY TIMES EACH ROUND PLAYS before the next (2026-10-09, ⟳ Rounds as cards):
+        // `reps[col]` 2–16, absent = once. Additive and pruned at 1.
+        if (_ag && _reps0 && typeof _reps0 === 'object') {
+          const rp = {}, cols = _ambGridCols(_ag);
+          Object.keys(_reps0).forEach((k) => { const c = k | 0, n = Math.round(+_reps0[k]); if (String(c) === k && c < cols && n > 1) rp[k] = Math.min(16, n); });
+          if (Object.keys(rp).length) _ag.reps = rp;
+        }
         // A GRID AND A CHAIN CANNOT BOTH BE IN FORCE — _ambArrGridSeq reads the
         // grid and never looks at the chain, so a chain sitting underneath one is
         // a store that can never be heard, and an editor pointed at it edits
@@ -5847,6 +5855,24 @@
     }
     // The part indices played in arrangement iteration `iter`. Absent = the chain
     // if there is one, else the written order — i.e. exactly today's behaviour.
+    // ⟳ WHICH ROUND (arrGrid column) ITERATION `iter` PLAYS. Without repeats it is
+    // `iter % cols`, byte for byte as before; with them each column takes `reps[c]`
+    // consecutive iterations, and the whole pattern lasts their sum.
+    function _ambRoundPeriod(cfg) {
+      const g = cfg && cfg.prog && cfg.prog.arrGrid; if (!g || !g.seq) return 1;
+      const cols = _ambGridCols(g), rp = g.reps;
+      if (!rp) return cols;
+      let t = 0; for (let c = 0; c < cols; c++) t += Math.max(1, rp[String(c)] | 0 || 1);
+      return t;
+    }
+    function _ambRoundCol(cfg, iter) {
+      const g = cfg && cfg.prog && cfg.prog.arrGrid;
+      const cols = (g && g.seq) ? _ambGridCols(g) : 1, rp = g && g.reps;
+      if (!rp) return ((iter % cols) + cols) % cols;
+      const per = _ambRoundPeriod(cfg); let k = (((iter | 0) % per) + per) % per;
+      for (let c = 0; c < cols; c++) { const n = Math.max(1, rp[String(c)] | 0 || 1); if (k < n) return c; k -= n; }
+      return 0;
+    }
     function _ambArrGridSeq(cfg, iter, nParts, ranges) {
       const p = cfg && cfg.prog, g = p && p.arrGrid;
       // \u21bb PART ORDER is applied to WHATEVER this function decides to play \u2014 the
@@ -5957,8 +5983,7 @@
       // "the order this round" as the written walk is, and a control that reordered
       // one source and not the others would be two behaviours wearing one label.
       if (!g || !g.seq) return _ord(_chance(dflt()));
-      const cols = _ambGridCols(g);
-      const row = g.seq[String(((iter % cols) + cols) % cols)];
+      const row = g.seq[String(_ambRoundCol(cfg, iter))];
       if (!Array.isArray(row)) return _ord(_chance(dflt()));
       return _ord(_chance(row.map(v => v | 0).filter(v => v >= 0 && v < nParts)));
     }
@@ -6063,7 +6088,7 @@
     // it is the same axis `iterGate ref:'round'` counts.)
     function _ambPovRounds(cfg) {
       const g = cfg && cfg.prog && cfg.prog.arrGrid;
-      return (g && g.seq) ? Math.max(1, _ambGridCols(g)) : 1;
+      return (g && g.seq) ? Math.max(1, _ambRoundPeriod(cfg)) : 1;
     }
     // ONE ROUND'S ORDER OF PLAY, as CARDS for the strip.
     //   steps — the true play order, indices into _ambOrderParts
@@ -6082,8 +6107,7 @@
       let steps = null;
       const ag = p && p.arrGrid;
       if (ag && ag.seq) {
-        const cols = Math.max(1, _ambGridCols(ag));
-        const row = ag.seq[String(((((round | 0) % cols) + cols) % cols))];
+        const row = ag.seq[String(_ambRoundCol(cfg, round | 0))];
         if (Array.isArray(row)) {
           // GRID ROWS ARE IN _ambGridRanges SPACE (no open parts) — map them into
           // the occupy-time space this function speaks, or every index shifts by
@@ -6336,7 +6360,7 @@
           return (g && g.seq) ? _ambGridCols(g) : 1;
         }
       });
-      const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambGridCols(p.arrGrid) : 1;
+      const arrCols = (p.arrGrid && p.arrGrid.seq) ? _ambRoundPeriod(cfg) : 1;   // repeats lengthen the pattern
       // \u21bb PART ORDER'S PERIOD RIDES IN THE STATE KEY. Without it the walk below
       // stops the first time the passes line up again \u2014 while the ORDER is still
       // changing \u2014 so the super-cycle would close early and every later round would
@@ -16956,8 +16980,9 @@
     function _ambIterGateOpen(E, cfg, L, at) {
       const g = L && L.iterGate;
       if (!g || !Array.isArray(g.steps) || !g.steps.length) return true;
-      const i = _ambIterIndexAt(E, cfg, g.ref, at);
+      let i = _ambIterIndexAt(E, cfg, g.ref, at);
       if (i < 0) return true;                       // this clock cannot advance here
+      if ((g.ref || 'round') === 'round' && cfg && cfg.prog && cfg.prog.arrGrid && cfg.prog.arrGrid.reps) i = _ambRoundCol(cfg, i);
       const n = g.steps.length;
       return !!g.steps[((i % n) + n) % n];
     }
@@ -22045,7 +22070,7 @@
         if (!_ambSpeechOn(L) && !_lcEdits) {
           const src = ac.createBufferSource();
           src.buffer = buf; src.connect(g); src.start(t0);
-          return { src: src, dur: buf.duration };
+          return { src: src, dur: buf.duration, g: g };
         }
         // A line with its own edits and no layer speech-FX: play just this line's
         // window, at its own rate and direction.
@@ -22057,7 +22082,7 @@
           const src = ac.createBufferSource();
           src.buffer = pb; src.playbackRate.value = r; src.connect(g);
           src.start(t0, s0, ln);
-          return { src: src, dur: ln / r };
+          return { src: src, dur: ln / r, g: g };
         }
         const o = _ambSpeechOpt(L);
         const play = o.reverse ? _ambSpeechReversed(ac, buf) : buf;
@@ -22078,7 +22103,7 @@
           t += pieceLen / rate;
           last = src;
         }
-        return { src: last, dur: Math.max(0.02, t - t0) };
+        return { src: last, dur: Math.max(0.02, t - t0), g: g };
       } catch (e) { return null; }
     }
     function _ambImprovAt(L, c) {
@@ -57424,6 +57449,14 @@
               '<div class="ambient-schedgrid" id="ambient-schedgrid"></div>' +
               _ambProgGrpClose()) +
             _ambProgGrpClose() +
+            // \u27f3 ROUNDS \u2014 ITS OWN SUBSECTION (2026-10-09). A ROUND is one trip through the
+            // whole arrangement (a PLOT, through the area sequence); which rounds each layer
+            // plays in is not a property of any one part, so it does not sit under \u25a4 Parts.
+            // The same Schedule renderer, mounted here on its Across-rounds view only.
+            (E.isLane ? '' :
+              _ambProgGrpOpen('passgrid', '\u27f3 Rounds', false) +
+              '<div class="ambient-schedgrid" id="ambient-passgrid"></div>' +
+              _ambProgGrpClose()) +
             // \u273a VARIATION SITS BELOW \u25a4 PARTS (2026-09-27, user: "Variation should be
             // below Parts"). It led the pane on the area \u2192 part ladder argument \u2014 the
             // area rung, then the part rung, then the pass rung \u2014 but that is a reading of
@@ -61091,16 +61124,15 @@
           // the model can be tried on real material instead of from scratch.
           // ROLL OR PATTERN IS THE LAYER'S TYPE (2026-10-05): chosen here, changed
           // later only with the card's ⋯ ▸ ⇄ Convert.
-          ['Build your own', [['v2', 'Roll layer'], ['v2pat', 'Pattern layer'], ['v2from', 'From a layer…']]],
-          ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture']]],
-          ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
-          ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass']]],
-          ['Sampler', [['sample', 'Sample']]],   // Track recording moved to the footer 🎤 button
-          ['Spoken', [['learn', 'Learn'], ['sireel', 'Sir Eel']]],   // fetched prose / generated nonsense, spoken over the music
+          ['', [['v2', 'Roll'], ['v2pat', 'Pattern'], ['v2beat', 'Beat'], ['v2samp', 'Sample'], ['v2speak', 'Spoken']]],   // 'v2from' (From a layer…) hidden 2026-10-09 — the importer stays in the code
+          // THE v1 TYPES ARE HIDDEN (2026-10-09, user: "we can hide these v1 options now") —
+          // every one of them has a v2 home: Bed/Texture/Motif/Riff/Arp/Bass are Roll-layer
+          // styles, Beat/Sample/Spoken are layer types above, and "From a layer…" converts a
+          // v1 layer you already have. Their makers stay in the code, so saved v1 layers play.
         ];
         const actions = [];
         FAMILIES.forEach((fam) => {
-          actions.push({ label: fam[0], disabled: true });
+          if (fam[0]) actions.push({ label: fam[0], disabled: true });   // the one list left needs no heading
           fam[1].forEach((it) => {
             const type = it[0], name = it[1];
             if (type === 'sample') { actions.push({ label: name, fn: () => _ambAddSampleLayer(E) }); return; }
@@ -61112,12 +61144,25 @@
             // layer?" sheet repeated Generate V2's own style grid. The layer is made empty
             // (`addDefault`, so per-part binding is unchanged), then the sheet opens on its
             // style grid; "Keep it empty" is the old Empty, ✕ removes the layer again.
-            if (type === 'v2' || type === 'v2pat') { actions.push({ label: name, fn: () => setTimeout(() => {
+            // ⊟ A BEAT LAYER is a type too (2026-10-09): made empty, then opened on Generate as a
+            // drum kit — one set of hits per drum — instead of asking Notes or Beat inside it
+            if (type === 'v2' || type === 'v2pat' || type === 'v2beat' || type === 'v2samp' || type === 'v2speak') { actions.push({ label: name, fn: () => setTimeout(() => {
               let L0 = null;
               try { L0 = window._v2.addDefault(E); } catch (e) {}
               // a PATTERN layer is the same layer made in the other form
               if (L0 && type === 'v2pat' && window._v2.convertForm) { try { window._v2.convertForm(E, L0, 'steps'); E.getCfg(); } catch (e) {} }
-              if (L0 && typeof window._genV2Open === 'function') { try { window._genV2Open(E, L0, { fresh: true }); } catch (e) {} }
+              // ◐ A SAMPLE / 🗣 SPOKEN LAYER is the same layer with a recording or a voice as
+              // its instrument, made live with a simple pulse so its first hits are there
+              if (L0 && (type === 'v2samp' || type === 'v2speak')) {
+                try {
+                  L0.instrument = Object.assign({}, L0.instrument, { voice: type === 'v2samp' ? 'loop' : 'speech' });
+                  if (type === 'v2samp') L0.instrument.plays = 'shot';
+                  else { L0.speakFit = 'wait'; L0.speakGapMs = 900; }
+                  L0.part = Object.assign({}, L0.part, { kind: 'live', rhythm: { kind: 'pulse', n: type === 'v2samp' ? 4 : 1, steps: 16 }, pitch: { kind: 'fixed', degree: 1 } });
+                  E.getCfg();
+                } catch (e) {}
+              }
+              if (L0 && typeof window._genV2Open === 'function') { try { window._genV2Open(E, L0, { fresh: true, beat: type === 'v2beat' }); } catch (e) {} }
             }, 0) }); return; }
             // IMPORT — pick an existing v1 layer and read it as v2 pieces. A
             // second popover rather than a submenu, because the layer list is
@@ -61202,8 +61247,10 @@
             { type: 'bass', cfg: { level: 64, lengthMs: 320, takeReroll: true } },
           ] },
         ];
-        actions.push('hr', { label: 'Sound presets', disabled: true });
-        _FACTORY_LAYER_PRESETS.forEach((pr) => actions.push({ label: pr.name, fn: () => _ambAddPreset(E, pr) }));
+        // SOUND PRESETS ARE HIDDEN HERE (2026-10-09): they made v1 layers. They live on as
+        // Generate's "Start with → Presets" on a v2 layer. The table stays: saved
+        // projects and `_ambAddPreset` callers still use it.
+        void _FACTORY_LAYER_PRESETS;
         // User-saved presets (from the ★ Save‑as‑preset button) — reusable across
         // projects. Clicking adds; a "Remove a preset…" sub-menu deletes.
         const _presets = _ambLoadLayerPresets();
@@ -61224,7 +61271,9 @@
         // Only offered when there's something to clear. Danger + confirm.
         { const c = cfg0();
           const hasLayers = !!(c && (['bed', 'motif', 'texture', 'beat'].some(k => c[k] && c[k].present !== false) || (Array.isArray(c.extras) && c.extras.length) || (Array.isArray(c.seqs) && c.seqs.length) || (Array.isArray(c.samples) && c.samples.length) || (Array.isArray(c.layers) && c.layers.length)));
-          if (hasLayers) actions.push('hr', { label: '✕ Clear area — remove all layers', danger: true, fn: () => {
+          // NOT IN ＋ LAYER (2026-10-09, user: "the wrong place for this") — clearing is an AREA
+          // action, and the area row already has it: 🧹 beside ✎ rename and ✕ delete.
+          if (false && hasLayers) actions.push('hr', { label: '✕ Clear area — remove all layers', danger: true, fn: () => {
             uiConfirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.').then((ok) => {
               if (ok) _ambClearArea(E);
             });

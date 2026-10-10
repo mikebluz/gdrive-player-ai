@@ -17628,6 +17628,23 @@ button.v2-nesec {
   background: color-mix(in srgb, var(--pt, #9f7aea) 48%, #141426); color: #0b0b16;
   font: 750 0.66rem 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; overflow: hidden; touch-action: manipulation; }
 @media (pointer: coarse) { .sch-visit { min-height: 44px; } }
+.sch-rcards { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+.sch-rcard { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 12px; border: 1px solid #2d2d4a; background: #12121f; min-width: 0; }
+.sch-rnum { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #2a2150; color: #d8ccff; font: 750 0.8rem 'Segoe UI', sans-serif; }
+.sch-rmain { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sch-rseq { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.sch-rseq i { font-style: normal; color: #8d8ab0; font-size: 0.75rem; }
+.sch-rpart { padding: 2px 7px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; color: #ece8f8; background: color-mix(in srgb, var(--pt, #9f7aea) 30%, #141426); border: 1px solid color-mix(in srgb, var(--pt, #9f7aea) 60%, transparent); overflow-wrap: anywhere; }
+.sch-rmain small { font-size: 0.68rem; color: #a9a6c7; }
+select.ambient-select.sch-rrep, select.ambient-select.sch-ract { flex: none; width: auto; min-width: 0; }
+.sch-radd { width: 100%; min-height: 40px; border-radius: 12px; border: 1px dashed #3a3a5c; background: transparent; color: #c4b5fd; font: 700 0.85rem 'Segoe UI', sans-serif; cursor: pointer; }
+.sch-rhead { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 6px 5px;
+  border-radius: 8px; border: 1px solid #3a3a5c; background: #15152a; color: #e2e8f0; cursor: pointer; text-align: left; font: inherit; }
+.sch-rhead:hover { border-color: #6b5bb0; }
+.sch-rhead b { font-size: 0.72rem; }
+.sch-rhead small { font-size: 0.62rem; color: #a9a6c7; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sch-rbar { display: flex; gap: 2px; height: 6px; }
+.sch-rbar i { min-width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--pt, #9f7aea) 70%, #141426); }
 select.ambient-select.sch-addvisit { flex: 0 0 auto; width: 26px; min-width: 0; padding: 0; text-align: center; font-size: 0.8rem; }
 .sch-n { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
 .sch-note { display: block; font-size: 0.6rem; color: #f6ad55; }

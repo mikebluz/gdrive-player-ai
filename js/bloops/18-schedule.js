@@ -69,12 +69,21 @@
   };
 
   // ── RENDER ────────────────────────────────────────────────────────────────
+  // ⟳ TWO MOUNTS, ONE RENDERER (2026-10-09, user: "move Rounds into its own Arrangement
+  // subsection"). ▦ Schedule (under ▤ Parts) is the PASS level — By part only; ⟳ Rounds
+  // (its own subsection) is the ROUND/PLOT level — Across rounds only. Each mount keeps
+  // its own state (`el._st`), so the toggle between them is gone rather than hidden.
+  const MOUNTS = [['ambient-schedgrid', 'part'], ['ambient-passgrid', 'round']];
+  const mountEls = (E) => (has(_ambGet) ? MOUNTS.map(([id, v]) => [_ambGet(E, id), v]).filter((x) => x[0]) : []);
   function render(E) {
     if (!E || !has(_ambGet)) return;
-    const el = _ambGet(E, 'ambient-schedgrid'); if (!el) return;
+    mountEls(E).forEach(([el, v]) => { try { renderEl(E, el, v); } catch (e) {} });
+  }
+  function renderEl(E, el, force) {
     wire(E, el);
     const cfg = E.getCfg && E.getCfg(); if (!cfg) return;
     const st = stOf(el);
+    if (force) st.view = force;
     const prog = cfg.prog;
     const progOn = !!(prog && prog.on && Array.isArray(prog.chords) && prog.chords.length);
     const ranges = (progOn && has(_ambGridRanges)) ? (_ambGridRanges(cfg) || []) : [];
@@ -105,10 +114,11 @@
     // VIEW + MODE. Across rounds is next; render it and DISABLE it with the
     // reason (a control that is absent cannot be found or asked about).
     h += '<div class="sch-head">' +
-      '<div class="sch-view" role="tablist" aria-label="View">' +
+      // no By part | Across rounds switch: each mount IS one view (CSS display beat `hidden`)
+      (force ? '' : '<div class="sch-view" role="tablist" aria-label="View">' +
         '<button type="button" class="sch-viewbtn' + (st.view === 'part' ? ' on' : '') + '" data-sch="view:part">By part</button>' +
         '<button type="button" class="sch-viewbtn' + (st.view === 'round' ? ' on' : '') + '" data-sch="view:round">Across rounds</button>' +
-      '</div>' +
+      '</div>') +
       // ⏺ TEMP — a live punch-in: while playing, a cell you tap changes for ONE
       // time through, then goes back (v1 When's Temp, on the Schedule's cells)
       '<button type="button" class="ambient-seg sch-temp' + (st.temp ? ' on' : '') + '" data-sch="temp" aria-pressed="' + (st.temp ? 'true' : 'false') + '"' +
@@ -587,12 +597,12 @@
     const N = roundsOf(cfg, st, rows);
     const refWord = st.ref === 'plot' ? 'plot' : 'round';
     let h = '<div class="sch-brush">' +
-      '<span class="sch-lbl">Pattern of</span>' +
+      (st.ref === 'plot' ? '<span class="sch-lbl">Pattern of</span>' +
       '<button type="button" class="ambient-seg" data-sch="rounds:-1" aria-label="Fewer">\u2212</button>' +
       '<b class="sch-n">' + N + '</b>' +
       '<button type="button" class="ambient-seg" data-sch="rounds:1" aria-label="More">+</button>' +
       '<span class="ambient-hint">' + refWord + 's, then it repeats</span>' +
-      '<span class="sch-sep"></span><span class="sch-lbl">A cell is one</span>' +
+      '<span class="sch-sep"></span>' : '') + '<span class="sch-lbl">A cell is one</span>' +
       '<button type="button" class="ambient-seg' + (st.ref === 'round' ? ' on' : '') + '" data-sch="ref:round" title="One trip through this area\u2019s arrangement">round</button>' +
       '<button type="button" class="ambient-seg' + (st.ref === 'plot' ? ' on' : '') + '" data-sch="ref:plot"' +
         (plotOK() ? ' title="One trip through the whole AREA sequence"' : ' disabled title="Plots need 2 or more areas playing in sequence"') + '>plot</button>' +
@@ -605,7 +615,30 @@
     h += '<div class="ambient-hint sch-cap">' + (st.ref === 'plot'
       ? 'A cell is one trip through the whole area sequence \u2014 the song keeps going and this pattern of ' + N + ' repeats.'
       : ('A round is one trip through the arrangement: ' + esc(orderTxt(has(_ambArrGridSeq) ? _ambArrGridSeq(cfg, 0, ranges.length, ranges) : [])) +
-         '. The song keeps going; this pattern of ' + N + ' rounds repeats. Tap a part chip to take that visit out; \uff0b adds one.')) + '</div>';
+         '. Each card below is one round, played in order; then the rounds start again.')) + '</div>';
+    // ⟳ ROUNDS AS CARDS (2026-10-09, user: "represent a Round like a Part … add Round").
+    // One card per round: its parts in order, its length, ✎ Edit, how many times it
+    // plays (×N, `arrGrid.reps`), and ⋯ for duplicate / move / delete. ＋ Add round copies
+    // the last. The layer grid underneath keeps one column per card.
+    if (st.ref === 'round' && has(_ambArrGridSeq)) {
+      const ag = (cfg.prog && cfg.prog.arrGrid) || {}, rp = ag.reps || {}, w0 = has(_ambArrCols) ? _ambArrCols(cfg) : 1;
+      const barsK = (k) => { try { return Math.max(0.25, +_ambLenPartBars(cfg, ranges[k].pi) || 1); } catch (e) { return 1; } };
+      h += '<div class="sch-rcards">';
+      for (let r = 0; r < N; r++) {
+        const runs = runsOf(_ambArrGridSeq(cfg, r, ranges.length, ranges)), reps = (r < w0 && (rp[String(r)] | 0) > 1) ? (rp[String(r)] | 0) : 1;
+        const tot = runs.reduce((a, u) => a + u.n * barsK(u.k), 0);
+        h += '<div class="sch-rcard"><span class="sch-rnum">' + (r + 1) + '</span><div class="sch-rmain"><div class="sch-rseq">' +
+          (runs.length ? runs.map((u) => '<span class="sch-rpart"' + (has(_ambPartAttr) ? _ambPartAttr(ranges[u.k].pi) : '') + '>' + (u.k + 1) + ' \u00b7 ' + esc(names[u.k]) + ' \u00d7' + u.n + '</span>').join('<i>\u2192</i>') : '<span class="ambient-hint">no parts</span>') +
+          '</div><small>' + fmtBars(tot) + (reps > 1 ? ' \u00b7 plays ' + reps + ' times' : '') + '</small></div>' +
+          '<button type="button" class="ambient-seg" data-sch="mseqmodal:' + r + '" aria-label="Edit round ' + (r + 1) + '">\u270e Edit</button>' +
+          '<select class="ambient-select sch-rrep" data-schrep="' + r + '" aria-label="How many times round ' + (r + 1) + ' plays">' +
+            [1, 2, 3, 4, 6, 8].map((n) => '<option value="' + n + '"' + (n === reps ? ' selected' : '') + '>' + n + '\u00d7</option>').join('') + '</select>' +
+          '<select class="ambient-select sch-ract" data-schact="' + r + '" aria-label="More for round ' + (r + 1) + '"><option value="" selected>\u22ef</option>' +
+            '<option value="dup">Duplicate</option>' + (r > 0 ? '<option value="up">Move earlier</option>' : '') + (r < N - 1 ? '<option value="down">Move later</option>' : '') +
+            (N > 1 ? '<option value="del">Delete</option>' : '') + '</select></div>';
+      }
+      h += '<button type="button" class="sch-radd" data-sch="radd">\uff0b Add round</button></div>';
+    }
     h += '<div class="sch-rgrid" style="--n:' + N + '">';
     // THE ARRANGEMENT ROW — rounds only; a plot is the area sequence, not this area's parts
     if (st.ref === 'round' && has(_ambArrGridSeq)) {
@@ -613,13 +646,14 @@
       for (let r = 0; r < N; r++) {
         const seq = _ambArrGridSeq(cfg, r, ranges.length, ranges);
         const bars = (k) => { try { return Math.max(0.25, +_ambLenPartBars(cfg, ranges[k].pi) || 1); } catch (e) { return 1; } };
-        h += '<div class="sch-round" data-schround="' + r + '" title="' + esc('Round ' + (r + 1) + ': ' + orderTxt(seq)) + '">' +
-          runsOf(seq).map((u) => '<button type="button" class="sch-visit" style="flex:' + (u.n * bars(u.k)) + '" data-sch="visit:' + r + ':' + u.at + ':' + u.n + '"' +
-            (has(_ambPartAttr) ? _ambPartAttr(ranges[u.k].pi) : '') + ' title="' + esc(names[u.k] + ' \u00d7' + u.n + ' \u2014 tap to take this visit out of round ' + (r + 1)) + '">' + u.n + '</button>').join('') +
-          '<select class="ambient-select sch-addvisit" data-schadd="' + r + '" aria-label="Add a part to round ' + (r + 1) + '">' +
-            '<option value="">\uff0b</option>' + names.map((nm, k) => '<option value="' + k + '">' + esc(nm) + '</option>').join('') +
-          '</select>' +
-          '<button type="button" class="ambient-seg sch-addvisit" data-sch="mseqmodal:' + r + '" aria-label="Set the order of round ' + (r + 1) + '" title="Set this round\u2019s order">\u270e</button></div>';
+        // ONE BUTTON PER ROUND (2026-10-09, user: the per-round chips, ＋ and ✎ were "way
+        // too crammed"). It names the round, draws its parts as a bar to scale, and opens
+        // the round's own editor — where visits are added, taken out and reordered.
+        const runs = runsOf(seq);
+        h += '<div class="sch-round" data-schround="' + r + '"><button type="button" class="sch-rhead" data-sch="mseqmodal:' + r + '" title="' + esc('Round ' + (r + 1) + ': ' + orderTxt(seq) + ' \u2014 tap to change it') + '">' +
+          '<b>Round ' + (r + 1) + '</b><span class="sch-rbar">' +
+          runs.map((u) => '<i style="flex:' + (u.n * bars(u.k)) + '"' + (has(_ambPartAttr) ? _ambPartAttr(ranges[u.k].pi) : '') + '></i>').join('') + '</span>' +
+          '<small>' + esc(runs.map((u) => (u.k + 1) + '\u00d7' + u.n).join(' ')) + '</small></button></div>';
       }
       h += '</div>';
     }
@@ -676,6 +710,35 @@
     commit(E, null);
   }
 
+  // ⟳ ROUND CARD OPERATIONS. Every one first WIDENS the stored pattern to the cards on
+  // screen (copying what each already plays), so an edit to one round never edits a
+  // column others share; then it rewrites the columns, the repeats and every layer's
+  // round cells in the same new order.
+  function roundOp(E, el, cfg, op, r, val) {
+    const st = stOf(el), rows = has(_ambChordMatrixRows) ? (_ambChordMatrixRows(cfg) || []) : [];
+    const ranges = _ambGridRanges(cfg) || [], N = roundsOf(cfg, st, rows);
+    const seqs = [], reps0 = (cfg.prog.arrGrid && cfg.prog.arrGrid.reps) || {}, w0 = _ambArrCols(cfg), reps = [];
+    for (let q = 0; q < N; q++) { seqs.push(_ambArrGridSeq(cfg, q, ranges.length, ranges).slice()); reps.push(q < w0 ? Math.max(1, reps0[String(q)] | 0 || 1) : 1); }
+    const gates = rows.filter((x) => { const g = x.L.iterGate; return g && Array.isArray(g.steps) && g.steps.length && (g.ref || 'round') === 'round'; })
+      .map((x) => { const g = x.L.iterGate; return { L: x.L, steps: Array.from({ length: N }, (_, q) => (g.steps[q % g.steps.length] ? 1 : 0)) }; });
+    const move = (fn) => { fn(seqs); fn(reps); gates.forEach((gg) => fn(gg.steps)); };
+    if (op === 'add') move((a) => a.push(Array.isArray(a[N - 1]) ? a[N - 1].slice() : (a === reps ? 1 : a[N - 1])));
+    if (op === 'dup') move((a) => a.splice(r + 1, 0, Array.isArray(a[r]) ? a[r].slice() : a[r]));
+    if (op === 'del' && N > 1) move((a) => a.splice(r, 1));
+    if (op === 'up' && r > 0) move((a) => { const t = a[r - 1]; a[r - 1] = a[r]; a[r] = t; });
+    if (op === 'down' && r < N - 1) move((a) => { const t = a[r + 1]; a[r + 1] = a[r]; a[r] = t; });
+    if (op === 'rep') reps[r] = Math.max(1, Math.min(16, val | 0));
+    const n2 = seqs.length;
+    _ambArrColsSet(cfg, n2);
+    seqs.forEach((sq, q) => _ambArrWrite(cfg, q, sq));
+    const rp = {}; reps.forEach((v, q) => { if (v > 1) rp[String(q)] = v; });
+    if (cfg.prog.arrGrid) { if (Object.keys(rp).length) cfg.prog.arrGrid.reps = rp; else delete cfg.prog.arrGrid.reps; }
+    gates.forEach((gg) => { gg.L.iterGate = Object.assign({}, gg.L.iterGate, { len: n2, steps: gg.steps.slice(0, n2) }); });
+    st.rounds = n2;
+    try { if (has(_ambRenderProgOverview)) _ambRenderProgOverview(E); } catch (e) {}
+    commit(E, null);
+  }
+
   // ── WRITE ─────────────────────────────────────────────────────────────────
   // After any arrangement edit: normalize, repaint every surface that draws the
   // same stores, retrigger what plays, persist (the ▦ Passes commit's own order).
@@ -685,8 +748,7 @@
     try { if (has(_ambRenderPassMatrix)) _ambRenderPassMatrix(E); } catch (e) {}
     try { if (has(_ambProgChainLenSync)) _ambProgChainLenSync(E); } catch (e) {}
     try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
-    const el = has(_ambGet) ? _ambGet(E, 'ambient-schedgrid') : null;
-    if (el) el._sig = '';
+    mountEls(E).forEach(([el]) => { el._sig = ''; });
     render(E);
   }
 
@@ -969,6 +1031,7 @@
       if (a[0] === 'ugdiv' || a[0] === 'ugslice') { const arg = a.pop(); applyOption(E, el, cfg, a[0], a.slice(1).join(':'), arg); return; }
       if (a[0] === 'units') { st.units = Math.max(2, Math.min(32, (st.units | 0) + (a[1] | 0))); el._sig = ''; render(E); return; }
       if (a[0] === 'unit') { const u = a.pop() | 0; paintUnit(E, el, cfg, a.slice(1).join(':'), u); return; }
+      if (a[0] === 'radd') { roundOp(E, el, cfg, 'add', 0); return; }
       if (a[0] === 'rounds') {
         const rows = _ambChordMatrixRows(cfg) || [];
         st.rounds = Math.max(1, Math.min(MAXR, roundsOf(cfg, st, rows) + (a[1] | 0)));
@@ -1087,6 +1150,15 @@
         applyOption(E, el, cfg, 'when', secSel.getAttribute('data-schsec'), secSel.value ? ('sec:' + secSel.value) : 'always');
         return;
       }
+      const rep = ev.target.closest('.sch-rrep');
+      if (rep) { const cfg = E.getCfg(); if (cfg) roundOp(E, el, cfg, 'rep', rep.getAttribute('data-schrep') | 0, rep.value | 0); return; }
+      const act = ev.target.closest('.sch-ract');
+      if (act && act.value) {
+        const cfg = E.getCfg(), r = act.getAttribute('data-schact') | 0, op = act.value; act.value = '';
+        if (!cfg) return;
+        if (op === 'del' && typeof uiConfirm === 'function') { uiConfirm('Delete round ' + (r + 1) + '? Its parts stay; only this round goes.').then((ok) => { if (ok) roundOp(E, el, E.getCfg(), 'del', r); }); return; }
+        roundOp(E, el, cfg, op, r); return;
+      }
       const add = ev.target.closest('.sch-addvisit');
       if (add && add.value !== '') {
         const r = add.getAttribute('data-schadd') | 0, k = add.value | 0;
@@ -1134,8 +1206,7 @@
     commit(E, null);
   }
   function tempRestoreAll(E) {
-    const el = has(_ambGet) ? _ambGet(E, 'ambient-schedgrid') : null;
-    if (el) tempFlush(E, el, () => true);
+    mountEls(E).forEach(([el]) => { tempFlush(E, el, () => true); });
   }
   // per frame: arm what the playhead is on, revert what it has left
   function tempTick(E, el, cfg, now) {
@@ -1165,8 +1236,9 @@
     el._phKey = '';
     el.querySelectorAll('.sch-playing, .sch-incol').forEach((n) => n.classList.remove('sch-playing', 'sch-incol'));
   }
-  function playhead(E) {
-    const el = has(_ambGet) ? _ambGet(E, 'ambient-schedgrid') : null; if (!el || !el._st) return;
+  function playhead(E) { mountEls(E).forEach(([el]) => { try { playheadEl(E, el); } catch (e) {} }); }
+  function playheadEl(E, el) {
+    if (!el || !el._st) return;
     const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
     if (!E.timer || !cfg) { if (el._temp && el._temp.length) tempRestoreAll(E); }
     if (!E.timer || !cfg || (has(_ambViewIsPlaying) && !_ambViewIsPlaying(E))) { if (el._phKey) clearPh(el); return; }

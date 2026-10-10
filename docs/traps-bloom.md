@@ -2159,6 +2159,12 @@ is the interface. v2 decides only "what notes, when" — everything downstream o
   four outcomes, because `n: 1` gives one onset a cycle and one onset makes every pitch rule
   identical. `recipeSeed` lifts ONLY a field that would leave the new kind inert, and only on an
   explicit recipe edit. Any new kind needs a `RECIPE_NEEDS` entry or it inherits the same trap.
+- **HITS ARE A STAGE NOW, NOT A RHYTHM-TAB TILE (2026-10-09).** Generate's Hits → Style → Lengths stages
+  own `rhythm.kind` and the length rules; a style tap REBUILDS the part, so `keepOwn` puts `part.ownHits` /
+  `part.ownLens` choices back on top — any new style path must go through it or it silently eats the user's
+  hits. `rhythm.held` is a LABEL on `pulse` n1 / `ground` and self-deletes when the shape under it changes.
+  ⊟ `rhythm.laneHits` (per drum lane / per Row) only switches the Rows path on for a NON-euclid part when
+  some row HAS an entry — `voices > 1` alone stays ignored there, as it always was.
 - **A seeded chance rhythm can legitimately roll a whole cycle silent** — ~1 in 60 at 40% over 8
   steps — and a take never re-rolls itself, so that one draw is the part for ever and is
   indistinguishable from a control that does nothing. Do not add a floor to the generator (a sparse

@@ -747,7 +747,7 @@
     const v = m[String(idx | 0)];
     return (v && typeof v === 'object') ? v : null;
   }
-  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground', 'fig']);
+  const RHYTHMS = new Set(['pulse', 'euclid', 'chance', 'drawn', 'ground', 'fig', 'statement']);
   // up · down · up-down were v1's; down-up and converge (outside in) join them.
   const SERIES_DIRS = new Set(['up', 'down', 'updown', 'downup', 'converge']);
   // ── PRESETS — MACROS OVER A SHAPE'S CONTROLS (2026-09-16) ─────────────────
@@ -1556,6 +1556,16 @@
       sc.skip = cl(sc.skip, 0, 100, 0);
       sc.gate = cl(sc.gate, 10, 100, 100);
     } else delete L.slice;
+    // ◐ HOW A SAMPLE LAYER PLAYS (2026-10-09): absent = the whole recording, synced (the
+    // loop, as before) · 'slices' = each hit plays the next cut of it (`slice.n` cuts,
+    // `slice.order`) · 'shot' = each hit plays the whole sample, tuned by the part's
+    // pitch. The last two run the ordinary rhythm/pitch pipeline. Absent by default.
+    if (ins.plays !== 'slices' && ins.plays !== 'shot') delete ins.plays;
+    // 🗣 HOW A SPOKEN LINE MEETS THE NEXT HIT: 'cut' = the next hit fades it out ·
+    // 'wait' = speak, then a gap of `speakGapMs` before any later hit may start one
+    // (v1's flow clock). Absent = lines simply start on their hits, as before.
+    if (L.speakFit !== 'cut' && L.speakFit !== 'wait') delete L.speakFit;
+    if (L.speakFit === 'wait') L.speakGapMs = clamp(Number.isFinite(+L.speakGapMs) ? Math.round(+L.speakGapMs) : 900, 0, 8000); else delete L.speakGapMs;
     // SPEECH. `voice` is the INSTRUMENT here, so the TTS voice needs its own
     // field — v1's `_ambVoiceChoices` reads `L.voice` meaning the TTS one, and
     // handing it a v2 layer would offer 'synth'/'kit'/'speech' as if they were
@@ -1600,6 +1610,11 @@
     // VARY — re-roll every cycle instead of playing the take. Absent = off, so
     // an untouched project plays exactly what its drawing shows.
     if (p.vary) p.vary = 1; else delete p.vary;
+    // YOUR HITS / YOUR LENGTHS (Generate's stages, 2026-10-09): set when you pick
+    // a Hits choice or a length rule yourself, so a later style tap keeps it —
+    // a style only decides them on a layer you have not told. Absent = the style's.
+    if (p.ownHits) p.ownHits = 1; else delete p.ownHits;
+    if (p.ownLens) p.ownLens = 1; else delete p.ownLens;
 
     // BOTH HALVES ARE ALWAYS COERCED, whichever is active. Write is a DOOR:
     // a captured layer keeps its live spec so it can be released back, and a
@@ -1681,6 +1696,64 @@
       // RATE VAR — v1's steady → rushes, absent by default so nothing moves.
       if (Number.isFinite(r.rateVar) && r.rateVar > 0) r.rateVar = clamp(r.rateVar, 0, 100); else delete r.rateVar;
       r.chance = clamp(Number.isFinite(r.chance) ? r.chance : 40, 0, 100);   // chance: % per step
+      // ❝ STATEMENT (2026-10-09) — the gaps between hits as whole-number RATIOS
+      // (`u`, e.g. 4·2·1·1 = ½ ¼ ⅛ ⅛ of a bar), filling `span` beats less a
+      // `breath` of silence, and restated back to back across the cycle.
+      //   re:   'rot' each statement starts one gap later · 'mir' every other
+      //         one plays backwards · absent = as written
+      //   grid: 'snap' rounds each hit to the 16th · absent = the exact ratios
+      // Kept once made, whichever kind is active (the both-halves rule); absent
+      // until a statement is asked for, so every existing part is untouched.
+      if (r.stmt && typeof r.stmt === 'object') normStmt(r.stmt);
+      else if (r.stmt !== undefined) delete r.stmt;
+      if (r.kind === 'statement' && !r.stmt) r.stmt = { u: [4, 2, 1, 1], span: 4 };
+      // ⎯ HELD (the Hits choice that replaced the Drone style) is a LABEL on two
+      // shapes the engine already plays: one hit a bar (`pulse`, n 1, fill) or one
+      // per chord change (`ground`). It names which, and goes the moment the shape
+      // under it stops being that.
+      // ⊟ PER-LANE HITS — one Hits profile per drum lane (a kit) or per Row (`voices`),
+      // keyed by lane index. A profile is a small rhythm of its own (statement,
+      // pulse, euclid, fig or chance), or `{ link, off }`: follow lane `link`,
+      // offset by `off` 16ths — or by whole GAPS when that lane is a statement.
+      // Sparse and absent by default: a lane with no entry plays as it always did.
+      if (r.laneHits && typeof r.laneHits === 'object') {
+        const out3 = {};
+        Object.keys(r.laneHits).forEach((k) => {
+          const li = k | 0, e = r.laneHits[k];
+          if (String(li) !== k || li < 0 || li > 7 || !e || typeof e !== 'object') return;
+          if (e.link != null) {
+            const j = e.link | 0; if (j < 0 || j > 7 || j === li) return;
+            const o2 = { link: j }; if ((e.off | 0) !== 0) o2.off = clamp(e.off | 0, -64, 64); out3[k] = o2; return;
+          }
+          if (['statement', 'pulse', 'euclid', 'fig', 'chance'].indexOf(e.kind) < 0) return;
+          const o2 = { kind: e.kind };
+          if (e.kind === 'statement') { o2.stmt = normStmt(e.stmt && typeof e.stmt === 'object' ? e.stmt : {}); }
+          if (e.kind === 'pulse') o2.n = clamp((e.n | 0) || 4, 1, 64);
+          if (e.kind === 'euclid') { o2.steps = clamp((e.steps | 0) || 16, 1, 64); o2.pulses = clamp((e.pulses | 0) || 4, 1, o2.steps); o2.rotate = clamp(e.rotate | 0, 0, 63); }
+          if (e.kind === 'fig') { o2.fig = FIGURES.some((f) => f[0] === e.fig) ? e.fig : 'tresillo'; o2.steps = 16; }
+          if (e.kind === 'chance') { o2.steps = clamp((e.steps | 0) || 16, 1, 64); o2.chance = clamp(Number.isFinite(e.chance) ? e.chance : 40, 0, 100); }
+          out3[k] = o2;
+        });
+        // a link must point at a lane that leads (one level, never a chain or loop)
+        Object.keys(out3).forEach((k) => { const e = out3[k]; if (e.link != null && out3[String(e.link)] && out3[String(e.link)].link != null) delete out3[k]; });
+        if (Object.keys(out3).length) r.laneHits = out3; else delete r.laneHits;
+      } else if (r.laneHits !== undefined) delete r.laneHits;
+      // ♪ A ROW'S OWN NOTES (`part.rowPitch`, keyed by row): a pitch rule like the part's
+      // — absent = the row plays its one chord note, as Rows always has.
+      if (p.rowPitch && typeof p.rowPitch === 'object') {
+        const rp = {};
+        Object.keys(p.rowPitch).forEach((k) => {
+          const v = k | 0, t0 = p.rowPitch[k];
+          if (String(v) !== k || v < 1 || v > 7 || !t0 || typeof t0 !== 'object') return;
+          if (['fixed', 'series', 'walk', 'chance', 'anchor', 'chord'].indexOf(t0.kind) < 0) return;
+          const o = { kind: t0.kind };
+          ['degree', 'span', 'octaves', 'roam', 'voices'].forEach((f) => { if (Number.isFinite(+t0[f])) o[f] = clamp(Math.round(+t0[f]), 0, 24); });
+          ['dir', 'move', 'home'].forEach((f) => { if (typeof t0[f] === 'string' && t0[f]) o[f] = t0[f].slice(0, 16); });
+          rp[k] = o;
+        });
+        if (Object.keys(rp).length) p.rowPitch = rp; else delete p.rowPitch;
+      } else if (p.rowPitch !== undefined) delete p.rowPitch;
+      if (r.held === 'bar' ? r.kind !== 'pulse' : (r.held === 'change' || r.held === 'part') ? r.kind !== 'ground' : true) delete r.held;
       // DRAWN — the cell grid. It is the euclid generator's output made
       // EDITABLE, exactly as v1's `euclidPattern` overrides its own formula, so
       // "euclid patterning" and "draw it by hand" are one control rather than
@@ -2077,6 +2150,13 @@
       // 0 = off, i.e. Length governs. Stored only when it is doing something.
       if (Number.isFinite(s.holdSteps) && s.holdSteps > 0) s.holdSteps = clamp(s.holdSteps | 0, 0, 16);
       else delete s.holdSteps;
+      // LENGTH RULES + LAST NOTE (Generate's Lengths stage) — see `durAt`. Each
+      // companion is pruned at its neutral value; all absent by default.
+      if (s.lenRule !== 'echo' && s.lenRule !== 'lean' && s.lenRule !== 'cycle') delete s.lenRule;
+      if (Number.isFinite(s.lenEcho) && s.lenEcho > 0) s.lenEcho = clamp(s.lenEcho | 0, 0, 16); else delete s.lenEcho;
+      if (Number.isFinite(s.lenLean) && s.lenLean !== 0) s.lenLean = clamp(Math.round(s.lenLean), -100, 100); else delete s.lenLean;
+      if (typeof s.lenCyc === 'string' && /^[LS]{2,8}$/.test(s.lenCyc)) { /* kept */ } else delete s.lenCyc;
+      if (s.lastNote !== 'held' && s.lastNote !== 'clip') delete s.lastNote;
       // ── ⑁ LENGTH SHAPE (2026-09-23) ─────────────────────────────────
       // user: "I want to be able to insert more excitement and interest into
       // generated part, starting from something straightforward and aligned to
@@ -2997,9 +3077,76 @@
     pos.forEach((x) => { if (x >= 0 && x < st) row[x] = 1; });
     return row;
   }
-  function onsetsOf(part, seed) {
+  // ❝ A STATEMENT, coerced in place (the chokepoint and every lane profile share it)
+  function normStmt(st) {
+    st.u = (Array.isArray(st.u) ? st.u : []).map((x) => clamp(Math.round(+x) || 0, 0, 1e6)).filter((x) => x > 0).slice(0, 32);
+    if (!st.u.length) st.u = [4, 2, 1, 1];
+    st.span = clamp(Math.round((+st.span || 4) * 4) / 4, 1, 32);
+    if (+st.breath > 0) st.breath = clamp(Math.round(+st.breath * 4) / 4, 0, st.span - 0.25); else delete st.breath;
+    if (st.re !== 'rot' && st.re !== 'mir') delete st.re;
+    if (st.grid !== 'snap') delete st.grid;
+    Object.keys(st).forEach((k) => { if (!/^(u|span|breath|re|grid)$/.test(k)) delete st[k]; });
+    return st;
+  }
+  // ⊟ ONE LANE'S HITS from its profile, as cycle fractions — or null when the lane
+  // has none (it plays its own pattern). `deflt(j)` answers for a LEADER with no
+  // profile of its own, so a lane can follow the kick the beat already plays.
+  const laneShift = (ons, off, p) => {
+    if (!off) return ons;
+    const d = off / (Math.max(0.25, +p.bars || 1) * 16);
+    return ons.map((f) => ((f + d) % 1 + 1) % 1).sort((a, b) => a - b);
+  };
+  function laneProfOnsets(p, li, seed, pass, deflt) {
+    const lh = p.rhythm && p.rhythm.laneHits, e = lh && lh[String(li)];
+    if (!e) return null;
+    const shim = (r) => ({ bars: p.bars, barsMode: 'fill', form: 'roll', pitch: {},
+      rhythm: Object.assign({ kind: 'pulse', n: 4, steps: 16, pulses: 3, rotate: 0, chance: 40 }, r) });
+    if (e.link == null) return onsetsOf(shim(e), seed, pass);
+    const ld = lh[String(e.link)], off = e.off | 0;
+    if (ld && ld.link == null) {
+      // following a STATEMENT, the offset counts GAPS: the same ratios from a later gap
+      if (ld.kind === 'statement' && ld.stmt && off) {
+        const u = ld.stmt.u, k = ((off % u.length) + u.length) % u.length;
+        return onsetsOf(shim(Object.assign({}, ld, { stmt: Object.assign({}, ld.stmt, { u: u.slice(k).concat(u.slice(0, k)) }) })), seed, pass);
+      }
+      return laneShift(onsetsOf(shim(ld), seed, pass), off, p);
+    }
+    const d = deflt ? deflt(e.link) : null;
+    return d ? laneShift(d, off, p) : null;
+  }
+  // ❝ WHICH ORDER A STATEMENT PLAYS ITS GAPS IN on statement number `q`
+  // (counted across passes, so Restate is heard pass by pass).
+  function statementOrder(n, re, q) {
+    const idx = Array.from({ length: n }, (_, i) => i);
+    if (re === 'rot') { const k = ((q | 0) % n + n) % n; return idx.slice(k).concat(idx.slice(0, k)); }
+    if (re === 'mir' && ((q | 0) & 1)) return idx.reverse();
+    return idx;
+  }
+  function onsetsOf(part, seed, pass) {
     const r = part.rhythm;
     const out = [];
+    // ❝ A STATEMENT is solved in BEATS (4 to the bar) and laid end to end; the
+    // last one truncates where the cycle runs out, as a loop does. No dice: the
+    // ratios ARE the rhythm, and only Restate moves it from pass to pass.
+    if (r.kind === 'statement' && r.stmt && Array.isArray(r.stmt.u) && r.stmt.u.length) {
+      const st = r.stmt, u = st.u, n = u.length, tot = u.reduce((a, b) => a + b, 0) || 1;
+      const beats = Math.max(0.25, (+part.bars || 1) * 4), span = Math.max(0.25, +st.span || 4);
+      const fillB = Math.max(0.0625, span - (+st.breath || 0));
+      const per = Math.max(1, Math.ceil(beats / span - 1e-9));
+      const seen = new Set();
+      for (let q = 0; q < per; q++) {
+        const ord = statementOrder(n, st.re, (Number.isFinite(pass) ? (pass | 0) : 0) * per + q);
+        let at = q * span;
+        for (let j = 0; j < n; j++) {
+          const t = st.grid === 'snap' ? Math.round(at * 4) / 4 : at;
+          if (t >= beats - 1e-9) break;
+          const key = Math.round(t * 1e6);
+          if (!seen.has(key)) { seen.add(key); out.push(t / beats); }   // two snapped hits on one 16th play once
+          at += u[ord[j]] / tot * fillB;
+        }
+      }
+      return out;
+    }
     if (r.kind === 'chance') {
       // ISOLATED draw — keyed on (layer, cycle, step), never `_ambRand`'s shared
       // stream, so a v2 layer cannot shift any v1 layer's draws.
@@ -4652,7 +4799,7 @@
     // reads at a glance (in order climbs, back to front falls, shuffled scatters).
     // They are a picture of the pass: the emitter plays the recording itself and
     // never takes these through the note pipeline (swing, accent… mean nothing here).
-    if (L && L.instrument && L.instrument.voice === 'loop') {
+    if (L && L.instrument && L.instrument.voice === 'loop' && !L.instrument.plays) {
       const li = loopInfo(L); if (!li) return [];
       const cs = (ctx && Number.isFinite(ctx.cycleStart)) ? ctx.cycleStart : 0;
       return loopPieces(L, li).map((p) => ({ at: cs + p.at, freq: li.f0 * Math.pow(2, p.j / 12),
@@ -4978,6 +5125,9 @@
       return composite({ base: cycIdx, bars: {}, rules: p.ruleb });
     }
     const seedBase = (seedIdOf(L) * 9176) ^ (cycIdx * 2246822519);
+    // THE PASS ITSELF, whatever take plays — ❝ Restate and the Own-cycle length
+    // rule change from pass to pass (✺ Live), so they count passes, not takes.
+    const passNo = Number.isFinite(ctx.cycleStart) ? Math.max(0, Math.round(ctx.cycleStart / Math.max(0.001, cyc))) : 0;
     try { ctx._seedBase = seedBase; } catch (e) {}   // for `xfStage` — the take's own seed, not a second one
     // ── WHICH SEED EACH STAGE READS ───────────────────────────────────────
     // A change may touch only SOME of the material (`am`) and only SOME of its
@@ -5082,8 +5232,22 @@
       const btPer = bt ? beatPerOf(bt) : 0;
       const btSt = bt ? kitStepsFn(p) : 0;
       const bl = bt ? beatLanes(p, btSt, seedBase, btPer) : null;
-      const lanes = bl || p.rhythm.lanes || [];
+      const lanes0 = bl || p.rhythm.lanes || [];
       const st = bl ? btSt : Math.max(1, p.rhythm.steps | 0);
+      // ⊟ A LANE WITH ITS OWN HITS: solved as onsets, then snapped onto this grid
+      // (a drum lives on the kit's cells). Lanes without a profile are untouched.
+      const lanes = (!inSteps && p.rhythm.laneHits) ? (() => {
+        const lx = lanes0.map((row) => (row || []).slice());
+        const deflt = (j) => { const row = lanes0[j] || [], o = []; for (let i = 0; i < st; i++) if (row[i]) o.push(i / st); return o; };
+        for (let li = 0; li < _V2_LANES; li++) {
+          const on = laneProfOnsets(p, li, seedBase ^ ((li + 1) * 0x9e3779b1), passNo, deflt);
+          if (!on) continue;
+          const row = new Array(st).fill(0);
+          on.forEach((f) => { row[((Math.round(f * st)) % st + st) % st] = 1; });
+          lx[li] = row;
+        }
+        return lx;
+      })() : lanes0;
       const slot = cyc / st;
       const durMs = Math.max(20, Math.round(slot * 1000 * (p.shape.lenRatio / 100)));
       // VARY IS ONE WORD FOR BOTH FORMS. `beatLanes` already re-decides the
@@ -5190,12 +5354,12 @@
       ? groundOnsets(ctx, cs, cyc, p)
       : ((!chgOf2 || !wantStage('rhy') || chgAm >= 100 || chgAm <= 0)
           ? (() => { const sd = wantStage('rhy') ? seedBase : seedHold;
-              return onsetsOf(rhyShift(sd), sd); })()
+              return onsetsOf(rhyShift(sd), sd, passNo); })()
           // A PARTIAL RHYTHM CHANGE is a mix of two patterns: each slot takes
           // its presence from the new pattern or the kept one, decided per slot
           // and seeded, so the same take replays and `am` reads as a share.
           : (() => {
-              const A = onsetsOf(rhyShift(seedBase), seedBase), B = onsetsOf(rhyShift(seedKeep), seedKeep);
+              const A = onsetsOf(rhyShift(seedBase), seedBase, passNo), B = onsetsOf(rhyShift(seedKeep), seedKeep, passNo);
               const inA = new Set(A.map((x) => Math.round(x * 1e6)));
               const inB = new Set(B.map((x) => Math.round(x * 1e6)));
               const all = [...new Set([...inA, ...inB])].sort((a2, b2) => a2 - b2);
@@ -5345,9 +5509,55 @@
     // is exactly where they diverge — Length stretches with the gaps, Hold does
     // not. Absent or 0 keeps Length, so nothing moves by default.
     const holdN = clamp((p.shape.holdSteps | 0), 0, 16);
-    const durAt = (holdN > 0)
+    const baseDur = (holdN > 0)
       ? () => Math.max(20, Math.round((cyc / Math.max(1, p.rhythm.steps | 0)) * 1000 * holdN))
       : (k) => Math.max(20, Math.round(gapAt(k) * cyc * 1000 * (p.shape.lenRatio / 100)));
+    // ── LENGTH RULES AND THE LAST NOTE (Generate's Lengths stage, 2026-10-09) ──
+    // Each rule reads only the GAPS, so it works whatever made the hits. A
+    // phrase is one ❝ statement, or one bar for every other Hits choice.
+    //   echo:  a note lasts as long as the gap `lenEcho` hits later in its
+    //          phrase (× Note length) — the lengths come from the same rhythm
+    //   lean:  long gaps hold longer, short ones clip (`lenLean` −100…100;
+    //          below 0 it flips)
+    //   cycle: L/S from `lenCyc`, counted across passes so it drifts against
+    //          the hits
+    //   lastNote: 'held' to the next hit · 'clip' cut short
+    // Absent = the share of the gap above, byte for byte. A Length shape still
+    // wins (it is applied later and replaces the duration outright).
+    const lenRule = (holdN > 0) ? '' : (p.shape.lenRule || '');
+    const lastNote = p.shape.lastNote || '';
+    const phr = (lenRule || lastNote) && ons.length ? (() => {
+      const bb = Math.max(0.25, (+p.bars || 1) * 4);
+      const st = (p.rhythm.kind === 'statement' && p.rhythm.stmt) ? p.rhythm.stmt : null;
+      const span = st ? Math.max(0.25, +st.span || 4) : 4, br = st ? (+st.breath || 0) : 0;
+      const ids = ons.map((f) => Math.floor(f * bb / span + 1e-9)), groups = {};
+      ids.forEach((id, k) => (groups[id] = groups[id] || []).push(k));
+      const g = ons.map((_, k) => gapAt(k));
+      // a statement's last gap is the WRITTEN one — the breath is silence, not note
+      if (br > 0) Object.keys(groups).forEach((id) => { const ks = groups[id], j = ks[ks.length - 1]; g[j] = Math.max(1e-4, g[j] - br / bb); });
+      return { ids, groups, g };
+    })() : null;
+    const durAt = !phr ? baseDur : (k) => {
+      let ms = baseDur(k);
+      const kk = k | 0;
+      if (kk < 0 || kk >= ons.length) return ms;
+      const ks = phr.groups[phr.ids[kk]], pos = ks.indexOf(kk), n = ks.length, g = phr.g[kk], lr = p.shape.lenRatio / 100;
+      let f = null;
+      if (lenRule === 'echo') f = phr.g[ks[(pos + (p.shape.lenEcho | 0)) % n]] * lr;
+      else if (lenRule === 'lean') {
+        const mean = ks.reduce((a, j) => a + phr.g[j], 0) / n, c = clamp(+p.shape.lenLean || 0, -100, 100) / 100;
+        f = clamp(g * lr * Math.pow(g / Math.max(1e-6, mean), c * 1.4), g * 0.05, g * 1.6);
+      } else if (lenRule === 'cycle') {
+        const cy = String(p.shape.lenCyc || 'LS');
+        f = cy[(passNo * ons.length + kk) % cy.length] === 'L' ? g * 0.97 : g * 0.3;
+      }
+      if (f != null) ms = Math.max(20, Math.round(f * cyc * 1000));
+      if (lastNote && ks[n - 1] === kk) {
+        if (lastNote === 'held') ms = Math.max(20, Math.round(gapAt(kk) * cyc * 1000 * 0.98));
+        else if (lastNote === 'clip') ms = Math.min(ms, Math.max(20, Math.round(g * cyc * 1000 * 0.3)));
+      }
+      return ms;
+    };
     // ⌸ ON THE GRID A CELL IS ONE CELL LONG. Everywhere else a note's length
     // is a share of the GAP to the next onset, so a lone hit on a sparse
     // pattern already sustains for bars — and if that were true here, eliding
@@ -5424,7 +5634,11 @@
     // engines cannot disagree about what 3-voice euclid sounds like. The kit
     // already had this shape (8 lanes, own rows); this is its melodic twin.
     const evc = clamp((p.rhythm.voices | 0) || 1, 1, 8);
-    if (p.rhythm.kind === 'euclid' && evc > 1 && typeof _ambEuclidVoicePat === 'function') {
+    // ⊟ ROWS WITH THEIR OWN HITS (2026-10-09): any Hits choice can be split into
+    // rows once a row has a profile — row 0 plays the part's own hits, each other
+    // row its profile (or, on a euclid, v1's interlocking pattern as before).
+    const lhR = (p.rhythm.laneHits && Object.keys(p.rhythm.laneHits).length) ? p.rhythm.laneHits : null;
+    if (evc > 1 && (p.rhythm.kind === 'euclid' || lhR || p.rowPitch) && typeof _ambEuclidVoicePat === 'function') {
       const stp = Math.max(1, p.rhythm.steps | 0);
       // The voices ARE the source stack — one tone each, octave on wrap — so the
       // pitch is asked for as a stack of `evc` and voice v takes entry v.
@@ -5433,6 +5647,66 @@
                           _prox: 0, _deg: null, _oct: 0 };
       const slotSec = cyc / stp;
       const dmB = Math.max(20, Math.round(slotSec * 1000 * (p.shape.lenRatio / 100)));
+      const isEuc = p.rhythm.kind === 'euclid';
+      const voiceOns = (v) => {
+        if (!isEuc) return ons.slice();
+        let vp = null;
+        try { vp = _ambEuclidVoicePat(p.rhythm.pulses | 0, (p.rhythm.rotate | 0) + euclidPhase(p.rhythm.pulses | 0, stp), stp, evc, v, 0); } catch (e) {}
+        const o = []; if (vp && vp.length) for (let i2 = 0; i2 < stp; i2++) if (vp[i2 % vp.length]) o.push(i2 / stp);
+        return o;
+      };
+      if (lhR || !isEuc || p.rowPitch) {
+        // ROW 0 IS THE PART ITSELF (2026-10-09, user: "this rows 1 to rows 2 transition
+        // makes no sense" — going to 2 rows threw the whole Wander line away and replaced
+        // it with two fixed chord tones). The Root plays exactly what one row played —
+        // its hits AND its movement — and each added row joins it on its own chord note.
+        try {
+          const one = Object.assign({}, L, { part: Object.assign({}, p, { rhythm: Object.assign({}, p.rhythm, { voices: 1 }) }) });
+          (notesForRaw(one, Object.assign({}, ctx, { _ppDone: 1 })) || []).forEach((x) => out.push(x));
+        } catch (e) {}
+        // ♪ A ROW WITH ITS OWN NOTES runs the whole pipeline as a sub-part: its hits
+        // (profile, link, or the part's own) and its pitch rule — so it can wander,
+        // climb or arpeggiate exactly as the Root does.
+        const rowRhythm = (v) => {
+          const lh = lhR || {}, e = lh[String(v)];
+          let r = e ? (e.link != null ? ((lh[String(e.link)] && lh[String(e.link)].link == null) ? lh[String(e.link)] : null) : e) : null;
+          if (r && e && e.link != null && (e.off | 0) && r.kind === 'statement' && r.stmt) {
+            const u = r.stmt.u, k = (((e.off | 0) % u.length) + u.length) % u.length;
+            r = Object.assign({}, r, { stmt: Object.assign({}, r.stmt, { u: u.slice(k).concat(u.slice(0, k)) }) });
+          }
+          if (r) return { rh: Object.assign({ kind: 'pulse', n: 4, steps: 16, pulses: 3, rotate: 0, chance: 40 }, r, { voices: 1 }), bm: 'fill' };
+          const base = Object.assign({}, p.rhythm, { voices: 1 }); delete base.laneHits;
+          if (isEuc) base.rotate = ((base.rotate | 0) + Math.round(v * stp / evc)) % Math.max(1, stp);
+          return { rh: base, bm: p.barsMode };
+        };
+        for (let v = 1; v < evc; v++) {
+          const rp = p.rowPitch && p.rowPitch[String(v)];
+          if (rp) {
+            try {
+              const rr = rowRhythm(v), sub = Object.assign({}, p, { rhythm: rr.rh, pitch: Object.assign({ degree: 1 }, rp, { voices: rp.kind === 'chord' ? (rp.voices || 3) : 1 }) });
+              if (rr.bm) sub.barsMode = rr.bm; else delete sub.barsMode;
+              delete sub.rowPitch;
+              (notesForRaw(Object.assign({}, L, { part: sub }), Object.assign({}, ctx, { _ppDone: 1 })) || []).forEach((x) => out.push(Object.assign(x, { row: v })));
+            } catch (e) {}
+            continue;
+          }
+          const prof = v ? laneProfOnsets(p, v, seedBase ^ ((v + 1) * 0x85ebca6b), passNo, voiceOns) : null;
+          const vo = prof || voiceOns(v);
+          const own = !!prof || !isEuc;
+          vo.forEach((f, j) => {
+            const i2 = Math.round(f * stp), vAt = cs + f * cyc;
+            const vms = withKeyTime(vAt, () => pitchesAt(stackPart, ctx.E, ctx.cfg, vAt,
+                L.instrument.register | 0,
+                seedBase ^ ((i2 * 31 + v) * 2654435761), i2, mem, L));
+            if (!vms.length) return;
+            const gap = own ? ((j + 1 < vo.length ? vo[j + 1] : vo[0] + 1) - f) : 0;
+            out.push({ at: vAt, freq: midiToFreq(vms[v % vms.length]), row: v,   // `row`: which Row, so the picture can tell them apart
+                       durMs: own ? Math.max(20, Math.round(gap * cyc * 1000 * (p.shape.lenRatio / 100))) : dmB });
+          });
+        }
+        out.sort((a3, b3) => a3.at - b3.at);   // (row 0 came back already fitted to its start)
+        return out;
+      }
       for (let v = 0; v < evc; v++) {
         let vpat = null;
         // the SAME phase normalisation as `euclidCells` — this branch never
@@ -6685,6 +6959,7 @@
                                  attack: L1.attack, decay: L1.decay, sustain: L1.sustain, release: L1.release },
                    part: { kind: 'live', bars } };
     const P = spec.part;
+    let post = null;                                   // fields that live on the LAYER, set once it exists
     const euclid = () => ({ kind: 'euclid', steps: clamp((L1.steps | 0) || 8, 1, 64),
                             pulses: clamp((L1.pulses | 0) || 3, 1, 64), rotate: clamp((L1.rotate | 0) || 0, 0, 63) });
 
@@ -6734,6 +7009,28 @@
     } else if (eff === 'texture') {
       P.rhythm = { kind: 'chance', steps: 16, chance: clamp((L1.fill | 0) || 40, 0, 100) };
       P.pitch = { kind: 'chord', voices: 1 };
+    } else if (type === 'samp' || eff === 'samp') {
+      // ◐ A v1 SAMPLE → a Sample layer: its recording, its chop and its order. One
+      // cut plays the whole sample on each hit (a one-shot); more play the next cut.
+      spec.instrument.voice = 'loop';
+      if (typeof L1.sampleId === 'string' && L1.sampleId) spec.instrument.loopId = L1.sampleId;
+      const nCut = clamp((L1.chop | 0) || 1, 1, 32);
+      spec.instrument.plays = nCut > 1 ? 'slices' : 'shot';
+      P.rhythm = { kind: 'pulse', n: nCut };
+      P.pitch = { kind: 'fixed', degree: 1 };
+      post = (L2) => { if (nCut > 1 || L1.reverse || L1.order === 'random' || L1.order === 'reverse') L2.slice = { n: nCut, order: L1.order === 'random' ? 'shuffle' : L1.order === 'reverse' ? 'back' : '', rev: L1.reverse ? 100 : 0, skip: 0, gate: 100 }; };
+    } else if (eff === 'learn' || eff === 'sireel' || type === 'learn' || type === 'sireel') {
+      // 🗣 A v1 SPOKEN LAYER → a Spoken layer: its words, its voice, its source — and
+      // v1's "speak, then a gap" clock as Speak-then-gap, with the same gap.
+      spec.instrument.voice = 'speech';
+      spec.instrument.speechVoice = (typeof L1.voice === 'string') ? L1.voice : '';
+      spec.instrument.text = String(L1.text || L1.pasted || '');
+      P.rhythm = { kind: 'pulse', n: 4 };
+      P.pitch = { kind: 'fixed', degree: 1 };
+      post = (L2) => {
+        L2.speakFit = 'wait'; L2.speakGapMs = clamp((L1.intervalMs | 0) || 900, 0, 8000);
+        ['source', 'term', 'wordOut', 'voiceFrom', 'lineWords', 'article', 'amount'].forEach((k2) => { if (L1[k2] !== undefined) { try { L2[k2] = JSON.parse(JSON.stringify(L1[k2])); } catch (e) {} } });
+      };
     } else {
       // motif / run / riff — a melodic LINE that wanders round a register.
       P.rhythm = { kind: 'pulse', n: clamp((L1.density | 0) || 4, 1, 64) };
@@ -6749,6 +7046,7 @@
     if (opts && opts.specOnly) return spec;
     const L2 = addLayer(cfg, spec);
     if (!L2) return null;
+    if (post) { try { post(L2); } catch (e) {} }
     _V2_TREATMENTS.forEach((k) => {
       if (L1[k] === undefined) return;
       try { L2[k] = (L1[k] && typeof L1[k] === 'object') ? JSON.parse(JSON.stringify(L1[k])) : L1[k]; } catch (e) {}
@@ -7039,7 +7337,7 @@
     return out;
   }
   function cycSecOf(L, cfg) {
-    if (L && L.instrument && L.instrument.voice === 'loop') {
+    if (L && L.instrument && L.instrument.voice === 'loop' && !L.instrument.plays) {
       const li = loopInfo(L);
       if (li) return Math.max(0.05, li.per);
     }
@@ -7698,7 +7996,7 @@
     // card is gated to `voice:synth` and simply falls away.)
     // Played at its RECORDED ROOT so `playbackRate` is 1 — the one thing that must not
     // happen to a loop is being transposed by the note it is triggered with.
-    if (L.instrument.voice === 'loop') {
+    if (L.instrument.voice === 'loop' && !L.instrument.plays) {
       // NOTHING CHOSEN, OR A FILE THE LIBRARY DOES NOT KNOW: play nothing — a
       // guessed substitute would be worse than silence.
       const info = loopInfo(L);
@@ -7839,7 +8137,16 @@
           }
           if (wo !== 'play') {
             const buf = bank && bank.get(speechKey(L, txt));
-            if (buf) { try { _ambLearnPlay(E, key, L, buf, n.at, n.line); } catch (e) {} }
+            // 🗣 SPEAK, THEN GAP: a hit that lands while a line (plus its gap) is still
+            // going is skipped, so lines never pile up — v1's flow clock, on the hits
+            if (buf && L.speakFit === 'wait' && Number.isFinite(st._spEnd) && n.at < st._spEnd + (L.speakGapMs | 0) / 1000 - 1e-3) continue;
+            let res = null;
+            if (buf) { try { res = _ambLearnPlay(E, key, L, buf, n.at, n.line); } catch (e) {} }
+            // 🗣 CUT: the previous line fades out (12 ms — never a step, rule 3) on this hit
+            if (res && L.speakFit === 'cut' && st._spPrev && st._spPrev.g && st._spPrev.end > n.at + 0.02) {
+              try { const gp = st._spPrev.g.gain; gp.cancelScheduledValues(n.at); gp.setValueAtTime(gp.value, n.at); gp.linearRampToValueAtTime(0, n.at + 0.012); } catch (e) {}
+            }
+            if (res) { st._spEnd = n.at + (res.dur || 0); st._spPrev = { g: res.g, end: n.at + (res.dur || 0) }; }
           }
           continue;
         }
@@ -7903,6 +8210,28 @@
                 n.durMs, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined);
             } catch (e) {}
           }
+          continue;
+        }
+        // ◐ A SAMPLE ON HITS: 'shot' plays the whole sample tuned to the note; 'slices'
+        // plays the NEXT cut at its own pitch, cycling through `slice.n` in `slice.order`.
+        if (L.instrument.voice === 'loop' && L.instrument.plays) {
+          const info = loopInfo(L); if (!info) continue;
+          let smp = null; try { if (typeof ensureSampleLoaded === 'function') smp = ensureSampleLoaded(info.lid); } catch (e) {}
+          if (!(smp && smp.loaded)) continue;
+          const sp = { type: 'sample:' + info.lid, volume: vol, attack: 4, decay: 10, sustain: 100, release: 60 };
+          let f = n.freq, dms = n.durMs;
+          if (L.instrument.plays === 'slices') {
+            const sc = L.slice || {}, nn = Math.max(1, Math.min(32, (sc.n | 0) || 8)), segS = info.secs / nn;
+            const k = st._slK = ((st._slK | 0) + 1) % 4096;
+            let j = (k - 1) % nn;
+            if (sc.order === 'back') j = nn - 1 - j;
+            else if (sc.order === 'shuffle') j = Math.floor(vRnd(seedIdOf(L) ^ (k * 2654435761), 83) * nn) % nn;
+            const durS = Math.max(0.03, Math.min(segS, dms / 1000));
+            sp.sampleOffsetSec = j * segS; sp.sliceDurSec = durS;
+            if ((sc.rev | 0) > 0 && vRnd(seedIdOf(L) ^ (k * 40503), 89) * 100 < (sc.rev | 0)) sp.reverse = true;
+            f = info.f0; dms = Math.round(durS * 1000);
+          }
+          try { playNote(f, sp, dms, at, dest, undefined, E.laneIdx ? E.laneIdx() : undefined); } catch (e) {}
           continue;
         }
         // A SCHEDULED TONE is resolved per NOTE, at the note's own time — the
@@ -8225,7 +8554,8 @@
             r.kind, r.steps, r.pulses, r.rotate, r.n, r.chance, r.vary,
             t.kind, t.degree, t.span, t.voices, t.dir, t.octaves,
             (t.harm || []).map(h => h && h.deg).join('/'),
-            sh.lenRatio, sh.holdSteps, (p.notes || []).length].join(',');
+            sh.lenRatio, sh.holdSteps, (p.notes || []).length,
+            r.stmt ? JSON.stringify(r.stmt) : '', sh.lenRule || '', sh.lenEcho || 0, sh.lenLean || 0, sh.lenCyc || '', sh.lastNote || ''].join(',');
   }
   // KILL a layer's preview audio, click-free: dip the chain gate (a raw voice
   // stop can click — rule 3), cancel everything not yet sounding, stop
@@ -8527,7 +8857,7 @@
     else if (which === 'mixed')
       p.pitch = Object.assign({ voices: 3, degree: 1 }, p.pitch, { kind: 'mixed' });
     else if (which === 'melody')
-      p.pitch = Object.assign({ degree: 1, span: 4, home: 'center', dir: 'up' }, p.pitch,
+      p.pitch = Object.assign({ degree: 1, span: 2, home: 'center', dir: 'up' }, p.pitch,
                               { kind: 'walk', voices: 1 });
   }
   // Returns true when it restored — the caller then skips its factory defaults,
@@ -8653,7 +8983,7 @@
     p.rhythm = { kind: 'euclid', steps: steps, pulses: Math.max(2, Math.min(steps - 1, Math.round(steps * 0.625))), rotate: 0, n: 1 };
     // ONE VOICE, and `pitch` is replaced wholesale so `lines` goes with it —
     // which is what makes this single-voice rather than merely thin.
-    p.pitch = { kind: 'walk', voices: 1, degree: 1, span: 4, home: 'center', dir: 'up' };
+    p.pitch = { kind: 'walk', voices: 1, degree: 1, span: 2, home: 'center', dir: 'up' };
     p.shape = Object.assign({}, p.shape, { lenRatio: 80, holdSteps: 0 });
     try { E.getCfg(); } catch (e) {}
     return { steps: steps, pulses: p.rhythm.pulses, bars: p.bars };
@@ -8790,7 +9120,7 @@
     p.pitch = {
       kind: 'walk',
       degree: _pick([1, 1, 1, 2, 3]),
-      span: _ri(3, 8),
+      span: 2,                                  // Range: 2 by default, 5 at most (user, 2026-10-09)
       home: _pick(['floor', 'floor', 'center']),
       stutter: _pick([0, 0, 10, 25, 40]),
       dir: 'up',
@@ -9857,6 +10187,10 @@
     // one list is how the two halves come to offer a rhythm that never plays.
     // `figRow` crosses too, so the GRID can draw exactly what will sound.
     FIGURES, figRow,
+    // ⊟ a lane's own hits (profile or link) as cycle fractions, for the card's strip
+    laneProfOnsets: (p, li) => { try { return laneProfOnsets(p, li, 0, 0, null); } catch (e) { return null; } },
+    // …and a drum lane's OWN one-bar row (the beat's euclid), for the same strip
+    beatLaneRow: (p, li) => { try { const per = beatPerOf(p.rhythm.beat); const rows = beatLanes(p, per, 0, per); return rows ? rows[li] : null; } catch (e) { return null; } },
     // …and the lane AUDITION with them. The card's IIFE cannot see
     // `_ambPlaySynthDrum`'s two arms, `_AMB_V2_STAGE` or the semitone map, so a
     // label press asks the model to make the sound rather than making it itself.
@@ -19190,6 +19524,8 @@
       // 0% is silence, and silence is what "does nothing" looked like
       chance: [['chance', 1, 45]],
       ground: [],
+      // the chokepoint seeds a statement (½ ¼ ⅛ ⅛) the moment the kind is asked for
+      statement: [],
     },
     pitch: {
       chord:  [['voices', 2, 3]],

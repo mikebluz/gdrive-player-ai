@@ -48035,6 +48035,14 @@
     // the part changes.
     function _ambCurPartPlayhead(E) {
       const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
+      // SELF-HEAL (2026-10-09, user: "Parts bar disappeared" — it came back on an area
+      // switch). The bar hides itself whenever ONE paint sees no changes, and nothing
+      // repaints it after, so a single transient read hid it for good. Per frame, a
+      // hidden bar over an area that HAS changes is repainted.
+      if (el.style.display === 'none') {
+        const c0 = E._cfg; const pr = c0 && c0.prog;
+        if (pr && pr.on && Array.isArray(pr.chords) && pr.chords.length) { el._sig = ''; try { _ambRenderCurPart(E); } catch (e) {} }
+      }
       let pi = -1;
       try {
         if (E.timer && _ambViewIsPlaying(E)) {
@@ -48094,7 +48102,7 @@
     }
     function _ambRenderCurPart(E) {
       const el = _ambGet(E, 'ambient-curpart'); if (!el) return;
-      let cfg = null, rgs = [];
+      let cfg = null, rgs = [], failed = false;
       try {
         cfg = E.getCfg();
         // no changes = nothing to be current — `_ambGridRanges` still answers a
@@ -48106,7 +48114,9 @@
           try { nm = _ambPartLabel(cfg, pi); } catch (e) {}
           return { pi, nm };
         });
-      } catch (e) {}
+      } catch (e) { failed = true; }
+      // a read that THREW is not "this area has no changes" — keep what is shown
+      if (failed) return;
       const cur = cfg ? _ambCurPartNow(E, cfg, rgs) : -1;
       // …AND WHAT THE STRIP DRAWS *IS* THE AXIS FROM HERE ON. `_curPart` is
       // transient, so on a reload it is absent while this readout resolves the

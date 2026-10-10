@@ -48172,6 +48172,9 @@
             // STATE" trap: `✎ Edit` is an OFFER, `✎ Editing` is a STATE, and
             // the fill carries it as well. What says you are in 👁 View when it
             // is off is the hint line below, which names that mode outright.
+            // ✎ Edit and ↻ Loop TRAVEL TOGETHER (2026-10-09, user: "Edit and Loop same
+            // row") — one group, so a narrow screen wraps them as a pair, never apart
+            '<span class="ambient-curpart-btns">' +
             '<button type="button" class="ambient-seg ambient-curpart-edit' +
               (vmode === 'edit' ? ' on' : '') + '"' +
               ' aria-pressed="' + (vmode === 'edit' ? 'true' : 'false') + '"' +
@@ -48194,7 +48197,7 @@
                       ' — the arrangement repeats it instead of moving on, so an edit is heard next time round. Press to let it run on.'
                     : 'Repeat the current part instead of running on through the arrangement — so you hear an edit next time round. Takes effect when that part comes round; you can arm it before pressing play.') +
                   '">↻ ' + (lp >= 0 ? 'Looping' : 'Loop') + '</button>'
-              : '') +
+              : '') + '</span>' +
             '<span class="ambient-hint ambient-curpart-hint">' +
               (lp >= 0
                 ? '↻ looping this part · press ↻ Looping to let the arrangement run on'

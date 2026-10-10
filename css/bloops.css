@@ -18523,3 +18523,7 @@ button.sch-passlab:hover, button.sch-passlab.on { border-color: #4b3b78; backgro
 .pov-plays-seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .pov-plays-seg .ambient-seg { min-height: 44px; min-width: 52px; }
 .pov-plays-say { color: #a0aec0; }
+
+/* ✎ Edit + ↻ Loop stay on one row together (the part bar) */
+.ambient-curpart-btns { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+.ambient-curpart-btns .ambient-curpart-loop { margin-left: 0; }
